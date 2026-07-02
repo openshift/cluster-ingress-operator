@@ -226,6 +226,8 @@ type Config struct {
 	OperatorLifecycleManagerEnabled bool
 	GatewayAPIWithoutOLMEnabled     bool
 	IngressControllerImage          string
+	HAProxyImages                   map[operatorv1.HAProxyVersion]string
+	DefaultHAProxyVersion           operatorv1.HAProxyVersion
 	CanaryImage                     string
 	OperatorReleaseVersion          string
 	Namespace                       string

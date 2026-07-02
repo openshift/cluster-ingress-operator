@@ -899,6 +899,113 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 	checkDeploymentHasEnvSorted(t, deployment)
 }
 
+func TestDesiredRouterDeploymentSpecHAProxyVersion(t *testing.T) {
+	const defaultHAProxyVersion = operatorv1.HAProxyVersion32
+
+	var haproxyImages = map[operatorv1.HAProxyVersion]string{
+		operatorv1.HAProxyVersion28: "quay.io/openshift/haproxy:2.8",
+		operatorv1.HAProxyVersion32: "quay.io/openshift/haproxy:3.2",
+	}
+
+	testCases := map[string]struct {
+		featureGateEnabled    bool
+		haproxyImages         map[operatorv1.HAProxyVersion]string
+		defaultVersionAnn     operatorv1.HAProxyVersion
+		defaultVersionCmdline operatorv1.HAProxyVersion
+		desiredHAProxyVersion operatorv1.HAProxyVersion
+		expectedHAProxyImage  string
+		expectedError         string
+	}{
+		"should deploy default haproxy if unset": {
+			featureGateEnabled:    true,
+			haproxyImages:         haproxyImages,
+			defaultVersionCmdline: defaultHAProxyVersion,
+			desiredHAProxyVersion: "",
+			expectedHAProxyImage:  haproxyImages[defaultHAProxyVersion],
+		},
+		"should override default version if using annotation": {
+			featureGateEnabled:    true,
+			haproxyImages:         haproxyImages,
+			defaultVersionAnn:     operatorv1.HAProxyVersion28,
+			defaultVersionCmdline: operatorv1.HAProxyVersion32,
+			desiredHAProxyVersion: "",
+			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion28],
+		},
+		"should deploy default haproxy if unset and default is overridden": {
+			featureGateEnabled:    true,
+			haproxyImages:         haproxyImages,
+			defaultVersionCmdline: operatorv1.HAProxyVersion28,
+			desiredHAProxyVersion: "",
+			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion28],
+		},
+		"should deploy router image if images map is not provided": {
+			featureGateEnabled:    true,
+			defaultVersionCmdline: operatorv1.HAProxyVersion28,
+			desiredHAProxyVersion: "",
+			expectedHAProxyImage:  ingressControllerImage,
+		},
+		"should deploy haproxy 3.2": {
+			featureGateEnabled:    true,
+			haproxyImages:         haproxyImages,
+			defaultVersionCmdline: defaultHAProxyVersion,
+			desiredHAProxyVersion: operatorv1.HAProxyVersion32,
+			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion32],
+		},
+		"should deploy haproxy 2.8": {
+			featureGateEnabled:    true,
+			haproxyImages:         haproxyImages,
+			defaultVersionCmdline: defaultHAProxyVersion,
+			desiredHAProxyVersion: operatorv1.HAProxyVersion28,
+			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion28],
+		},
+		"should fail on invalid haproxy version": {
+			featureGateEnabled:    true,
+			haproxyImages:         haproxyImages,
+			defaultVersionCmdline: defaultHAProxyVersion,
+			desiredHAProxyVersion: "zz",
+			expectedError:         `haproxy image for version "zz" is not available for ingresscontroller "default"; ensure the operator is configured with --haproxy-image for this version`,
+		},
+		"should ignore configuration if feature gate is disabled": {
+			featureGateEnabled:    false,
+			haproxyImages:         haproxyImages,
+			defaultVersionCmdline: defaultHAProxyVersion,
+			desiredHAProxyVersion: "zz",
+			expectedHAProxyImage:  ingressControllerImage,
+		},
+	}
+
+	for name, test := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+			ic.Spec.HAProxyVersion = test.desiredHAProxyVersion
+
+			if test.defaultVersionAnn != "" {
+				if ingressConfig.Annotations == nil {
+					ingressConfig.Annotations = make(map[string]string)
+				}
+				ingressConfig.Annotations[defaultHAProxyVersionAnnotation] = string(test.defaultVersionAnn)
+			}
+
+			deploymentConfig := &Config{
+				IngressControllerImage:     ingressControllerImage,
+				HAProxyImages:              test.haproxyImages,
+				DefaultHAProxyVersion:      test.defaultVersionCmdline,
+				FeatureMultiHAProxyEnabled: test.featureGateEnabled,
+			}
+
+			deployment, err := desiredRouterDeployment(ic, deploymentConfig, ingressConfig, infraConfig, apiConfig, networkConfig, nil, proxyNeeded, false, nil, clusterProxyConfig)
+			if test.expectedError == "" {
+				require.NoError(t, err, "invalid router Deployment")
+				initContainers := deployment.Spec.Template.Spec.InitContainers
+				require.Len(t, initContainers, 2, "len(initContainers)")
+				require.Equal(t, test.expectedHAProxyImage, initContainers[1].Image)
+			} else {
+				require.EqualError(t, err, test.expectedError)
+			}
+		})
+	}
+}
+
 func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 

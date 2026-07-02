@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	unidlingapi "github.com/openshift/api/unidling/v1alpha1"
 )
 
@@ -51,6 +52,10 @@ type StartOptions struct {
 	// IngressControllerImage is the pullspec of the ingress controller image to
 	// be managed.
 	IngressControllerImage string
+	// HAProxyImages is the pullspec of the HAProxy images to be managed, as a hashmap of `<version>:<pullspec>`.
+	HAProxyImages map[string]string
+	// DefaultHAProxyVersion is the default HAProxy version.
+	DefaultHAProxyVersion string
 	// CanaryImage is the pullspec of the ingress operator image
 	CanaryImage string
 	// ReleaseVersion is the cluster version which the operator will converge to.
@@ -82,6 +87,8 @@ func NewStartCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&options.OperatorNamespace, "namespace", "n", operatorcontroller.DefaultOperatorNamespace, "namespace the operator is deployed to (required)")
 	cmd.Flags().StringVarP(&options.IngressControllerImage, "image", "i", "", "image of the ingress controller the operator will manage (required)")
+	cmd.Flags().StringToStringVarP(&options.HAProxyImages, "haproxy-image", "", nil, "HAProxy images as version=pullspec (optional)")
+	cmd.Flags().StringVarP(&options.DefaultHAProxyVersion, "default-haproxy-version", "", "", "defines the default HAProxy version, required if --haproxy-image is also provided (optional)")
 	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
 	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
@@ -133,10 +140,34 @@ func start(opts *StartOptions) error {
 	signal, cancel := context.WithCancel(signals.SetupSignalHandler())
 	defer cancel()
 
+	// Convert the --haproxy-image input into the haproxyImages hashmap.
+	// Controller uses router image if not provided, which is the pre 5.0/4.23 behavior.
+	haproxyImages := make(map[operatorv1.HAProxyVersion]string)
+	for version, image := range opts.HAProxyImages {
+		if version == "" || image == "" {
+			return fmt.Errorf("invalid HAProxy version=pullspec: '%s=%s'", version, image)
+		}
+		haproxyImages[operatorv1.HAProxyVersion(version)] = image
+	}
+
+	// Validates the default HAProxy version - it must be provided if HAProxy image
+	// is provided, and must match one of the provided image versions.
+	defaultHAProxyVersion := operatorv1.HAProxyVersion(opts.DefaultHAProxyVersion)
+	if len(haproxyImages) > 0 {
+		if defaultHAProxyVersion == "" {
+			return fmt.Errorf("--default-haproxy-version is required when --haproxy-image is provided")
+		}
+		if _, found := haproxyImages[defaultHAProxyVersion]; !found {
+			return fmt.Errorf("HAProxy image does not provide the default version %q", defaultHAProxyVersion)
+		}
+	}
+
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion:    opts.ReleaseVersion,
 		Namespace:                 opts.OperatorNamespace,
 		IngressControllerImage:    opts.IngressControllerImage,
+		HAProxyImages:             haproxyImages,
+		DefaultHAProxyVersion:     defaultHAProxyVersion,
 		CanaryImage:               opts.CanaryImage,
 		GatewayAPIOperatorCatalog: opts.GatewayAPIOperatorCatalog,
 		GatewayAPIOperatorChannel: opts.GatewayAPIOperatorChannel,

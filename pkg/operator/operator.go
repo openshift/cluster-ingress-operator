@@ -138,6 +138,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
 	gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
+	featureMultiHAProxyEnabled := featureGates.Enabled(features.FeatureGateIngressControllerMultipleHAProxyVersions)
 
 	cv, err := configClient.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
 	if err != nil {
@@ -183,7 +184,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
 		Namespace:                   config.Namespace,
 		IngressControllerImage:      config.IngressControllerImage,
+		HAProxyImages:               config.HAProxyImages,
+		DefaultHAProxyVersion:       config.DefaultHAProxyVersion,
 		IngressControllerDCMEnabled: ingressControllerDCMEnabled,
+		FeatureMultiHAProxyEnabled:  featureMultiHAProxyEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
@@ -216,6 +220,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
 		Namespace:                       config.Namespace,
 		IngressControllerImage:          config.IngressControllerImage,
+		HAProxyImages:                   config.HAProxyImages,
+		DefaultHAProxyVersion:           config.DefaultHAProxyVersion,
 		CanaryImage:                     config.CanaryImage,
 		OperatorReleaseVersion:          config.OperatorReleaseVersion,
 		MarketplaceEnabled:              marketplaceEnabled,
