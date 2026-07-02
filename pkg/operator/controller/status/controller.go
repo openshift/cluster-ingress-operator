@@ -648,6 +648,44 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 	return len(ingresses) != 0
 }
 
+// allUnavailableIngressesInfrastructureDriven returns true if every
+// unavailable IngressController has a DeploymentRollingOut condition whose
+// reason indicates an infrastructure-driven event (node reboot, pod
+// eviction) rather than a deliberate configuration rollout.
+func allUnavailableIngressesInfrastructureDriven(ingresses []operatorv1.IngressController) bool {
+	infrastructureReasons := sets.New[string](
+		ingress.ReasonReplicasStabilizing,
+		ingress.ReasonPodsStarting,
+	)
+	foundUnavailable := false
+	for _, ic := range ingresses {
+		available := false
+		for _, c := range ic.Status.Conditions {
+			if c.Type == operatorv1.IngressControllerAvailableConditionType && c.Status == operatorv1.ConditionTrue {
+				available = true
+				break
+			}
+		}
+		if available {
+			continue
+		}
+		foundUnavailable = true
+		infraDriven := false
+		for _, c := range ic.Status.Conditions {
+			if c.Type == ingress.IngressControllerDeploymentRollingOutConditionType &&
+				c.Status == operatorv1.ConditionTrue &&
+				infrastructureReasons.Has(c.Reason) {
+				infraDriven = true
+				break
+			}
+		}
+		if !infraDriven {
+			return false
+		}
+	}
+	return foundUnavailable
+}
+
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
 func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{
@@ -907,7 +945,7 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 		}
 	}
 
-	if !allIngressesAvailable {
+	if !allIngressesAvailable && !allUnavailableIngressesInfrastructureDriven(ingresscontrollers) {
 		messages = append(messages, "Not all ingress controllers are available.")
 		progressing = true
 	}
