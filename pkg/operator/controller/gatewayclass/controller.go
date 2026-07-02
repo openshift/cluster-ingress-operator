@@ -20,8 +20,6 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
-	"github.com/istio-ecosystem/sail-operator/pkg/install"
-	"github.com/istio-ecosystem/sail-operator/resources"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -179,15 +177,18 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return nil, err
 		}
 	} else {
-		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
-		// Returns a notification channel that signals when library reconciliation completes,
-		// allowing us to update GatewayClass status conditions accordingly.
-		installer, err := install.New(mgr.GetConfig(), resources.FS)
+		// Connect to the sail-sidecar gRPC server over a Unix domain socket.
+		// The sidecar wraps the sail-operator install library and manages
+		// Helm-based Istio installation, CRDs, and drift detection.
+		grpcInstaller := NewSailGRPCInstaller(
+			"/var/run/sail/sail.sock",
+			reconciler.overwriteOLMCRDCheck,
+		)
+		notifyCh, err := grpcInstaller.Start(config.Context)
 		if err != nil {
-			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
+			return nil, fmt.Errorf("failed to start sail sidecar gRPC client: %w", err)
 		}
-		notifyCh := installer.Start(config.Context)
-		reconciler.sailInstaller = installer
+		reconciler.sailInstaller = grpcInstaller
 
 		// Reconciliation Triggers with the Sail Library:
 		//
@@ -270,13 +271,14 @@ type Config struct {
 	Context context.Context
 }
 
-// SailLibraryInstaller implements the methods of sail library but in a way we can
-// also mock and test
+// SailLibraryInstaller is the interface for managing Istio installations.
+// Implementations include SailGRPCInstaller (production, talks to sidecar)
+// and fakeSailInstaller (tests).
 type SailLibraryInstaller interface {
-	Start(ctx context.Context) <-chan struct{}
-	Apply(opts install.Options)
+	Start(ctx context.Context) (<-chan struct{}, error)
+	Apply(opts SailOptions) error
 	Uninstall(ctx context.Context, namespace, revision string) error
-	Status() install.Status
+	Status() SailStatus
 	Enqueue()
 }
 
