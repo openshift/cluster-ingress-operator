@@ -21,15 +21,16 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description                  string
-		noNamespace                  bool
-		allIngressesAvailable        bool
-		someIngressProgressing       bool
-		deploymentRollingOutReason   string
-		reportedVersions             versions
-		oldVersions                  versions
-		curVersions                  versions
-		expectProgressing            configv1.ConditionStatus
+		description                          string
+		noNamespace                          bool
+		allIngressesAvailable                bool
+		someIngressProgressing               bool
+		deploymentRollingOutReason           string
+		additionalDeploymentRollingOutReason string
+		reportedVersions                     versions
+		oldVersions                          versions
+		curVersions                          versions
+		expectProgressing                    configv1.ConditionStatus
 	}{
 		{
 			description:           "all ingress controllers are available",
@@ -60,6 +61,12 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			description:                "unavailable due to genuine deployment rollout",
 			deploymentRollingOutReason: ingress.ReasonDeploymentRollingOut,
 			expectProgressing:          configv1.ConditionTrue,
+		},
+		{
+			description:                          "mixed infra and non-infra unavailability blocks suppression",
+			deploymentRollingOutReason:           ingress.ReasonReplicasStabilizing,
+			additionalDeploymentRollingOutReason: ingress.ReasonDeploymentRollingOut,
+			expectProgressing:                    configv1.ConditionTrue,
 		},
 		{
 			description:           "versions match",
@@ -183,6 +190,24 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 				})
 			}
 			ingresscontrollers = append(ingresscontrollers, ic)
+			if len(tc.additionalDeploymentRollingOutReason) > 0 {
+				ic2 := operatorv1.IngressController{
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{
+							{
+								Type:   operatorv1.OperatorStatusTypeProgressing,
+								Status: operatorv1.ConditionFalse,
+							},
+							{
+								Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
+								Status: operatorv1.ConditionTrue,
+								Reason: tc.additionalDeploymentRollingOutReason,
+							},
+						},
+					},
+				}
+				ingresscontrollers = append(ingresscontrollers, ic2)
+			}
 
 			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
 			conditionsCmpOpts := []cmp.Option{
