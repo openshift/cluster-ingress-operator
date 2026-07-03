@@ -21,15 +21,15 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description                  string
-		noNamespace                  bool
-		allIngressesAvailable        bool
-		someIngressProgressing       bool
-		deploymentRollingOutReason   string
-		reportedVersions             versions
-		oldVersions                  versions
-		curVersions                  versions
-		expectProgressing            configv1.ConditionStatus
+		description                string
+		noNamespace                bool
+		allIngressesAvailable      bool
+		someIngressProgressing     bool
+		deploymentRollingOutReason string
+		reportedVersions           versions
+		oldVersions                versions
+		curVersions                versions
+		expectProgressing          configv1.ConditionStatus
 	}{
 		{
 			description:           "all ingress controllers are available",
