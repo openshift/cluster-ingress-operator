@@ -34,6 +34,7 @@ func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingr
 		if deleted, err := r.deleteRouterCertsGlobalSecret(current); err != nil {
 			return fmt.Errorf("failed to ensure router certificates secret was unpublished: %v", err)
 		} else if deleted {
+			log.Info("Unpublished router certificates secret", "namespace", current.Namespace, "name", current.Name)
 			r.recorder.Eventf(current, "Normal", "UnpublishedRouterCertificates", "Unpublished router certificates")
 		}
 	case desired != nil && current == nil:
@@ -44,12 +45,14 @@ func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingr
 			if err != nil {
 				return err
 			}
+			log.Info("Published router certificates secret", "namespace", new.Namespace, "name", new.Name)
 			r.recorder.Eventf(new, "Normal", "PublishedRouterCertificates", "Published router certificates")
 		}
 	case desired != nil && current != nil:
 		if updated, err := r.updateRouterCertsGlobalSecret(current, desired); err != nil {
 			return fmt.Errorf("failed to update published router certificates secret: %v", err)
 		} else if updated {
+			log.Info("Updated published router certificates secret", "namespace", current.Namespace, "name", current.Name)
 			r.recorder.Eventf(current, "Normal", "UpdatedPublishedRouterCertificates", "Updated the published router certificates")
 		}
 	}
