@@ -68,6 +68,7 @@ func Test_Reconcile(t *testing.T) {
 						},
 						IstioNamespace:    ptr.To("openshift-ingress"),
 						PriorityClassName: ptr.To("system-cluster-critical"),
+						TrustBundleName:   ptr.To("openshift-gw-ca-root-cert"),
 					},
 					Pilot: &sailv1.PilotConfig{
 						Cni: &sailv1.CNIUsageConfig{
