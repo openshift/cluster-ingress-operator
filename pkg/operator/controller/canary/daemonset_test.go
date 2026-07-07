@@ -287,38 +287,63 @@ func getEnvVar(ds *appsv1.DaemonSet, name string) string {
 func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
 
+	intermediateGroups := make([]string, len(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Groups))
+	for i, g := range configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Groups {
+		intermediateGroups[i] = string(g)
+	}
+	oldGroups := make([]string, len(configv1.TLSProfiles[configv1.TLSProfileOldType].Groups))
+	for i, g := range configv1.TLSProfiles[configv1.TLSProfileOldType].Groups {
+		oldGroups[i] = string(g)
+	}
+
 	testCases := []struct {
 		name             string
 		tlsProfile       *configv1.TLSProfileSpec
 		expectCiphers    string
 		expectMinVersion string
+		expectGroups     string
 	}{
 		{
 			name:             "Intermediate profile",
 			tlsProfile:       configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
 			expectCiphers:    strings.Join(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers, ","),
 			expectMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].MinTLSVersion),
+			expectGroups:     strings.Join(intermediateGroups, ","),
 		},
 		{
 			name:             "Old profile",
 			tlsProfile:       configv1.TLSProfiles[configv1.TLSProfileOldType],
 			expectCiphers:    strings.Join(configv1.TLSProfiles[configv1.TLSProfileOldType].Ciphers, ","),
 			expectMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileOldType].MinTLSVersion),
+			expectGroups:     strings.Join(oldGroups, ","),
 		},
 		{
-			name: "Custom profile",
+			name: "Custom profile with groups",
 			tlsProfile: &configv1.TLSProfileSpec{
 				Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384"},
+				Groups:        []configv1.TLSGroup{configv1.TLSGroupX25519, configv1.TLSGroupSecP256r1},
 				MinTLSVersion: configv1.VersionTLS13,
 			},
 			expectCiphers:    "ECDHE-RSA-AES128-GCM-SHA256,ECDHE-RSA-AES256-GCM-SHA384",
 			expectMinVersion: string(configv1.VersionTLS13),
+			expectGroups:     "X25519,secp256r1",
+		},
+		{
+			name: "Custom profile without groups",
+			tlsProfile: &configv1.TLSProfileSpec{
+				Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+				MinTLSVersion: configv1.VersionTLS13,
+			},
+			expectCiphers:    "ECDHE-RSA-AES128-GCM-SHA256",
+			expectMinVersion: string(configv1.VersionTLS13),
+			expectGroups:     "",
 		},
 		{
 			name:             "Nil profile",
 			tlsProfile:       nil,
 			expectCiphers:    "",
 			expectMinVersion: "",
+			expectGroups:     "",
 		},
 	}
 
@@ -334,6 +359,11 @@ func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 			actualMinVersion := getEnvVar(ds, "TLS_MIN_VERSION")
 			if diff := cmp.Diff(tc.expectMinVersion, actualMinVersion); diff != "" {
 				t.Errorf("TLS_MIN_VERSION mismatch (-want +got):\n%s", diff)
+			}
+
+			actualGroups := getEnvVar(ds, "TLS_GROUPS")
+			if diff := cmp.Diff(tc.expectGroups, actualGroups); diff != "" {
+				t.Errorf("TLS_GROUPS mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

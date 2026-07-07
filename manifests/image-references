@@ -3,7 +3,7 @@ apiVersion: image.openshift.io/v1
 spec:
   tags:
   - name: cluster-ingress-operator
-    from: 
+    from:
       kind: "DockerImage"
       name: "openshift/origin-cluster-ingress-operator:latest"
   - name: haproxy-router
@@ -18,7 +18,3 @@ spec:
     from:
       kind: "DockerImage"
       name: "openshift/origin-haproxy:v3.2"
-  - name: kube-rbac-proxy
-    from:
-      kind: DockerImage
-      name: "quay.io/openshift/origin-kube-rbac-proxy:latest"
