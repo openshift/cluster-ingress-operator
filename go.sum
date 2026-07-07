@@ -87,6 +87,8 @@ github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkY
 github.com/asaskevich/govalidator v0.0.0-20200907205600-7a23bdc65eef/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3dyBCFEj5IhUbnKptjxatkF07cF2ak3yi77so=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
+github.com/aswinsuryan/api v0.0.0-20260804181525-ba8e1a3f9450 h1:BAqOdLn7419ciIrMEx7pXCuv9Fi2emBCY+1l3EDs/Mc=
+github.com/aswinsuryan/api v0.0.0-20260804181525-ba8e1a3f9450/go.mod h1:k6qH5QOVa5GDln2VVm8Jz4NV3Z7R2SATHFLwGS6Wh3M=
 github.com/aws/aws-sdk-go v1.34.28/go.mod h1:H7NKnBqNVzoTJpGfLrQkkD+ytBA93eiDYi/+8rV9s48=
 github.com/aws/aws-sdk-go-v2 v1.41.7 h1:DWpAJt66FmnnaRIOT/8ASTucrvuDPZASqhhLey6tLY8=
 github.com/aws/aws-sdk-go-v2 v1.41.7/go.mod h1:4LAfZOPHNVNQEckOACQx60Y8pSRjIkNZQz1w92xpMJc=
@@ -494,8 +496,6 @@ github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJw
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/openshift-service-mesh/sail-operator v0.0.0-20260720094936-cd66ebc9215a h1:oURsv6hg7xDjyrwpMCgHkxEz/Q3wBPWhaV7q1+r5Yt0=
 github.com/openshift-service-mesh/sail-operator v0.0.0-20260720094936-cd66ebc9215a/go.mod h1:7nymnawtIqNQmsmEW/Z29u83ScMzlVVuLAKi1FDDmzg=
-github.com/openshift/api v0.0.0-20260731195344-05ea89db4588 h1:lskV7SXXV/lOqX08mlYH295on/DTTl9a7ZZ9b7awY/k=
-github.com/openshift/api v0.0.0-20260731195344-05ea89db4588/go.mod h1:k6qH5QOVa5GDln2VVm8Jz4NV3Z7R2SATHFLwGS6Wh3M=
 github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847 h1:i96ZYwZrCbqxsSrtO/qLJ7Olvu5M9xBU/yVz4Xg8LK4=
 github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847/go.mod h1:il93009qOuWG58FeXsVnXD4Yurtm+RMtxIpJv231JdU=
 github.com/openshift/controller-runtime-common v0.0.0-20260428152732-64ee174f5e2e h1:k89oIo2EjX0PRSdi1kesktCyWp50SC9WwKurvupvRGs=

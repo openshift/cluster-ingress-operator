@@ -261,3 +261,5 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 // - OpenShift TLS cipher suite support (istio-ecosystem#2048).
 // Replace needed because the fork keeps upstream module name for compatibility.
 replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260720094936-cd66ebc9215a
+
+replace github.com/openshift/api v0.0.0-20260731195344-05ea89db4588 => github.com/aswinsuryan/api v0.0.0-20260804181525-ba8e1a3f9450
