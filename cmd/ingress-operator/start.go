@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
+	configv1 "github.com/openshift/api/config/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -46,6 +48,13 @@ type StartOptions struct {
 	ShutdownFile string
 	// MetricsListenAddr is the address on which to expose the metrics endpoint.
 	MetricsListenAddr string
+	// MetricsTLSCertFile is the path to the TLS certificate for the metrics
+	// endpoint.  When both MetricsTLSCertFile and MetricsTLSKeyFile are set
+	// the metrics server uses TLS with the cluster-wide TLS security profile.
+	MetricsTLSCertFile string
+	// MetricsTLSKeyFile is the path to the TLS private key for the metrics
+	// endpoint.
+	MetricsTLSKeyFile string
 	// OperatorNamespace is the namespace the operator should watch for
 	// ingresscontroller resources.
 	OperatorNamespace string
@@ -92,6 +101,8 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
 	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
+	cmd.Flags().StringVarP(&options.MetricsTLSCertFile, "metrics-tls-cert-file", "", "", "path to the TLS certificate for the metrics endpoint")
+	cmd.Flags().StringVarP(&options.MetricsTLSKeyFile, "metrics-tls-key-file", "", "", "path to the TLS private key for the metrics endpoint")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorCatalog, "gateway-api-operator-catalog", "", defaultGatewayAPIOperatorCatalog, "catalog source for the Gateway API implementation to install")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorChannel, "gateway-api-operator-channel", "", defaultGatewayAPIOperatorChannel, "release channel of the Gateway API implementation to install")
@@ -175,8 +186,27 @@ func start(opts *StartOptions) error {
 		IstioVersion:              opts.IstioVersion,
 	}
 
+	if err := operator.ValidateMetricsTLSFiles(opts.MetricsTLSCertFile, opts.MetricsTLSKeyFile); err != nil {
+		return err
+	}
+
+	// Build the TLS configuration for the metrics server from the
+	// cluster-wide TLS security profile when cert/key paths are provided.
+	var metricsTLSConfig *tls.Config
+	if opts.MetricsTLSCertFile != "" && opts.MetricsTLSKeyFile != "" {
+		apiConfig := &configv1.APIServer{}
+		if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+			log.Info("failed to get APIServer 'cluster' for metrics TLS; falling back to intermediate profile", "error", err)
+		}
+		tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+		metricsTLSConfig, err = operatorcontroller.TLSConfigFromProfile(tlsProfileSpec)
+		if err != nil {
+			return fmt.Errorf("failed to build TLS config for metrics: %v", err)
+		}
+	}
+
 	// Start operator metrics.
-	go operator.StartMetricsListener(opts.MetricsListenAddr, signal)
+	go operator.StartMetricsListener(opts.MetricsListenAddr, opts.MetricsTLSCertFile, opts.MetricsTLSKeyFile, metricsTLSConfig, signal)
 	log.Info("registering Prometheus metrics for canary_controller")
 	if err := canarycontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for canary_controller")
