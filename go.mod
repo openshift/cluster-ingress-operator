@@ -51,7 +51,7 @@ require (
 	k8s.io/apimachinery v0.35.1
 	k8s.io/apiserver v0.35.1
 	k8s.io/client-go v0.35.1
-	k8s.io/utils v0.0.0-20260108192941-914a6e750570
+	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
 	sigs.k8s.io/controller-runtime v0.23.3
 	sigs.k8s.io/gateway-api v1.4.1
 )
@@ -221,9 +221,9 @@ require (
 	istio.io/istio v0.0.0-20260306174229-7da666217518 // indirect
 	k8s.io/cli-runtime v0.35.0 // indirect
 	k8s.io/component-base v0.35.1 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
+	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-aggregator v0.34.1 // indirect
-	k8s.io/kube-openapi v0.0.0-20251125145642-4e65d59e963e // indirect
+	k8s.io/kube-openapi v0.0.0-20260519202549-bbf5c5577288 // indirect
 	k8s.io/kubectl v0.35.0 // indirect
 	oras.land/oras-go/v2 v2.6.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
@@ -242,3 +242,5 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 // Use OSSM 3.3.1 for Sail Library integration.
 // Replace needed because the fork keeps upstream module name for compatibility.
 replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260327145107-d4059b965c68
+
+replace github.com/openshift/api => github.com/aswinsuryan/api v0.0.0-20260703231237-0c8edfa604ca
