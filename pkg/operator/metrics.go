@@ -2,7 +2,10 @@ package operator
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -10,8 +13,19 @@ import (
 	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-// StartMetricsListener starts the metrics listener on addr.
-func StartMetricsListener(addr string, signal context.Context) {
+// ValidateMetricsTLSFiles ensures metrics TLS cert and key paths are either
+// both set or both omitted.
+func ValidateMetricsTLSFiles(certFile, keyFile string) error {
+	if (certFile == "") != (keyFile == "") {
+		return fmt.Errorf("metrics TLS cert and key must both be set or both omitted")
+	}
+	return nil
+}
+
+// StartMetricsListener starts the metrics listener on addr.  When certFile
+// and keyFile are non-empty the server uses TLS with the given tlsConfig;
+// otherwise it falls back to plain HTTP.
+func StartMetricsListener(addr, certFile, keyFile string, tlsConfig *tls.Config, signal context.Context) {
 	// These metrics get registered in controller-runtime's registry via an init in the internal/controller/metrics package.
 	// Unregister the controller-runtime metrics, so that we can combine the controller-runtime metric's registry
 	// with that of the ingress-operator. This shouldn't have any side effects, as long as no 2 metrics across
@@ -27,13 +41,28 @@ func StartMetricsListener(addr string, signal context.Context) {
 		promhttp.HandlerOpts{},
 	)
 
-	log.Info("starting metrics listener", "addr", addr)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", handler)
-	s := http.Server{Addr: addr, Handler: mux}
+	s := http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+
+	useTLS := certFile != "" && keyFile != ""
+	if useTLS {
+		if tlsConfig != nil {
+			s.TLSConfig = tlsConfig.Clone()
+		}
+		log.Info("starting metrics listener with TLS", "addr", addr)
+	} else {
+		log.Info("starting metrics listener", "addr", addr)
+	}
 
 	go func() {
-		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if useTLS {
+			err = s.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			err = s.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			log.Error(err, "metrics listener exited")
 		}
 	}()

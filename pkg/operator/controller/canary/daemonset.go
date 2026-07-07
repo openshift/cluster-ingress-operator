@@ -173,6 +173,19 @@ func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec 
 				},
 			)
 		}
+		if len(tlsProfileSpec.Groups) > 0 {
+			groupStrs := make([]string, len(tlsProfileSpec.Groups))
+			for i, g := range tlsProfileSpec.Groups {
+				groupStrs[i] = string(g)
+			}
+			daemonset.Spec.Template.Spec.Containers[0].Env = append(
+				daemonset.Spec.Template.Spec.Containers[0].Env,
+				corev1.EnvVar{
+					Name:  "TLS_GROUPS",
+					Value: strings.Join(groupStrs, ","),
+				},
+			)
+		}
 	}
 
 	if certHash != "" {
