@@ -15,11 +15,13 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ensureServiceMonitor ensures the servicemonitor exists for a given
@@ -72,6 +74,7 @@ func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service
 						manifests.OwningIngressControllerLabel: ic.Name,
 					},
 				},
+				"serviceDiscoveryRole": "EndpointSlice",
 				// It is important to use the type []interface{}
 				// for the "endpoints" field.  Using
 				// []map[string]interface{} causes at least two
@@ -151,5 +154,77 @@ func serviceMonitorChanged(current, expected *unstructured.Unstructured) (bool, 
 
 	updated := current.DeepCopy()
 	updated.Object["spec"] = expected.Object["spec"]
+	return true, updated
+}
+
+// ensureMetricsRole ensures the metrics role exists and has the correct rules.
+// Returns a Boolean indicating whether the role exists, the role if it does
+// exist, and an error value.
+func (r *reconciler) ensureMetricsRole() (bool, *rbacv1.Role, error) {
+	desired := manifests.MetricsRole()
+
+	have, current, err := r.currentMetricsRole()
+	if err != nil {
+		return false, nil, err
+	}
+
+	switch {
+	case !have:
+		if err := r.client.Create(context.TODO(), desired); err != nil {
+			return false, nil, fmt.Errorf("failed to create router metrics role %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
+		}
+		log.Info("created router metrics role", "namespace", desired.GetNamespace(), "name", desired.GetName())
+		return r.currentMetricsRole()
+	case have:
+		if updated, err := r.updateMetricsRole(current, desired); err != nil {
+			return true, current, fmt.Errorf("failed to update router metrics role %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
+		} else if updated {
+			return r.currentMetricsRole()
+		}
+	}
+
+	return true, current, nil
+}
+
+// currentMetricsRole returns the current metrics role.  Returns a Boolean
+// indicating whether the role existed, the role if it did exist, and an
+// error value.
+func (r *reconciler) currentMetricsRole() (bool, *rbacv1.Role, error) {
+	desired := manifests.MetricsRole()
+	mr := &rbacv1.Role{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: desired.GetNamespace(), Name: desired.GetName()}, mr); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+	return true, mr, nil
+}
+
+// updateMetricsRole updates the metrics role.  Returns a Boolean indicating
+// whether the role was updated, and an error value.
+func (r *reconciler) updateMetricsRole(current, desired *rbacv1.Role) (bool, error) {
+	changed, updated := metricsRoleChanged(current, desired)
+	if !changed {
+		return false, nil
+	}
+
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, err
+	}
+	log.Info("updated router metrics role", "namespace", updated.GetNamespace(), "name", updated.GetName(), "diff", diff)
+	return true, nil
+}
+
+// metricsRoleChanged checks if the current metrics role rules match the
+// expected rules and if not returns an updated role.
+func metricsRoleChanged(current, desired *rbacv1.Role) (bool, *rbacv1.Role) {
+	if reflect.DeepEqual(current.Rules, desired.Rules) {
+		return false, nil
+	}
+	updated := current.DeepCopy()
+	updated.Rules = desired.Rules
 	return true, updated
 }
