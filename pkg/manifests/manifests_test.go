@@ -53,6 +53,8 @@ func TestManifests(t *testing.T) {
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
 	BackendTLSPolicyCRD()
+	TLSRouteCRD()
+	ListenerSetCRD()
 	GatewayAPIAllowNetworkPolicy()
 	IstiodAllowNetworkPolicy()
 

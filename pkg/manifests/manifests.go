@@ -54,6 +54,8 @@ const (
 	HTTPRouteCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
 	ReferenceGrantCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
 	BackendTLSPolicyCRDAsset          = "assets/gateway-api/gateway.networking.k8s.io_backendtlspolicies.yaml"
+	TLSRouteCRDAsset                  = "assets/gateway-api/gateway.networking.k8s.io_tlsroutes.yaml"
+	ListenerSetCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_listenersets.yaml"
 	GatewayAPIAdminClusterRoleAsset   = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
 	GatewayAPIViewClusterRoleAsset    = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
 	GatewayAPIAllowNetworkPolicyAsset = "assets/gateway-api/gateway-networkpolicy-allow.yaml"
@@ -336,6 +338,22 @@ func ReferenceGrantCRD() *apiextensionsv1.CustomResourceDefinition {
 
 func BackendTLSPolicyCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd, err := NewCustomResourceDefinition(MustAssetReader(BackendTLSPolicyCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func TLSRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(TLSRouteCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func ListenerSetCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(ListenerSetCRDAsset))
 	if err != nil {
 		panic(err)
 	}

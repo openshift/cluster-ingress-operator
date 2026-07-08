@@ -25,6 +25,8 @@ var _ = g.Describe("[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][api
 			"grpcroutes.gateway.networking.k8s.io",
 			"referencegrants.gateway.networking.k8s.io",
 			"backendtlspolicies.gateway.networking.k8s.io",
+			"listenersets.gateway.networking.k8s.io",
+			"tlsroutes.gateway.networking.k8s.io",
 		}
 		errorMessage = "ValidatingAdmissionPolicy 'openshift-ingress-operator-gatewayapi-crd-admission' with binding 'openshift-ingress-operator-gatewayapi-crd-admission' denied request: Gateway API Custom Resource Definitions are managed by the Ingress Operator and may not be modified"
 	)
