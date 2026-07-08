@@ -81,6 +81,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: IMAGE
               value: openshift/origin-haproxy-router:v4.0
+            - name: HAPROXY_28_IMAGE
+              value: openshift/origin-haproxy:v2.8
+            - name: HAPROXY_32_IMAGE
+              value: openshift/origin-haproxy:v3.2
             - name: CANARY_IMAGE
               value: openshift/origin-cluster-ingress-operator:latest
             - name: GATEWAY_API_OPERATOR_CATALOG
