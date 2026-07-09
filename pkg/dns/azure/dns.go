@@ -59,17 +59,24 @@ type provider struct {
 	client client.DNSClient
 }
 
+// resolveEnvironment maps the configured Azure cloud to an autorest Environment.
+// Sovereign/edge clouds (Azure Stack, US Government Secret/IL6) have no built-in
+// endpoint table, so their endpoints are resolved from the ARM metadata endpoint
+// URL rather than by name.
+func resolveEnvironment(config Config) (azure.Environment, error) {
+	switch config.Environment {
+	case string(configv1.AzureStackCloud),
+		string(configv1.AzureUSSecCloud):
+		return azure.EnvironmentFromURL(config.ARMEndpoint)
+	default:
+		return azure.EnvironmentFromName(config.Environment)
+	}
+}
+
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
 // type A.
 func NewProvider(config Config) (dns.Provider, error) {
-	var env azure.Environment
-	var err error
-	switch config.Environment {
-	case string(configv1.AzureStackCloud):
-		env, err = azure.EnvironmentFromURL(config.ARMEndpoint)
-	default:
-		env, err = azure.EnvironmentFromName(config.Environment)
-	}
+	env, err := resolveEnvironment(config)
 	if err != nil {
 		return nil, fmt.Errorf("could not determine cloud environment: %w", err)
 	}
