@@ -50,7 +50,11 @@ if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
 fi
 
 echo "Go version: $(go version)"
-GOWORK=off go mod vendor
+if [[ -f go.work ]]; then
+    go work vendor
+else
+    GOWORK=off go mod vendor
+fi
 
 # Modify the default timeout of "MaxTimeToConsistency" to make tests pass on AWS
 # because the AWS ELB needs an extra ~60s for DNS propagation.  See
