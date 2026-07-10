@@ -35,13 +35,8 @@ const (
 	defaultTrustedCABundle           = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 	defaultGatewayAPIOperatorCatalog = "redhat-operators"
 	defaultGatewayAPIOperatorChannel = "stable"
-<<<<<<< HEAD
-	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.3.1"
-	defaultIstioVersion              = "v1.28.5"
-=======
 	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.4.0"
 	defaultIstioVersion              = "v1.30.1"
->>>>>>> be2f00169 (Bumping to OSSM 3.4 GWAPI to v1.5.1 and Istio v1.30.1)
 )
 
 type StartOptions struct {
