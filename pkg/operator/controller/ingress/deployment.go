@@ -90,9 +90,10 @@ const (
 
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
 
-	RouterClientAuthPolicy = "ROUTER_MUTUAL_TLS_AUTH"
-	RouterClientAuthCA     = "ROUTER_MUTUAL_TLS_AUTH_CA"
-	RouterClientAuthFilter = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
+	RouterClientAuthPolicy      = "ROUTER_MUTUAL_TLS_AUTH"
+	RouterClientAuthCA          = "ROUTER_MUTUAL_TLS_AUTH_CA"
+	RouterClientAuthFilter      = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
+	RouterMutualTLSHeaderFilter = "ROUTER_MUTUAL_TLS_HEADER_FILTER"
 
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
 	RouterCompressionMIMETypes = "ROUTER_COMPRESSION_MIME"
@@ -514,6 +515,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
 		ContStats              string `json:"contStats"`
+		MutualTLSHeaderFilter  string `json:"mutualTLSHeaderFilter"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -570,6 +572,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyContstats,
 			Value: "true",
+		})
+	}
+
+	if v, err := strconv.ParseBool(unsupportedConfigOverrides.MutualTLSHeaderFilter); err == nil && !v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMutualTLSHeaderFilter,
+			Value: "false",
 		})
 	}
 
