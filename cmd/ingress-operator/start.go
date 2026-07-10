@@ -46,15 +46,13 @@ type StartOptions struct {
 	// When this file changes, the operator will shut down. This is useful for simple
 	// reloading when things like a certificate changes.
 	ShutdownFile string
-	// MetricsListenAddr is the address on which to expose the metrics endpoint.
-	MetricsListenAddr string
-	// MetricsTLSCertFile is the path to the TLS certificate for the metrics
-	// endpoint.  When both MetricsTLSCertFile and MetricsTLSKeyFile are set
-	// the metrics server uses TLS with the cluster-wide TLS security profile.
-	MetricsTLSCertFile string
-	// MetricsTLSKeyFile is the path to the TLS private key for the metrics
-	// endpoint.
-	MetricsTLSKeyFile string
+	// MetricsBindAddr is the address on which to expose the metrics endpoint.
+	MetricsBindAddr string
+	// MetricsCertDir is the directory containing tls.crt and tls.key
+	// for the metrics server. When set, the metrics server uses TLS
+	// with the cluster-wide TLS security profile and requires
+	// authentication via TokenReview/SubjectAccessReview.
+	MetricsCertDir string
 	// OperatorNamespace is the namespace the operator should watch for
 	// ingresscontroller resources.
 	OperatorNamespace string
@@ -100,9 +98,13 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.DefaultHAProxyVersion, "default-haproxy-version", "", "", "defines the default HAProxy version, required if --haproxy-image is also provided (optional)")
 	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
-	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
-	cmd.Flags().StringVarP(&options.MetricsTLSCertFile, "metrics-tls-cert-file", "", "", "path to the TLS certificate for the metrics endpoint")
-	cmd.Flags().StringVarP(&options.MetricsTLSKeyFile, "metrics-tls-key-file", "", "", "path to the TLS private key for the metrics endpoint")
+	cmd.Flags().StringVarP(&options.MetricsBindAddr, "metrics-bind-addr", "", "127.0.0.1:60000", "metrics endpoint bind address")
+	// Keep --metrics-listen-addr as a deprecated alias so that existing
+	// deployments (e.g. the HyperShift control-plane-operator) that still
+	// pass the old flag name continue to work.
+	cmd.Flags().StringVar(&options.MetricsBindAddr, "metrics-listen-addr", "127.0.0.1:60000", "deprecated: use --metrics-bind-addr")
+	_ = cmd.Flags().MarkDeprecated("metrics-listen-addr", "use --metrics-bind-addr instead")
+	cmd.Flags().StringVarP(&options.MetricsCertDir, "metrics-cert-dir", "", "", "directory containing tls.crt and tls.key for the metrics endpoint")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorCatalog, "gateway-api-operator-catalog", "", defaultGatewayAPIOperatorCatalog, "catalog source for the Gateway API implementation to install")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorChannel, "gateway-api-operator-channel", "", defaultGatewayAPIOperatorChannel, "release channel of the Gateway API implementation to install")
@@ -173,6 +175,28 @@ func start(opts *StartOptions) error {
 		}
 	}
 
+	// Build the TLS options for the metrics server from the
+	// cluster-wide TLS security profile when a cert directory is provided.
+	var metricsTLSOpts []func(*tls.Config)
+	if opts.MetricsCertDir != "" {
+		apiConfig := &configv1.APIServer{}
+		if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+			log.Info("failed to get APIServer 'cluster' for metrics TLS; falling back to intermediate profile", "error", err)
+		}
+		tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+		tlsCfg, err := operatorcontroller.TLSConfigFromProfile(tlsProfileSpec)
+		if err != nil {
+			return fmt.Errorf("failed to build TLS config for metrics: %v", err)
+		}
+		metricsTLSOpts = []func(*tls.Config){
+			func(c *tls.Config) {
+				c.CipherSuites = tlsCfg.CipherSuites
+				c.MinVersion = tlsCfg.MinVersion
+				c.CurvePreferences = tlsCfg.CurvePreferences
+			},
+		}
+	}
+
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion:    opts.ReleaseVersion,
 		Namespace:                 opts.OperatorNamespace,
@@ -184,29 +208,11 @@ func start(opts *StartOptions) error {
 		GatewayAPIOperatorChannel: opts.GatewayAPIOperatorChannel,
 		GatewayAPIOperatorVersion: opts.GatewayAPIOperatorVersion,
 		IstioVersion:              opts.IstioVersion,
+		MetricsBindAddress:        opts.MetricsBindAddr,
+		MetricsCertDir:            opts.MetricsCertDir,
+		MetricsTLSOpts:            metricsTLSOpts,
 	}
 
-	if err := operator.ValidateMetricsTLSFiles(opts.MetricsTLSCertFile, opts.MetricsTLSKeyFile); err != nil {
-		return err
-	}
-
-	// Build the TLS configuration for the metrics server from the
-	// cluster-wide TLS security profile when cert/key paths are provided.
-	var metricsTLSConfig *tls.Config
-	if opts.MetricsTLSCertFile != "" && opts.MetricsTLSKeyFile != "" {
-		apiConfig := &configv1.APIServer{}
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
-			log.Info("failed to get APIServer 'cluster' for metrics TLS; falling back to intermediate profile", "error", err)
-		}
-		tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
-		metricsTLSConfig, err = operatorcontroller.TLSConfigFromProfile(tlsProfileSpec)
-		if err != nil {
-			return fmt.Errorf("failed to build TLS config for metrics: %v", err)
-		}
-	}
-
-	// Start operator metrics.
-	go operator.StartMetricsListener(opts.MetricsListenAddr, opts.MetricsTLSCertFile, opts.MetricsTLSKeyFile, metricsTLSConfig, signal)
 	log.Info("registering Prometheus metrics for canary_controller")
 	if err := canarycontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for canary_controller")

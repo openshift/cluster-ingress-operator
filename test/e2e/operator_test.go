@@ -1972,6 +1972,15 @@ func TestTLSSecurityProfile(t *testing.T) {
 			"ingresscontroller status has unexpected TLS groups: expected %v, got %v",
 			intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups)
 	}
+	tlsGroupsEnabled, err := isFeatureGateEnabled(features.FeatureGateTLSGroupPreferences)
+	if err != nil {
+		t.Fatalf("failed to check TLSGroupPreferences feature gate: %v", err)
+	}
+	if tlsGroupsEnabled {
+		if len(ic.Status.TLSProfile.Groups) == 0 {
+			t.Fatalf("ingresscontroller status has no TLS groups, expected default groups to be set")
+		}
+	}
 
 	customProfileSpec := configv1.TLSProfileSpec{
 		Ciphers:       []string{"ECDHE-ECDSA-AES256-GCM-SHA384"},
