@@ -10,6 +10,14 @@ spec:
     from:
       kind: "DockerImage"
       name: "openshift/origin-haproxy-router:v4.0"
+  - name: haproxy-router-haproxy28
+    from:
+      kind: "DockerImage"
+      name: "openshift/origin-haproxy:v2.8"
+  - name: haproxy-router-haproxy32
+    from:
+      kind: "DockerImage"
+      name: "openshift/origin-haproxy:v3.2"
   - name: kube-rbac-proxy
     from:
       kind: DockerImage
