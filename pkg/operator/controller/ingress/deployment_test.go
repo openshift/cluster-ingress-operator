@@ -1009,6 +1009,66 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 	}
 }
 
+func TestDesiredRouterDeploymentMutualTLSHeaderFilter(t *testing.T) {
+	testCases := []struct {
+		name                       string
+		unsupportedConfigOverrides string
+		expectedEnv                []envData
+	}{
+		{
+			name:                       "not-set",
+			unsupportedConfigOverrides: `{}`,
+			expectedEnv: []envData{
+				{"ROUTER_MUTUAL_TLS_HEADER_FILTER", false, ""},
+			},
+		},
+		{
+			name:                       "set-to-false",
+			unsupportedConfigOverrides: `{"mutualTLSHeaderFilter":"false"}`,
+			expectedEnv: []envData{
+				{"ROUTER_MUTUAL_TLS_HEADER_FILTER", true, "false"},
+			},
+		},
+		{
+			name:                       "set-to-true",
+			unsupportedConfigOverrides: `{"mutualTLSHeaderFilter":"true"}`,
+			expectedEnv: []envData{
+				{"ROUTER_MUTUAL_TLS_HEADER_FILTER", false, ""},
+			},
+		},
+		{
+			name:                       "set-to-invalid-value",
+			unsupportedConfigOverrides: `{"mutualTLSHeaderFilter":"banana"}`,
+			expectedEnv: []envData{
+				{"ROUTER_MUTUAL_TLS_HEADER_FILTER", false, ""},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+				Spec: operatorv1.IngressControllerSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: []byte(tc.unsupportedConfigOverrides),
+					},
+				},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.PrivateStrategyType,
+					},
+				},
+			}
+
+			deployment, err := desiredRouterDeployment(ic, ingressControllerImage, &configv1.Ingress{}, &configv1.Infrastructure{}, &configv1.APIServer{}, &configv1.Network{}, false, false, nil, &configv1.Proxy{})
+			assert.NoError(t, err)
+			assert.NoError(t, checkDeploymentEnvironment(t, deployment, tc.expectedEnv))
+		})
+	}
+}
+
 func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, port int32) {
 	t.Helper()
 	for _, p := range d.Spec.Template.Spec.Containers[0].Ports {
