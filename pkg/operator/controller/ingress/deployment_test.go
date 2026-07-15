@@ -1156,7 +1156,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		{RouterHTTPIgnoreProbes, true, "true"},
 		{"ROUTER_CIPHERS", true, "quux"},
 		{"ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"},
-		{"ROUTER_CURVES", true, "X25519:secp256r1:secp384r1"},
+		{"ROUTER_CURVES", true, "X25519:secp256r1:secp521r1:secp384r1"},
 		{"SSL_MIN_VERSION", true, "TLSv1.2"},
 		{"ROUTER_IP_V4_V6_MODE", true, "v4v6"},
 		{RouterEnableCompression, true, "true"},
