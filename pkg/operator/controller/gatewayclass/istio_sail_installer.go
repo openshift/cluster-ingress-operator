@@ -148,9 +148,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
 	// if options or values have changed. Status is checked later via r.sailInstaller.Status()
 	// and mapped to GatewayClass conditions.
-	if err := sailInstaller.Apply(opts); err != nil {
-		return fmt.Errorf("failed to apply Istio installation options: %w", err)
-	}
+	sailInstaller.Apply(opts)
 
 	return nil
 }
@@ -159,25 +157,22 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 // Gateway API defaults with OpenShift-specific overrides
 func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (install.Options, error) {
 	// Start with Gateway API defaults
-	values := install.GatewayAPIDefaults(r.config.OperandNamespace)
+	values := install.GatewayAPIDefaults()
 
 	// Apply OpenShift-specific overrides
 	openshiftOverrides, err := openshiftValues(enableInferenceExtension, r.config.OperandNamespace, gatewayclasses, extraConfig)
 	if err != nil {
 		return install.Options{}, err
 	}
-	values, err = install.MergeValues(values, openshiftOverrides)
-	if err != nil {
-		return install.Options{}, fmt.Errorf("failed to merge Istio values: %w", err)
-	}
+	values = install.MergeValues(values, openshiftOverrides)
 
 	return install.Options{
 		Namespace:      r.config.OperandNamespace,
 		Revision:       controller.IstioName("").Name,
 		Values:         values,
 		Version:        istioVersion,
-		ManageCRDs:     true,
-		IncludeAllCRDs: true,
+		ManageCRDs:     ptr.To(true),
+		IncludeAllCRDs: ptr.To(true),
 	}, nil
 }
 
@@ -205,21 +200,7 @@ func openshiftValues(enableInferenceExtension bool, operandNamespace string, gat
 			},
 		},
 		MeshConfig: &sailv1.MeshConfig{
-			AccessLogFile:         ptr.To("/dev/stdout"),
-			IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
-			DefaultConfig: &sailv1.MeshConfigProxyConfig{
-				ProxyHeaders: &sailv1.ProxyConfigProxyHeaders{
-					Server: &sailv1.ProxyConfigProxyHeadersServer{
-						Disabled: ptr.To(true),
-					},
-					EnvoyDebugHeaders: &sailv1.ProxyConfigProxyHeadersEnvoyDebugHeaders{
-						Disabled: ptr.To(true),
-					},
-					MetadataExchangeHeaders: &sailv1.ProxyConfigProxyHeadersMetadataExchangeHeaders{
-						Mode: sailv1.ProxyConfigProxyHeadersMetadataExchangeModeInMesh,
-					},
-				},
-			},
+			DefaultConfig: &sailv1.MeshConfigProxyConfig{},
 		},
 	}
 

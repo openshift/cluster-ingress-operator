@@ -11,40 +11,8 @@
 # go.mod affect the generated API schema for the Sail CRDs (e.g. IstioRevision),
 # as well as all the Istio CRDs (e.g. VirtualService).
 versions:
-  - name: v1.30-latest
-    ref: v1.30.1
-  - name: v1.30.1
-    version: 1.30.1
-    repo: https://github.com/istio/istio
-    commit: 1.30.1
-    charts:
-      - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/base-1.30.1.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/istiod-1.30.1.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/gateway-1.30.1.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/cni-1.30.1.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/ztunnel-1.30.1.tgz
   - name: v1.28-latest
-    ref: v1.28.8
-  - name: v1.28.8
-    version: 1.28.8
-    repo: https://github.com/istio/istio
-    commit: 1.28.8
-    charts:
-      - https://github.com/openshift-service-mesh/istio-release/raw/a16a178708936a8426a1d3d5839d3a3e27af7775/1.28.8-redhat/helm/base-1.28.8.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/a16a178708936a8426a1d3d5839d3a3e27af7775/1.28.8-redhat/helm/istiod-1.28.8.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/a16a178708936a8426a1d3d5839d3a3e27af7775/1.28.8-redhat/helm/gateway-1.28.8.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/a16a178708936a8426a1d3d5839d3a3e27af7775/1.28.8-redhat/helm/cni-1.28.8.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/a16a178708936a8426a1d3d5839d3a3e27af7775/1.28.8-redhat/helm/ztunnel-1.28.8.tgz
-  - name: v1.28.6
-    version: 1.28.6
-    repo: https://github.com/istio/istio
-    commit: 1.28.6
-    charts:
-      - https://github.com/openshift-service-mesh/istio-release/raw/273096419484f6547aee59bdaefa15e9cb2c5ab7/1.28.6-redhat/helm/base-1.28.6.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/273096419484f6547aee59bdaefa15e9cb2c5ab7/1.28.6-redhat/helm/istiod-1.28.6.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/273096419484f6547aee59bdaefa15e9cb2c5ab7/1.28.6-redhat/helm/gateway-1.28.6.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/273096419484f6547aee59bdaefa15e9cb2c5ab7/1.28.6-redhat/helm/cni-1.28.6.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/273096419484f6547aee59bdaefa15e9cb2c5ab7/1.28.6-redhat/helm/ztunnel-1.28.6.tgz
+    ref: v1.28.5
   - name: v1.28.5
     version: 1.28.5
     repo: https://github.com/istio/istio
@@ -66,17 +34,7 @@ versions:
       - https://github.com/openshift-service-mesh/istio-release/raw/3056318bdf28c90d92fb1734073028c0fdc4b4b7/1.28.4-redhat/helm/cni-1.28.4.tgz
       - https://github.com/openshift-service-mesh/istio-release/raw/3056318bdf28c90d92fb1734073028c0fdc4b4b7/1.28.4-redhat/helm/ztunnel-1.28.4.tgz
   - name: v1.27-latest
-    ref: v1.27.9
-  - name: v1.27.9
-    version: 1.27.9
-    repo: https://github.com/istio/istio
-    commit: 1.27.9
-    charts:
-      - https://github.com/openshift-service-mesh/istio-release/raw/213d2676e59143fa99cad93514a79b725e476a0d/1.27.9-redhat/helm/base-1.27.9.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/213d2676e59143fa99cad93514a79b725e476a0d/1.27.9-redhat/helm/istiod-1.27.9.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/213d2676e59143fa99cad93514a79b725e476a0d/1.27.9-redhat/helm/gateway-1.27.9.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/213d2676e59143fa99cad93514a79b725e476a0d/1.27.9-redhat/helm/cni-1.27.9.tgz
-      - https://github.com/openshift-service-mesh/istio-release/raw/213d2676e59143fa99cad93514a79b725e476a0d/1.27.9-redhat/helm/ztunnel-1.27.9.tgz
+    ref: v1.27.8
   - name: v1.27.8
     version: 1.27.8
     repo: https://github.com/istio/istio
@@ -109,14 +67,53 @@ versions:
       - https://github.com/openshift-service-mesh/istio-release/raw/3ff052018d78531e97946f46292b4367f2b40e70/1.27.3-redhat/helm/ztunnel-1.27.3.tgz
   - name: v1.26-latest
     ref: v1.26.8
-    eol: true
   - name: v1.26.8
-    eol: true
+    version: 1.26.8
+    repo: https://github.com/istio/istio
+    commit: 1.26.8
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/7d7e1995d825ec45485083d7e40bacca438a2e78/1.26.8-redhat/helm/base-1.26.8.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/7d7e1995d825ec45485083d7e40bacca438a2e78/1.26.8-redhat/helm/istiod-1.26.8.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/7d7e1995d825ec45485083d7e40bacca438a2e78/1.26.8-redhat/helm/gateway-1.26.8.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/7d7e1995d825ec45485083d7e40bacca438a2e78/1.26.8-redhat/helm/cni-1.26.8.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/7d7e1995d825ec45485083d7e40bacca438a2e78/1.26.8-redhat/helm/ztunnel-1.26.8.tgz
   - name: v1.26.6
-    eol: true
+    version: 1.26.6
+    repo: https://github.com/istio/istio
+    commit: 1.26.6
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/74deba2dd9334a029a20637a14847f501386223e/1.26.6-redhat/helm/base-1.26.6.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/74deba2dd9334a029a20637a14847f501386223e/1.26.6-redhat/helm/istiod-1.26.6.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/74deba2dd9334a029a20637a14847f501386223e/1.26.6-redhat/helm/gateway-1.26.6.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/74deba2dd9334a029a20637a14847f501386223e/1.26.6-redhat/helm/cni-1.26.6.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/74deba2dd9334a029a20637a14847f501386223e/1.26.6-redhat/helm/ztunnel-1.26.6.tgz
   - name: v1.26.4
-    eol: true
+    version: 1.26.4
+    repo: https://github.com/istio/istio
+    commit: 1.26.4
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/fe4a8e608026d15a72c7d978d3f416ba52c4e86b/1.26.4-redhat/helm/base-1.26.4.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/fe4a8e608026d15a72c7d978d3f416ba52c4e86b/1.26.4-redhat/helm/istiod-1.26.4.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/fe4a8e608026d15a72c7d978d3f416ba52c4e86b/1.26.4-redhat/helm/gateway-1.26.4.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/fe4a8e608026d15a72c7d978d3f416ba52c4e86b/1.26.4-redhat/helm/cni-1.26.4.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/fe4a8e608026d15a72c7d978d3f416ba52c4e86b/1.26.4-redhat/helm/ztunnel-1.26.4.tgz
   - name: v1.26.3
-    eol: true
+    version: 1.26.3
+    repo: https://github.com/istio/istio
+    commit: 1.26.3
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/a91fd9b7182ebc89ca571b845078e5f37b03332d/1.26.3-redhat/helm/base-1.26.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/a91fd9b7182ebc89ca571b845078e5f37b03332d/1.26.3-redhat/helm/istiod-1.26.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/a91fd9b7182ebc89ca571b845078e5f37b03332d/1.26.3-redhat/helm/gateway-1.26.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/a91fd9b7182ebc89ca571b845078e5f37b03332d/1.26.3-redhat/helm/cni-1.26.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/a91fd9b7182ebc89ca571b845078e5f37b03332d/1.26.3-redhat/helm/ztunnel-1.26.3.tgz
   - name: v1.26.2
-    eol: true
+    version: 1.26.2
+    repo: https://github.com/istio/istio
+    commit: 1.26.2
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/f3168f90673079a5f4a56fd10bb1c6f6908163a7/1.26.2-redhat/helm/base-1.26.2.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/f3168f90673079a5f4a56fd10bb1c6f6908163a7/1.26.2-redhat/helm/istiod-1.26.2.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/f3168f90673079a5f4a56fd10bb1c6f6908163a7/1.26.2-redhat/helm/gateway-1.26.2.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/f3168f90673079a5f4a56fd10bb1c6f6908163a7/1.26.2-redhat/helm/cni-1.26.2.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/f3168f90673079a5f4a56fd10bb1c6f6908163a7/1.26.2-redhat/helm/ztunnel-1.26.2.tgz

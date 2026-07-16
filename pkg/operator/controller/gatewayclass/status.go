@@ -21,9 +21,9 @@ const (
 
 	// CRDsReadyConditionType indicates the ownership and readiness state of Istio CRDs.
 	// Status values:
-	//   - True (ManagedByCIO/ManagedByOLM/MixedOwnership): CRDs are managed by CIO or OLM respectively
+	//   - True (ManagedByCIO/ManagedByOLM): CRDs are managed by CIO or OLM respectively
 	//   - Unknown (NoneExist): CRDs have not yet been installed
-	//   - False (NotReady/Error/UnknownManagement): CRDs have conflicting ownership, are not ready, errored, or unknown
+	//   - False (MixedOwnership/UnknownManagement): CRDs have conflicting ownership or unknown management
 	CRDsReadyConditionType = "CRDsReady"
 )
 
@@ -55,41 +55,29 @@ func mapStatusToConditions(status install.Status, generation int64, conditions *
 
 	changed := meta.SetStatusCondition(conditions, installed)
 
-	// CRD condition: reflects CRD readiness state.
+	// CRD condition: reflects CRD ownership state.
 	crd := metav1.Condition{
 		Type:               CRDsReadyConditionType,
 		ObservedGeneration: generation,
 		LastTransitionTime: metav1.Now(),
 	}
 	switch status.CRDState {
-	case install.CRDManagementStateReady:
-		managedCount := countManagedCRDs(status.CRDs)
-		switch {
-		case managedCount == len(status.CRDs):
-			crd.Status = metav1.ConditionTrue
-			crd.Reason = "ManagedByCIO"
-			crd.Message = "CRDs installed by cluster-ingress-operator"
-		case managedCount == 0:
-			crd.Status = metav1.ConditionTrue
-			crd.Reason = "ManagedByOLM"
-			crd.Message = "CRDs managed by OLM"
-		default:
-			crd.Status = metav1.ConditionTrue
-			crd.Reason = "MixedOwnership"
-			crd.Message = getCRDStatusMessage(status)
-		}
-	case install.CRDManagementStateNotReady:
-		crd.Status = metav1.ConditionFalse
-		crd.Reason = "NotReady"
-		crd.Message = getCRDStatusMessage(status)
-	case install.CRDManagementStateError:
-		crd.Status = metav1.ConditionFalse
-		crd.Reason = "Error"
-		crd.Message = getCRDStatusMessage(status)
-	case install.CRDManagementStateUnknown:
+	case install.CRDManagedByCIO:
+		crd.Status = metav1.ConditionTrue
+		crd.Reason = "ManagedByCIO"
+		crd.Message = status.CRDMessage
+	case install.CRDManagedByOLM:
+		crd.Status = metav1.ConditionTrue
+		crd.Reason = "ManagedByOLM"
+		crd.Message = status.CRDMessage
+	case install.CRDNoneExist:
 		crd.Status = metav1.ConditionUnknown
 		crd.Reason = "NoneExist"
 		crd.Message = "CRDs not yet installed"
+	case install.CRDMixedOwnership:
+		crd.Status = metav1.ConditionFalse
+		crd.Reason = "MixedOwnership"
+		crd.Message = getCRDStatusMessage(status)
 	default:
 		crd.Status = metav1.ConditionFalse
 		crd.Reason = "UnknownManagement"
@@ -106,16 +94,6 @@ func removeSailInstallConditions(conditions *[]metav1.Condition) {
 	meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
 }
 
-func countManagedCRDs(crds []install.CRDInfo) int {
-	count := 0
-	for _, info := range crds {
-		if info.Managed {
-			count++
-		}
-	}
-	return count
-}
-
 // getCRDStatusMessage formats a detailed CRD status message including the overall
 // state and a bulleted list of individual CRD ownership states.
 func getCRDStatusMessage(status install.Status) string {
@@ -127,24 +105,11 @@ func getCRDStatusMessage(status install.Status) string {
 		log.Error(err, "error writing CRD status", "status", status.CRDMessage)
 	}
 	for _, info := range status.CRDs {
-		crdMsg := fmt.Sprintf("\n- %s: %s", info.Name, crdStateString(info))
+		crdMsg := fmt.Sprintf("\n- %s: %s", info.Name, info.State)
 		_, err := message.WriteString(crdMsg)
 		if err != nil {
 			log.Error(err, "error writing CRD message", "crd", info.Name)
 		}
 	}
 	return message.String()
-}
-
-func crdStateString(info install.CRDInfo) string {
-	switch {
-	case info.Managed && info.Ready:
-		return "ManagedByCIO"
-	case info.Managed && !info.Ready:
-		return "ManagedByCIO (not ready)"
-	case !info.Managed && info.Ready:
-		return "ManagedByOLM"
-	default:
-		return "ManagedByOLM (not ready)"
-	}
 }
