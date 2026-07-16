@@ -254,21 +254,12 @@ func Test_Reconcile(t *testing.T) {
 
 	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string, gatewayclassesConfig json.RawMessage) *install.Options {
 		// Start with sail-operator's Gateway API defaults aka trust upstream defaults
-		values := install.GatewayAPIDefaults("openshift-ingress")
+		values := install.GatewayAPIDefaults()
 
 		// Apply our OpenShift-specific overrides
 		pilotEnv := map[string]string{
-			"PILOT_ENABLE_GATEWAY_API":                         "true",
-			"PILOT_ENABLE_ALPHA_GATEWAY_API":                   "false",
-			"PILOT_ENABLE_GATEWAY_API_STATUS":                  "true",
-			"PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER":   "true",
-			"PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "false",
-			"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME":      "openshift-default",
-			"PILOT_GATEWAY_API_CONTROLLER_NAME":                "openshift.io/gateway-controller/v1",
-			"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API":         "false",
-			"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT":             "false",
-			"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY":            "true",
-			"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+			"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME": "openshift-default",
+			"PILOT_GATEWAY_API_CONTROLLER_NAME":           "openshift.io/gateway-controller/v1",
 		}
 		if gieEnabled {
 			pilotEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
@@ -276,12 +267,8 @@ func Test_Reconcile(t *testing.T) {
 
 		openshiftOverrides := &sailv1.Values{
 			Global: &sailv1.GlobalConfig{
-				DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
-					Enabled: ptr.To(false),
-				},
-				IstioNamespace:    ptr.To("openshift-ingress"),
-				PriorityClassName: ptr.To("system-cluster-critical"),
-				TrustBundleName:   ptr.To("openshift-gw-ca-root-cert"),
+				IstioNamespace:  ptr.To("openshift-ingress"),
+				TrustBundleName: ptr.To("openshift-gw-ca-root-cert"),
 			},
 			Pilot: &sailv1.PilotConfig{
 				Env: pilotEnv,
@@ -290,37 +277,21 @@ func Test_Reconcile(t *testing.T) {
 				},
 			},
 			MeshConfig: &sailv1.MeshConfig{
-				AccessLogFile:         ptr.To("/dev/stdout"),
-				IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
 				DefaultConfig: &sailv1.MeshConfigProxyConfig{
-					ProxyHeaders: &sailv1.ProxyConfigProxyHeaders{
-						Server: &sailv1.ProxyConfigProxyHeadersServer{
-							Disabled: ptr.To(true),
-						},
-						EnvoyDebugHeaders: &sailv1.ProxyConfigProxyHeadersEnvoyDebugHeaders{
-							Disabled: ptr.To(true),
-						},
-						MetadataExchangeHeaders: &sailv1.ProxyConfigProxyHeadersMetadataExchangeHeaders{
-							Mode: sailv1.ProxyConfigProxyHeadersMetadataExchangeModeInMesh,
-						},
-					},
 					ProxyMetadata: proxyConfig,
 				},
 			},
 			GatewayClasses: gatewayclassesConfig,
 		}
-		values, err := install.MergeValues(values, openshiftOverrides)
-		if err != nil {
-			t.Fatalf("failed to merge values: %v", err)
-		}
+		values = install.MergeValues(values, openshiftOverrides)
 
 		return &install.Options{
 			Namespace:      "openshift-ingress",
 			Version:        version,
 			Revision:       "openshift-gateway",
 			Values:         values,
-			ManageCRDs:     true,
-			IncludeAllCRDs: true,
+			ManageCRDs:     ptr.To(true),
+			IncludeAllCRDs: ptr.To(true),
 		}
 	}
 

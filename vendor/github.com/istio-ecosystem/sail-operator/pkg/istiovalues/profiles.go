@@ -39,7 +39,7 @@ func ApplyProfilesAndPlatform(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get values from profile %q: %w", profile, err)
 	}
-	values := helm.Values(MergeOverwrite(defaultValues, userValues))
+	values := helm.Values(mergeOverwrite(defaultValues, userValues))
 
 	if platform != config.PlatformKubernetes && platform != config.PlatformUndefined {
 		if err = values.SetIfAbsent("global.platform", string(platform)); err != nil {
@@ -51,7 +51,7 @@ func ApplyProfilesAndPlatform(
 
 func ApplyUserValues(mergedValues, userValues helm.Values,
 ) (helm.Values, error) {
-	values := helm.Values(MergeOverwrite(mergedValues, userValues))
+	values := helm.Values(mergeOverwrite(mergedValues, userValues))
 	return values, nil
 }
 
@@ -91,7 +91,7 @@ func getValuesFromProfiles(resourceFS fs.FS, profilesDir string, profiles []stri
 		if err != nil {
 			return nil, err
 		}
-		values = MergeOverwrite(values, profileValues)
+		values = mergeOverwrite(values, profileValues)
 	}
 
 	return values, nil
@@ -125,7 +125,7 @@ func parseProfileYAML(fileContents []byte, filename string) (helm.Values, error)
 	return m, nil
 }
 
-func MergeOverwrite(base map[string]any, overrides map[string]any) map[string]any {
+func mergeOverwrite(base map[string]any, overrides map[string]any) map[string]any {
 	if base == nil {
 		base = make(map[string]any, 1)
 	}
@@ -144,7 +144,7 @@ func MergeOverwrite(base map[string]any, overrides map[string]any) map[string]an
 		childOverrides, overrideValueIsMap := value.(map[string]any)
 		childBase, baseValueIsMap := base[key].(map[string]any)
 		if baseValueIsMap && overrideValueIsMap {
-			base[key] = MergeOverwrite(childBase, childOverrides)
+			base[key] = mergeOverwrite(childBase, childOverrides)
 		} else {
 			base[key] = value
 		}

@@ -72,32 +72,8 @@ func NewNameAlreadyExistsError(message string, originalError error) NameAlreadyE
 }
 
 func IsNameAlreadyExistsError(err error) bool {
-	var e NameAlreadyExistsError
-	return errors.As(err, &e)
-}
-
-// ReferenceNotFoundError indicates that a referenced resource was not found.
-type ReferenceNotFoundError struct {
-	Message       string
-	originalError error
-}
-
-func (err ReferenceNotFoundError) Error() string {
-	return err.Message
-}
-
-func (err ReferenceNotFoundError) Unwrap() error {
-	return err.originalError
-}
-
-func NewReferenceNotFoundError(message string, originalError error) ReferenceNotFoundError {
-	return ReferenceNotFoundError{
-		Message:       message,
-		originalError: originalError,
+	if _, ok := err.(NameAlreadyExistsError); ok {
+		return true
 	}
-}
-
-func IsReferenceNotFoundError(err error) bool {
-	var e ReferenceNotFoundError
-	return errors.As(err, &e)
+	return false
 }

@@ -16,6 +16,8 @@ package istiovalues
 
 import (
 	v1 "github.com/istio-ecosystem/sail-operator/api/v1"
+
+	"istio.io/istio/pkg/ptr"
 )
 
 func ApplyOverrides(revisionName string, namespace string, values *v1.Values) {
@@ -33,9 +35,7 @@ func ApplyOverrides(revisionName string, namespace string, values *v1.Values) {
 	}
 	values.Global.IstioNamespace = &namespace
 
-	// Clear the defaultRevision field to prevent users from creating the default validator webhook.
-	// This field is deprecated and should be ignored by the operator when set by the user.
-	// The validating webhook should still be created when an `Istio` or `IstioRevisionTag` has a
-	// revision name of "default".
-	values.DefaultRevision = nil
+	// Force defaultRevision to be empty to prevent creation of the default validator webhook.
+	// This field is deprecated and should be ignored by the operator.
+	values.DefaultRevision = ptr.Of("")
 }

@@ -14,82 +14,100 @@
 
 package install
 
-import (
-	"reflect"
-	"slices"
-	"sort"
-	"strings"
+import rbacv1 "k8s.io/api/rbac/v1"
 
-	"github.com/istio-ecosystem/sail-operator/pkg/watches"
-	discoveryv1 "k8s.io/api/discovery/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-)
-
-var (
-	helmManagedVerbs = []string{"get", "list", "watch", "create", "update", "patch", "delete"}
-	readOnlyVerbs    = []string{"get", "list", "watch"}
-	crdVerbs         = []string{"get", "list", "watch", "create", "update", "patch"}
-)
-
-var readOnlyTypes = map[reflect.Type]bool{
-	reflect.TypeOf(&discoveryv1.EndpointSlice{}): true,
-}
-
-// LibraryRBACRules returns the RBAC PolicyRules that the library consumer
-// needs to grant to the service account running the library. Rules are
-// derived from watches.IstiodWatches plus static entries for CRDs,
-// namespaces, and Helm release storage.
+// LibraryRBACRules returns the RBAC PolicyRules required when using the
+// install library. Consumers should aggregate these into their own ClusterRole.
+//
+// These rules are derived from chart/templates/rbac/role.yaml with
+// sailoperator.io CRs filtered out (those are for the operator, not the library).
+//
+// Example usage:
+//
+//	rules := append(myOperatorRules, install.LibraryRBACRules()...)
+//
+// TODO: Consider generating this from role.yaml or adding a verification test
+// to ensure these rules stay in sync with the Helm template.
 func LibraryRBACRules() []rbacv1.PolicyRule {
-	type ruleKey struct {
-		apiGroup string
-		verbs    string
+	return []rbacv1.PolicyRule{
+		{
+			APIGroups: []string{""},
+			Resources: []string{
+				"configmaps",
+				"endpoints",
+				"events",
+				"namespaces",
+				"nodes",
+				"persistentvolumeclaims",
+				"pods",
+				"replicationcontrollers",
+				"resourcequotas",
+				"secrets",
+				"serviceaccounts",
+				"services",
+			},
+			Verbs: []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"admissionregistration.k8s.io"},
+			Resources: []string{
+				"mutatingwebhookconfigurations",
+				"validatingadmissionpolicies",
+				"validatingadmissionpolicybindings",
+				"validatingwebhookconfigurations",
+			},
+			Verbs: []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"apiextensions.k8s.io"},
+			Resources: []string{"customresourcedefinitions"},
+			Verbs:     []string{"get", "list", "watch"},
+		},
+		{
+			APIGroups: []string{"apps"},
+			Resources: []string{"daemonsets", "deployments"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"autoscaling"},
+			Resources: []string{"horizontalpodautoscalers"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"discovery.k8s.io"},
+			Resources: []string{"endpointslices"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"k8s.cni.cncf.io"},
+			Resources: []string{"network-attachment-definitions"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"networking.istio.io"},
+			Resources: []string{"envoyfilters"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"networking.k8s.io"},
+			Resources: []string{"networkpolicies"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"policy"},
+			Resources: []string{"poddisruptionbudgets"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+		},
+		{
+			APIGroups: []string{"rbac.authorization.k8s.io"},
+			Resources: []string{"clusterrolebindings", "clusterroles", "rolebindings", "roles"},
+			Verbs:     []string{"create", "delete", "get", "list", "patch", "update", "watch", "bind", "escalate"},
+		},
+		{
+			APIGroups:     []string{"security.openshift.io"},
+			Resources:     []string{"securitycontextconstraints"},
+			ResourceNames: []string{"privileged"},
+			Verbs:         []string{"use"},
+		},
 	}
-	grouped := map[ruleKey][]string{}
-
-	addEntry := func(apiGroup, resource string, verbs []string) {
-		key := ruleKey{apiGroup: apiGroup, verbs: strings.Join(verbs, ",")}
-		if !slices.Contains(grouped[key], resource) {
-			grouped[key] = append(grouped[key], resource)
-		}
-	}
-
-	for _, wr := range watches.IstiodWatches {
-		gvks, _, err := clientgoscheme.Scheme.ObjectKinds(wr.Object)
-		if err != nil || len(gvks) == 0 {
-			continue
-		}
-		plural, _ := meta.UnsafeGuessKindToResource(gvks[0])
-		verbs := helmManagedVerbs
-		if readOnlyTypes[reflect.TypeOf(wr.Object)] {
-			verbs = readOnlyVerbs
-		}
-		addEntry(plural.Group, plural.Resource, verbs)
-	}
-
-	addEntry("", "namespaces", readOnlyVerbs)
-	addEntry("", "endpoints", readOnlyVerbs)
-	addEntry("", "pods", readOnlyVerbs)
-	addEntry("", "secrets", helmManagedVerbs)
-	addEntry("apiextensions.k8s.io", "customresourcedefinitions", crdVerbs)
-
-	var rules []rbacv1.PolicyRule
-	for key, resources := range grouped {
-		sort.Strings(resources)
-		rules = append(rules, rbacv1.PolicyRule{
-			APIGroups: []string{key.apiGroup},
-			Resources: resources,
-			Verbs:     strings.Split(key.verbs, ","),
-		})
-	}
-
-	sort.Slice(rules, func(i, j int) bool {
-		if rules[i].APIGroups[0] != rules[j].APIGroups[0] {
-			return rules[i].APIGroups[0] < rules[j].APIGroups[0]
-		}
-		return rules[i].Resources[0] < rules[j].Resources[0]
-	})
-
-	return rules
 }

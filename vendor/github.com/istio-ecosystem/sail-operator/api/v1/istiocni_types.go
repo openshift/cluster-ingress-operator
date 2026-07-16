@@ -15,6 +15,8 @@
 package v1
 
 import (
+	"time"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,10 +28,10 @@ const (
 type IstioCNISpec struct {
 	// +sail:version
 	// Defines the version of Istio to install.
-	// Must be one of: v1.30-latest, v1.30.1, v1.28-latest, v1.28.8, v1.28.6, v1.28.5, v1.28.4, v1.27-latest, v1.27.9, v1.27.8, v1.27.5, v1.27.3.
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.30-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.30.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.28-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.27-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.9", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.3"}
-	// +kubebuilder:validation:Enum=v1.30-latest;v1.30.1;v1.28-latest;v1.28.8;v1.28.6;v1.28.5;v1.28.4;v1.27-latest;v1.27.9;v1.27.8;v1.27.5;v1.27.3;v1.26-latest;v1.26.8;v1.26.6;v1.26.4;v1.26.3;v1.26.2
-	// +kubebuilder:default=v1.30.1
+	// Must be one of: v1.28-latest, v1.28.5, v1.28.4, v1.27-latest, v1.27.8, v1.27.5, v1.27.3, v1.26-latest, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.28-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.27-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.26-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.2"}
+	// +kubebuilder:validation:Enum=v1.28-latest;v1.28.5;v1.28.4;v1.27-latest;v1.27.8;v1.27.5;v1.27.3;v1.26-latest;v1.26.8;v1.26.6;v1.26.4;v1.26.3;v1.26.2
+	// +kubebuilder:default=v1.28.5
 	Version string `json:"version"`
 
 	// +sail:profile
@@ -60,30 +62,82 @@ type IstioCNIStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// Represents the latest available observations of the object's current state.
-	Conditions []StatusCondition `json:"conditions,omitempty"`
+	Conditions []IstioCNICondition `json:"conditions,omitempty"`
 
 	// Reports the current state of the object.
 	State IstioCNIConditionReason `json:"state,omitempty"`
 }
 
 // GetCondition returns the condition of the specified type
-func (s *IstioCNIStatus) GetCondition(conditionType IstioCNIConditionType) StatusCondition {
-	if s == nil {
-		return StatusCondition{Type: conditionType, Status: metav1.ConditionUnknown}
+func (s *IstioCNIStatus) GetCondition(conditionType IstioCNIConditionType) IstioCNICondition {
+	if s != nil {
+		for i := range s.Conditions {
+			if s.Conditions[i].Type == conditionType {
+				return s.Conditions[i]
+			}
+		}
 	}
-	return GetCondition(s.Conditions, conditionType)
+	return IstioCNICondition{Type: conditionType, Status: metav1.ConditionUnknown}
 }
 
 // SetCondition sets a specific condition in the list of conditions
-func (s *IstioCNIStatus) SetCondition(condition StatusCondition) {
-	SetCondition(&s.Conditions, condition)
+func (s *IstioCNIStatus) SetCondition(condition IstioCNICondition) {
+	var now time.Time
+	if testTime == nil {
+		now = time.Now()
+	} else {
+		now = *testTime
+	}
+
+	// The lastTransitionTime only gets serialized out to the second.  This can
+	// break update skipping, as the time in the resource returned from the client
+	// may not match the time in our cached status during a reconcile.  We truncate
+	// here to save any problems down the line.
+	lastTransitionTime := metav1.NewTime(now.Truncate(time.Second))
+
+	for i, prevCondition := range s.Conditions {
+		if prevCondition.Type == condition.Type {
+			if prevCondition.Status != condition.Status {
+				condition.LastTransitionTime = lastTransitionTime
+			} else {
+				condition.LastTransitionTime = prevCondition.LastTransitionTime
+			}
+			s.Conditions[i] = condition
+			return
+		}
+	}
+
+	// If the condition does not exist, initialize the lastTransitionTime
+	condition.LastTransitionTime = lastTransitionTime
+	s.Conditions = append(s.Conditions, condition)
 }
 
-// IstioCNIConditionType is an alias for ConditionType.
-type IstioCNIConditionType = ConditionType
+// IstioCNICondition represents a specific observation of the IstioCNI object's state.
+type IstioCNICondition struct {
+	// The type of this condition.
+	Type IstioCNIConditionType `json:"type,omitempty"`
 
-// IstioCNIConditionReason is an alias for ConditionReason.
-type IstioCNIConditionReason = ConditionReason
+	// The status of this condition. Can be True, False or Unknown.
+	Status metav1.ConditionStatus `json:"status,omitempty"`
+
+	// Unique, single-word, CamelCase reason for the condition's last transition.
+	Reason IstioCNIConditionReason `json:"reason,omitempty"`
+
+	// Human-readable message indicating details about the last transition.
+	Message string `json:"message,omitempty"`
+
+	// Last time the condition transitioned from one status to another.
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitzero"`
+}
+
+// IstioCNIConditionType represents the type of the condition.  Condition stages are:
+// Installed, Reconciled, Ready
+type IstioCNIConditionType string
+
+// IstioCNIConditionReason represents a short message indicating how the condition came
+// to be in its present state.
+type IstioCNIConditionReason string
 
 const (
 	// IstioCNIConditionReconciled signifies whether the controller has
@@ -127,7 +181,7 @@ type IstioCNI struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata"`
 
-	// +kubebuilder:default={version: "v1.30.1", namespace: "istio-cni"}
+	// +kubebuilder:default={version: "v1.28.5", namespace: "istio-cni"}
 	// +optional
 	Spec IstioCNISpec `json:"spec"`
 
