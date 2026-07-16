@@ -35,8 +35,8 @@ const (
 	defaultTrustedCABundle           = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 	defaultGatewayAPIOperatorCatalog = "redhat-operators"
 	defaultGatewayAPIOperatorChannel = "stable"
-	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.1.0"
-	defaultIstioVersion              = "v1.26.2"
+	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.3.1"
+	defaultIstioVersion              = "v1.26.8"
 )
 
 type StartOptions struct {
