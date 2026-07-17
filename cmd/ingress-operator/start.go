@@ -180,11 +180,14 @@ func start(opts *StartOptions) error {
 	var metricsTLSOpts []func(*tls.Config)
 	if opts.MetricsCertDir != "" {
 		apiConfig := &configv1.APIServer{}
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+		if err := cl.Get(signal, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
 			log.Info("failed to get APIServer 'cluster' for metrics TLS; falling back to intermediate profile", "error", err)
 		}
 		tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
-		tlsCfg, err := operatorcontroller.TLSConfigFromProfile(tlsProfileSpec)
+		tlsCfg, err := operatorcontroller.TLSConfigFromProfile(
+			log.WithValues("resourceType", "APIServer", "name", "cluster"),
+			tlsProfileSpec,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to build TLS config for metrics: %v", err)
 		}

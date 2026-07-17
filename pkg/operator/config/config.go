@@ -43,8 +43,8 @@ type Config struct {
 	MetricsBindAddress string
 
 	// MetricsCertDir is the directory containing tls.crt and tls.key
-	// for the metrics server. When empty, controller-runtime falls back
-	// to a self-signed certificate.
+	// for the metrics server. When empty, the metrics endpoint is served
+	// over plain HTTP without authentication.
 	MetricsCertDir string
 
 	// MetricsTLSOpts are functions that mutate the TLS configuration
