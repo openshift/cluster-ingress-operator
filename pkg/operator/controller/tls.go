@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/library-go/pkg/crypto"
 )
@@ -41,9 +42,11 @@ func TLSGroupToCurveID(group configv1.TLSGroup) (tls.CurveID, bool) {
 // TLSConfigFromProfile builds a *tls.Config from the given TLSProfileSpec.
 // Cipher names in the spec are expected to use OpenSSL naming (the format
 // used in the configv1.TLSProfileSpec.Ciphers field).  Groups that cannot
-// be mapped to a Go CurveID are silently skipped so that the operator does
-// not fail when the API advertises groups the runtime does not yet support.
-func TLSConfigFromProfile(spec *configv1.TLSProfileSpec) (*tls.Config, error) {
+// be mapped to a Go CurveID are skipped (with a warning on log) so that the
+// operator does not fail when the API advertises groups the runtime does
+// not yet support. Callers should bind resource context on log (for example
+// with WithValues) so skipped-group warnings identify the related object.
+func TLSConfigFromProfile(log logr.Logger, spec *configv1.TLSProfileSpec) (*tls.Config, error) {
 	if spec == nil {
 		return crypto.SecureTLSConfig(&tls.Config{}), nil
 	}
@@ -56,6 +59,7 @@ func TLSConfigFromProfile(spec *configv1.TLSProfileSpec) (*tls.Config, error) {
 		for _, name := range ianaNames {
 			id, err := crypto.CipherSuite(name)
 			if err != nil {
+				log.Info("skipping unsupported cipher suite", "cipher", name)
 				continue
 			}
 			suites = append(suites, id)
@@ -76,6 +80,8 @@ func TLSConfigFromProfile(spec *configv1.TLSProfileSpec) (*tls.Config, error) {
 		for _, g := range spec.Groups {
 			if id, ok := TLSGroupToCurveID(g); ok {
 				curves = append(curves, id)
+			} else {
+				log.Info("skipping unsupported TLS group", "group", g)
 			}
 		}
 		if len(curves) > 0 {

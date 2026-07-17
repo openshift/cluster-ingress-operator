@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -361,9 +362,13 @@ func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 				t.Errorf("TLS_MIN_VERSION mismatch (-want +got):\n%s", diff)
 			}
 
-			actualGroups := getEnvVar(ds, "TLS_GROUPS")
-			if diff := cmp.Diff(tc.expectGroups, actualGroups); diff != "" {
-				t.Errorf("TLS_GROUPS mismatch (-want +got):\n%s", diff)
+			if tc.expectGroups == "" {
+				for _, env := range ds.Spec.Template.Spec.Containers[0].Env {
+					assert.NotEqual(t, "TLS_GROUPS", env.Name, "TLS_GROUPS should be absent when no groups are expected")
+				}
+			} else {
+				actualGroups := getEnvVar(ds, "TLS_GROUPS")
+				assert.Equal(t, tc.expectGroups, actualGroups, "TLS_GROUPS mismatch (-want +got):\n%s", cmp.Diff(tc.expectGroups, actualGroups))
 			}
 		})
 	}

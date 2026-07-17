@@ -1964,22 +1964,17 @@ func TestTLSSecurityProfile(t *testing.T) {
 	sort.Strings(actualCiphers)
 	sort.Strings(expectedCiphers)
 
-	if diff := cmp.Diff(expectedCiphers, actualCiphers); diff != "" || intermediateProfileSpec.MinTLSVersion != ic.Status.TLSProfile.MinTLSVersion {
-		t.Fatalf("ingresscontroller status has unexpected security profile spec (-want +got):\n%s", cmp.Diff(*intermediateProfileSpec, *ic.Status.TLSProfile))
-	}
-	if tlsGroupsEnabled {
-		assert.Equal(t, intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups,
-			"ingresscontroller status has unexpected TLS groups: expected %v, got %v",
-			intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups)
+	if !cmp.Equal(actualCiphers, expectedCiphers) || !cmp.Equal(intermediateProfileSpec.MinTLSVersion, ic.Status.TLSProfile.MinTLSVersion) {
+		t.Fatalf("ingresscontroller status has unexpected security profile spec.\n%s", cmp.Diff(*intermediateProfileSpec, *ic.Status.TLSProfile))
 	}
 	tlsGroupsEnabled, err := isFeatureGateEnabled(features.FeatureGateTLSGroupPreferences)
 	if err != nil {
 		t.Fatalf("failed to check TLSGroupPreferences feature gate: %v", err)
 	}
 	if tlsGroupsEnabled {
-		if len(ic.Status.TLSProfile.Groups) == 0 {
-			t.Fatalf("ingresscontroller status has no TLS groups, expected default groups to be set")
-		}
+		assert.Equal(t, intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups,
+			"ingresscontroller status has unexpected TLS groups: expected %v, got %v",
+			intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups)
 	}
 
 	customProfileSpec := configv1.TLSProfileSpec{
@@ -2013,7 +2008,9 @@ func TestTLSSecurityProfile(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("ingresscontroller status has unexpected security profile spec (-want +got):\n%s", cmp.Diff(customProfileSpec, *ic.Status.TLSProfile))
+		t.Fatalf("ingresscontroller status has unexpected security profile spec.\n%s\nexpected groups: %v\ngot groups: %v",
+			cmp.Diff(customProfileSpec, *ic.Status.TLSProfile),
+			customProfileSpec.Groups, ic.Status.TLSProfile.Groups)
 	}
 }
 
