@@ -23,9 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v2"
-
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -41,6 +40,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 
 	"github.com/go-logr/logr"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1954,19 +1954,28 @@ func TestTLSSecurityProfile(t *testing.T) {
 	}
 	intermediateProfileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
 
-	actualCiphers := ic.Status.TLSProfile.Ciphers
-	expectedCiphers := intermediateProfileSpec.Ciphers
+	tlsGroupsEnabled, err := isFeatureGateEnabled(features.FeatureGateTLSGroupPreferences)
+	if err != nil {
+		t.Fatalf("failed to check TLSGroupPreferences feature gate: %v", err)
+	}
+
+	actualCiphers := append([]string{}, ic.Status.TLSProfile.Ciphers...)
+	expectedCiphers := append([]string{}, intermediateProfileSpec.Ciphers...)
 	sort.Strings(actualCiphers)
 	sort.Strings(expectedCiphers)
 
-	if !reflect.DeepEqual(actualCiphers, expectedCiphers) || !reflect.DeepEqual(intermediateProfileSpec.MinTLSVersion, ic.Status.TLSProfile.MinTLSVersion) {
-		expected, _ := yaml.Marshal(intermediateProfileSpec)
-		actual, _ := yaml.Marshal(*ic.Status.TLSProfile)
-		t.Fatalf("ingresscontroller status has unexpected security profile spec.\nexpected:\n%s\ngot:\n%s", expected, actual)
+	if diff := cmp.Diff(expectedCiphers, actualCiphers); diff != "" || intermediateProfileSpec.MinTLSVersion != ic.Status.TLSProfile.MinTLSVersion {
+		t.Fatalf("ingresscontroller status has unexpected security profile spec (-want +got):\n%s", cmp.Diff(*intermediateProfileSpec, *ic.Status.TLSProfile))
+	}
+	if tlsGroupsEnabled {
+		assert.Equal(t, intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups,
+			"ingresscontroller status has unexpected TLS groups: expected %v, got %v",
+			intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups)
 	}
 
 	customProfileSpec := configv1.TLSProfileSpec{
 		Ciphers:       []string{"ECDHE-ECDSA-AES256-GCM-SHA384"},
+		Groups:        []configv1.TLSGroup{configv1.TLSGroupSecP256r1, configv1.TLSGroupSecP384r1},
 		MinTLSVersion: configv1.VersionTLS12,
 	}
 	ic.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
@@ -1978,20 +1987,24 @@ func TestTLSSecurityProfile(t *testing.T) {
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Errorf("failed to update ingresscontroller %s: %v", name, err)
 	}
-	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, ic); err != nil {
 			t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
 			return false, nil
 		}
-		if !reflect.DeepEqual(*ic.Status.TLSProfile, customProfileSpec) {
+		if !cmp.Equal(ic.Status.TLSProfile.Ciphers, customProfileSpec.Ciphers) {
+			return false, nil
+		}
+		if ic.Status.TLSProfile.MinTLSVersion != customProfileSpec.MinTLSVersion {
+			return false, nil
+		}
+		if tlsGroupsEnabled && !cmp.Equal(ic.Status.TLSProfile.Groups, customProfileSpec.Groups) {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		expected, _ := yaml.Marshal(customProfileSpec)
-		actual, _ := yaml.Marshal(*ic.Status.TLSProfile)
-		t.Fatalf("ingresscontroller status has unexpected security profile spec.\nexpected:\n%s\ngot:\n%s", expected, actual)
+		t.Fatalf("ingresscontroller status has unexpected security profile spec (-want +got):\n%s", cmp.Diff(customProfileSpec, *ic.Status.TLSProfile))
 	}
 }
 
