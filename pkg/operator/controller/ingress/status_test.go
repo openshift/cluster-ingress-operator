@@ -844,6 +844,38 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		return ic
 	}
 
+	loadBalancerIngressControllerWithAWSSecurityGroups := func(securityGroupsSpec []operatorv1.SecurityGroupID, securityGroupsStatus []operatorv1.SecurityGroupID) *operatorv1.IngressController {
+		eps := &operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+					},
+				},
+			},
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+		}
+
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+			SecurityGroups: securityGroupsSpec,
+		}
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+			SecurityGroups: securityGroupsStatus,
+		}
+
+		return ic
+	}
+
 	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -1329,6 +1361,86 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-zzzzzzzzzzzzz"},
 				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups nil spec and nil status",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				nil,
+				nil,
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups nil spec and empty status",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				nil,
+				[]operatorv1.SecurityGroupID{},
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups spec with securityGroups and nil status",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+				nil,
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups nil spec and status with securityGroups",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				nil,
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups spec and status are equal",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups spec and status are NOT equal",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+				[]operatorv1.SecurityGroupID{"sg-aaaaaaaa", "sg-bbbbbbbbbbbbbbbbb"},
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups spec and status are equal with different order",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+				[]operatorv1.SecurityGroupID{"sg-abcdef0123456789a", "sg-12345678"},
+			),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS SecurityGroups spec and status have extra items",
+			ic: loadBalancerIngressControllerWithAWSSecurityGroups(
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a", "sg-cccccccc"},
+				[]operatorv1.SecurityGroupID{"sg-abcdef0123456789a", "sg-12345678"},
 			),
 			service:        lbServiceWithNLB,
 			platformStatus: awsPlatformStatus,

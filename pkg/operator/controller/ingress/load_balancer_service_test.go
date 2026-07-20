@@ -113,6 +113,21 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			return eps
 		}
 
+		// nlbWithSecurityGroups returns an AWS NLB with the specified security groups.
+		nlbWithSecurityGroups = func(scope operatorv1.LoadBalancerScope, securityGroups []operatorv1.SecurityGroupID) *operatorv1.EndpointPublishingStrategy {
+			eps := lbs(scope)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+						SecurityGroups: securityGroups,
+					},
+				},
+			}
+			return eps
+		}
+
 		// gcpLB returns an EndpointPublishingStrategy with type
 		// "LoadBalancerService" and the specified scope and with
 		// providerParameters set with the specified GCP ClientAccess
@@ -482,6 +497,60 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				localWithFallbackAnnotation:                  {true, ""},
 				awsLBSubnetsAnnotation:                       {false, ""},
 				awsEIPAllocationsAnnotation:                  {false, ""},
+			},
+		},
+		{
+			description:    "network load balancer with securityGroups for aws platform",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: nlbWithSecurityGroups(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+			),
+			strategyStatus: nlbWithSecurityGroups(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.SecurityGroupID{"sg-12345678", "sg-abcdef0123456789a"},
+			),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsEIPAllocationsAnnotation:                  {false, ""},
+				awsLBSecurityGroupsAnnotation:                {true, "sg-12345678,sg-abcdef0123456789a"},
+			},
+		},
+		{
+			description:    "network load balancer with nil securityGroups for aws platform",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: nlbWithSecurityGroups(operatorv1.ExternalLoadBalancer,
+				nil,
+			),
+			strategyStatus: nlbWithSecurityGroups(operatorv1.ExternalLoadBalancer,
+				nil,
+			),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsEIPAllocationsAnnotation:                  {false, ""},
+				awsLBSecurityGroupsAnnotation:                {false, ""},
 			},
 		},
 		{
@@ -1809,6 +1878,30 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 			},
 		},
 		{
+			description: "AWS platform with different security groups",
+			current: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSecurityGroupsAnnotation: "sg-12345678",
+					},
+				},
+			},
+			desired: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSecurityGroupsAnnotation: "sg-87654321",
+					},
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			expect: true,
+			expectChangedAnnotations: []string{
+				awsLBSecurityGroupsAnnotation,
+			},
+		},
+		{
 			description: "OpenStack platform with different LoadBalancerIP",
 			current: &corev1.Service{
 				Spec: corev1.ServiceSpec{
@@ -1911,6 +2004,163 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 			}
 			if !cmp.Equal(changedFields, tc.expectChangedFields, sliceCmpOpts...) {
 				t.Errorf("expected changedFields %s, got %s", tc.expectChangedFields, changedFields)
+			}
+		})
+	}
+}
+
+func TestAWSSecurityGroupsEqual(t *testing.T) {
+	testCases := []struct {
+		description string
+		a, b        []operatorv1.SecurityGroupID
+		expect      bool
+	}{
+		{
+			description: "both nil",
+			a:           nil,
+			b:           nil,
+			expect:      true,
+		},
+		{
+			description: "nil and empty",
+			a:           nil,
+			b:           []operatorv1.SecurityGroupID{},
+			expect:      true,
+		},
+		{
+			description: "same single element",
+			a:           []operatorv1.SecurityGroupID{"sg-12345678"},
+			b:           []operatorv1.SecurityGroupID{"sg-12345678"},
+			expect:      true,
+		},
+		{
+			description: "same elements different order",
+			a:           []operatorv1.SecurityGroupID{"sg-aaaa", "sg-bbbb"},
+			b:           []operatorv1.SecurityGroupID{"sg-bbbb", "sg-aaaa"},
+			expect:      true,
+		},
+		{
+			description: "different elements",
+			a:           []operatorv1.SecurityGroupID{"sg-aaaa"},
+			b:           []operatorv1.SecurityGroupID{"sg-bbbb"},
+			expect:      false,
+		},
+		{
+			description: "different lengths",
+			a:           []operatorv1.SecurityGroupID{"sg-aaaa", "sg-bbbb"},
+			b:           []operatorv1.SecurityGroupID{"sg-aaaa"},
+			expect:      false,
+		},
+		{
+			description: "nil vs non-empty",
+			a:           nil,
+			b:           []operatorv1.SecurityGroupID{"sg-aaaa"},
+			expect:      false,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := awsSecurityGroupsEqual(tc.a, tc.b); actual != tc.expect {
+				t.Errorf("expected %t, got %t", tc.expect, actual)
+			}
+		})
+	}
+}
+
+func TestJoinAWSSecurityGroups(t *testing.T) {
+	testCases := []struct {
+		description    string
+		securityGroups []operatorv1.SecurityGroupID
+		sep            string
+		expect         string
+	}{
+		{
+			description:    "empty slice",
+			securityGroups: []operatorv1.SecurityGroupID{},
+			sep:            ",",
+			expect:         "",
+		},
+		{
+			description:    "single element",
+			securityGroups: []operatorv1.SecurityGroupID{"sg-12345678"},
+			sep:            ",",
+			expect:         "sg-12345678",
+		},
+		{
+			description:    "multiple elements",
+			securityGroups: []operatorv1.SecurityGroupID{"sg-aaaa", "sg-bbbb", "sg-cccc"},
+			sep:            ",",
+			expect:         "sg-aaaa,sg-bbbb,sg-cccc",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := JoinAWSSecurityGroups(tc.securityGroups, tc.sep); actual != tc.expect {
+				t.Errorf("expected %q, got %q", tc.expect, actual)
+			}
+		})
+	}
+}
+
+func TestGetSecurityGroupsFromServiceAnnotation(t *testing.T) {
+	testCases := []struct {
+		description string
+		service     *corev1.Service
+		expect      []operatorv1.SecurityGroupID
+	}{
+		{
+			description: "nil service",
+			service:     nil,
+			expect:      nil,
+		},
+		{
+			description: "no annotation",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			expect: nil,
+		},
+		{
+			description: "empty annotation",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSecurityGroupsAnnotation: "",
+					},
+				},
+			},
+			expect: nil,
+		},
+		{
+			description: "single security group",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSecurityGroupsAnnotation: "sg-12345678",
+					},
+				},
+			},
+			expect: []operatorv1.SecurityGroupID{"sg-12345678"},
+		},
+		{
+			description: "multiple security groups",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSecurityGroupsAnnotation: "sg-aaaa,sg-bbbb,sg-cccc",
+					},
+				},
+			},
+			expect: []operatorv1.SecurityGroupID{"sg-aaaa", "sg-bbbb", "sg-cccc"},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := getSecurityGroupsFromServiceAnnotation(tc.service)
+			if !reflect.DeepEqual(actual, tc.expect) {
+				t.Errorf("expected %v, got %v", tc.expect, actual)
 			}
 		})
 	}

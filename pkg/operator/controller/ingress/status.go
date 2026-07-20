@@ -98,6 +98,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if platformStatus.Type == configv1.AWSPlatformType {
 		updateIngressControllerAWSSubnetStatus(updated, service)
 		updateIngressControllerAWSEIPAllocationStatus(updated, service)
+		updateIngressControllerAWSSecurityGroupStatus(updated, service)
 	}
 	if platformStatus.Type == configv1.OpenStackPlatformType {
 		updateIngressControllerFloatingIPOpenStackStatus(updated, service)
@@ -923,6 +924,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if !awsEIPAllocationsEqual(getAWSNLBEIPAllocations(a.EndpointPublishingStrategy), getAWSNLBEIPAllocations(b.EndpointPublishingStrategy)) {
 		return false
 	}
+	if !awsSecurityGroupsEqual(getAWSNLBSecurityGroups(a.EndpointPublishingStrategy), getAWSNLBSecurityGroups(b.EndpointPublishingStrategy)) {
+		return false
+	}
 	if !awsSubnetsEqual(getAWSCLBSubnets(a.EndpointPublishingStrategy), getAWSCLBSubnets(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -1144,6 +1148,18 @@ func updateIngressControllerAWSEIPAllocationStatus(ic *operatorv1.IngressControl
 		nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic)
 		if nlbParams != nil {
 			nlbParams.EIPAllocations = getEIPAllocationsFromServiceAnnotation(service)
+		}
+	}
+}
+
+// updateIngressControllerAWSSecurityGroupStatus mutates the provided IngressController object to
+// sync its status to the effective securityGroups on the LoadBalancer-type service.
+func updateIngressControllerAWSSecurityGroupStatus(ic *operatorv1.IngressController, service *corev1.Service) {
+	switch getAWSLoadBalancerTypeFromServiceAnnotation(service) {
+	case operatorv1.AWSNetworkLoadBalancer:
+		nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic)
+		if nlbParams != nil {
+			nlbParams.SecurityGroups = getSecurityGroupsFromServiceAnnotation(service)
 		}
 	}
 }

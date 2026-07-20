@@ -98,6 +98,9 @@ const (
 	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
 	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 
+	// awsLBSecurityGroupsAnnotation specifies a list of security group IDs for NLBs.
+	awsLBSecurityGroupsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-security-groups"
+
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
@@ -298,6 +301,10 @@ var (
 				// This requires service recreation to prevent compatibility issues during upgrades since
 				// this annotation was previously unmanaged.
 				awsEIPAllocationsAnnotation,
+				// Annotation for configuring load balancer security groups.
+				// This requires service recreation because NLBs do not support
+				// in-place security group updates through the annotation.
+				awsLBSecurityGroupsAnnotation,
 			),
 		}
 
@@ -473,6 +480,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 						if nlbParams != nil && awsEIPAllocationsExist(nlbParams.EIPAllocations) {
 							service.Annotations[awsEIPAllocationsAnnotation] = JoinAWSEIPAllocations(nlbParams.EIPAllocations, ",")
+						}
+
+						if nlbParams != nil && len(nlbParams.SecurityGroups) > 0 {
+							service.Annotations[awsLBSecurityGroupsAnnotation] = JoinAWSSecurityGroups(nlbParams.SecurityGroups, ",")
 						}
 
 					case operatorv1.AWSClassicLoadBalancer:
@@ -976,6 +987,24 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 				err := createEffectuationMessage("eipAllocations", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson, patchSpec, ic, service)
 				errs = append(errs, err)
 			}
+
+			var (
+				wantSecurityGroups, haveSecurityGroups []operatorv1.SecurityGroupID
+			)
+			if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
+				wantSecurityGroups = nlbParams.SecurityGroups
+			}
+			if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
+				haveSecurityGroups = nlbParams.SecurityGroups
+			}
+			if !awsSecurityGroupsEqual(wantSecurityGroups, haveSecurityGroups) {
+				haveSecurityGroupsPatchJson := convertAWSSecurityGroupsListToPatchJson(haveSecurityGroups, "null")
+				haveSecurityGroupsPrettyJson := convertAWSSecurityGroupsListToPatchJson(haveSecurityGroups, "[]")
+				wantSecurityGroupsPrettyJson := convertAWSSecurityGroupsListToPatchJson(wantSecurityGroups, "[]")
+				patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"NLB","networkLoadBalancer":{"securityGroups":%s}}}}}}}`, haveSecurityGroupsPatchJson)
+				err := createEffectuationMessage("securityGroups", haveSecurityGroupsPrettyJson, wantSecurityGroupsPrettyJson, patchSpec, ic, service)
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -1012,6 +1041,21 @@ func convertAWSEIPAllocationsListToPatchJson(eipAllocations []operatorv1.EIPAllo
 		return ""
 	}
 	return string(eipAllocationsJSONBytes)
+}
+
+// convertAWSSecurityGroupsListToPatchJson converts a SecurityGroups slice to a JSON formatted string
+// to build an oc patch command. It defaults nil or no securityGroups values i.e an empty slice to emptySecurityGroupValue
+func convertAWSSecurityGroupsListToPatchJson(securityGroups []operatorv1.SecurityGroupID, emptySecurityGroupValue string) string {
+	if len(securityGroups) == 0 {
+		return emptySecurityGroupValue
+	}
+
+	securityGroupsJSONBytes, err := json.Marshal(securityGroups)
+	if err != nil {
+		log.Error(err, "error marshaling securityGroups")
+		return ""
+	}
+	return string(securityGroupsJSONBytes)
 }
 
 // convertAWSSubnetListToPatchJson converts an AWSSubnets object to a JSON formatted string
@@ -1182,6 +1226,30 @@ func getEIPAllocationsFromServiceAnnotation(service *corev1.Service) []operatorv
 	return awsEIPAllocations
 }
 
+// getSecurityGroupsFromServiceAnnotation gets the effective securityGroups by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-security-groups annotation of the LoadBalancer-type Service.
+// If no securityGroups are specified in the annotation, this function returns nil.
+func getSecurityGroupsFromServiceAnnotation(service *corev1.Service) []operatorv1.SecurityGroupID {
+	if service == nil {
+		return nil
+	}
+
+	var awsSecurityGroups []operatorv1.SecurityGroupID
+	if a, ok := service.Annotations[awsLBSecurityGroupsAnnotation]; ok {
+		var securityGroups []string
+		a = strings.TrimSpace(a)
+		if len(a) > 0 {
+			securityGroups = strings.Split(a, ",")
+		}
+
+		for _, sg := range securityGroups {
+			awsSecurityGroups = append(awsSecurityGroups, operatorv1.SecurityGroupID(sg))
+		}
+	}
+
+	return awsSecurityGroups
+}
+
 // awsEIPAllocationsEqual compares two AWSEIPAllocation slices and returns a boolean
 // whether they are equal are not. The order of the EIP Allocations are ignored.
 func awsEIPAllocationsEqual(eipAllocations1, eipAllocations2 []operatorv1.EIPAllocation) bool {
@@ -1215,6 +1283,41 @@ func awsEIPAllocationsEqual(eipAllocations1, eipAllocations2 []operatorv1.EIPAll
 	// Check if maps contain the same eipAllocations.
 	for eipAllocation := range eipAllocationMap1 {
 		if _, found := eipAllocationMap2[eipAllocation]; !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// awsSecurityGroupsEqual compares two SecurityGroupID slices and returns a boolean
+// whether they are equal or not. The order of the security groups is ignored.
+func awsSecurityGroupsEqual(securityGroups1, securityGroups2 []operatorv1.SecurityGroupID) bool {
+	if securityGroups1 == nil && securityGroups2 == nil {
+		return true
+	}
+
+	if securityGroups1 == nil {
+		return len(securityGroups2) == 0
+	}
+	if securityGroups2 == nil {
+		return len(securityGroups1) == 0
+	}
+
+	if len(securityGroups1) != len(securityGroups2) {
+		return false
+	}
+
+	sgMap1 := make(map[operatorv1.SecurityGroupID]struct{})
+	sgMap2 := make(map[operatorv1.SecurityGroupID]struct{})
+	for _, sg := range securityGroups1 {
+		sgMap1[sg] = struct{}{}
+	}
+	for _, sg := range securityGroups2 {
+		sgMap2[sg] = struct{}{}
+	}
+	for sg := range sgMap1 {
+		if _, found := sgMap2[sg]; !found {
 			return false
 		}
 	}
@@ -1327,6 +1430,23 @@ func JoinAWSEIPAllocations(eipAllocations []operatorv1.EIPAllocation, sep string
 	return buffer.String()
 }
 
+// JoinAWSSecurityGroups joins an AWS SecurityGroupID slice into a string separated by sep.
+func JoinAWSSecurityGroups(securityGroups []operatorv1.SecurityGroupID, sep string) string {
+	var buffer bytes.Buffer
+	first := true
+	for _, sg := range securityGroups {
+		if len(string(sg)) != 0 {
+			if !first {
+				buffer.WriteString(sep)
+			} else {
+				first = false
+			}
+			buffer.WriteString(string(sg))
+		}
+	}
+	return buffer.String()
+}
+
 // getAWSLoadBalancerTypeInStatus gets the AWS Load Balancer Type reported in the status.
 func getAWSLoadBalancerTypeInStatus(ic *operatorv1.IngressController) operatorv1.AWSLoadBalancerType {
 	if ic.Status.EndpointPublishingStrategy != nil &&
@@ -1391,6 +1511,16 @@ func getAWSNetworkLoadBalancerParametersInStatus(ic *operatorv1.IngressControlle
 func getAWSNLBEIPAllocations(eps *operatorv1.EndpointPublishingStrategy) []operatorv1.EIPAllocation {
 	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
 		return eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations
+	}
+
+	return nil
+}
+
+// getAWSNLBSecurityGroups returns the securityGroups for the NLB reported in the
+// endpoint publishing strategy.
+func getAWSNLBSecurityGroups(eps *operatorv1.EndpointPublishingStrategy) []operatorv1.SecurityGroupID {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.SecurityGroups
 	}
 
 	return nil

@@ -898,7 +898,87 @@ type AWSNetworkLoadBalancerParameters struct {
 	// +kubebuilder:validation:XValidation:rule=`self.all(x, self.exists_one(y, x == y))`,message="eipAllocations cannot contain duplicates"
 	// +kubebuilder:validation:MaxItems=10
 	EIPAllocations []EIPAllocation `json:"eipAllocations"`
+
+	// securityGroups is a list of security group IDs to attach to the
+	// Network Load Balancer. When specified, these security groups replace
+	// the managed security group that the Cloud Controller Manager would
+	// otherwise create automatically. The user is responsible for
+	// configuring the ingress and egress rules on the specified security
+	// groups.
+	//
+	// The specified security groups must exist in the same VPC as the
+	// cluster and must allow the necessary traffic for the
+	// IngressController to function.
+	//
+	// When this field is omitted and NLBSecurityGroupMode is set to
+	// Managed in the CCM cloud-config, the Cloud Controller Manager
+	// automatically creates and manages a security group for the NLB.
+	//
+	// Each security group ID must be unique. A maximum of 5 security
+	// groups can be specified.
+	//
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=5
+	// +kubebuilder:validation:XValidation:rule=`self.all(x, self.exists_one(y, x == y))`,message="securityGroups cannot contain duplicates"
+	// +openshift:enable:FeatureGate=IngressControllerLBSecurityGroupsAWS
+	SecurityGroups []SecurityGroupID `json:"securityGroups,omitempty"`
+
+	// protocol specifies whether the Network Load Balancer uses PROXY
+	// protocol to forward connections to the IngressController.
+	//
+	// When set to "TCP", the NLB uses AWS's native client IP preservation.
+	// This may cause hairpin connection failures for internal load
+	// balancers when connections are made from pods to router pods on
+	// the same node.
+	//
+	// When set to "PROXY", the NLB disables native client IP preservation
+	// and uses PROXY protocol v2. The IngressController enables PROXY
+	// protocol on HAProxy so that it can parse PROXY protocol headers to
+	// obtain the original client IP. This avoids hairpin connection
+	// failures.
+	//
+	// The following values are valid for this field:
+	//
+	// * "TCP".
+	// * "PROXY".
+	//
+	// When omitted, this means the user has no opinion and the value is
+	// left to the platform to choose a reasonable default, which is subject to
+	// change over time. The current default is "PROXY".
+	//
+	// Note that changing this field may cause brief connection failures
+	// during the transition as the NLB attribute change and router rollout
+	// occur independently.
+	//
+	// +optional
+	Protocol NLBProtocol `json:"protocol,omitempty"`
 }
+
+// SecurityGroupID is an AWS EC2 security group ID.
+// Values must begin with `sg-` followed by between 8 and 17 hexadecimal
+// characters.
+//
+// +kubebuilder:validation:MinLength=11
+// +kubebuilder:validation:MaxLength=20
+// +kubebuilder:validation:XValidation:rule=`self.startsWith('sg-')`,message="securityGroups must start with 'sg-'"
+// +kubebuilder:validation:XValidation:rule=`self.split("-", 2)[1].matches('^[0-9a-fA-F]{8,17}$')`,message="securityGroups must be 'sg-' followed by 8 to 17 hexadecimal characters"
+type SecurityGroupID string
+
+// NLBProtocol specifies whether the AWS Network Load Balancer uses
+// PROXY protocol to forward connections to the IngressController.
+// +kubebuilder:validation:Enum=TCP;PROXY
+// +enum
+type NLBProtocol string
+
+const (
+	// NLBProtocolTCP instructs the NLB to forward connections using TCP
+	// without PROXY protocol.
+	NLBProtocolTCP NLBProtocol = "TCP"
+	// NLBProtocolProxy instructs the NLB to forward connections using
+	// PROXY protocol v2.
+	NLBProtocolProxy NLBProtocol = "PROXY"
+)
 
 // EIPAllocation is an ID for an Elastic IP (EIP) address that can be allocated to an ELB in the AWS environment.
 // Values must begin with `eipalloc-` followed by exactly 17 hexadecimal (`[0-9a-fA-F]`) characters.
@@ -2034,6 +2114,7 @@ type IngressControllerTuningOptions struct {
 	// processes in router containers with the following metric:
 	// 'container_memory_working_set_bytes{container="router",namespace="openshift-ingress"}/container_processes{container="router",namespace="openshift-ingress"}'.
 	//
+	// +kubebuilder:validation:XValidation:rule="self == 0 || self == -1 || (self >= 2000 && self <= 2000000)",message="maxConnections must be 0, -1, or between 2000 and 2000000"
 	// +optional
 	MaxConnections int32 `json:"maxConnections,omitempty"`
 
