@@ -33,6 +33,8 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -1614,4 +1616,141 @@ func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout
 		}
 		return true, nil
 	})
+}
+
+func buildBackendTLSPolicy(name, namespace, targetServiceName, configMapName, hostname string) *gatewayapiv1.BackendTLSPolicy {
+	return &gatewayapiv1.BackendTLSPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gatewayapiv1.BackendTLSPolicySpec{
+			TargetRefs: []gatewayapiv1.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: gatewayapiv1.LocalPolicyTargetReference{
+					Group: "",
+					Kind:  "Service",
+					Name:  gatewayapiv1.ObjectName(targetServiceName),
+				},
+			}},
+			Validation: gatewayapiv1.BackendTLSPolicyValidation{
+				CACertificateRefs: []gatewayapiv1.LocalObjectReference{{
+					Group: "",
+					Kind:  "ConfigMap",
+					Name:  gatewayapiv1.ObjectName(configMapName),
+				}},
+				Hostname: gatewayapiv1.PreciseHostname(hostname),
+			},
+		},
+	}
+}
+
+func testBackendTLSPolicyCreation(t *testing.T, ns *corev1.Namespace) {
+	t.Helper()
+	ctx := context.Background()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "btlspolicy-target-svc",
+			Namespace: ns.Name,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{
+				Name:     "https",
+				Port:     443,
+				Protocol: corev1.ProtocolTCP,
+			}},
+			Selector: map[string]string{"app": "btlspolicy-target"},
+		},
+	}
+	if err := createWithRetryOnError(t, ctx, svc, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create target service: %v", err)
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "btlspolicy-ca-cert",
+			Namespace: ns.Name,
+		},
+		Data: map[string]string{
+			"ca.crt": "placeholder-ca-cert-data",
+		},
+	}
+	if err := createWithRetryOnError(t, ctx, cm, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create CA cert configmap: %v", err)
+	}
+
+	t.Run("validCreation", func(t *testing.T) {
+		btlsPolicy := buildBackendTLSPolicy("test-btlspolicy", ns.Name, svc.Name, cm.Name, "backend.example.com")
+		if err := createWithRetryOnError(t, ctx, btlsPolicy, DefaultRetryTimeout); err != nil {
+			t.Fatalf("failed to create BackendTLSPolicy: %v", err)
+		}
+
+		retrieved := &gatewayapiv1.BackendTLSPolicy{}
+		if err := kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-btlspolicy"}, retrieved); err != nil {
+			t.Fatalf("failed to get created BackendTLSPolicy: %v", err)
+		}
+		t.Logf("successfully created and retrieved BackendTLSPolicy %s/%s", retrieved.Namespace, retrieved.Name)
+	})
+
+	t.Run("celValidationRejectsBothCACertAndWellKnown", func(t *testing.T) {
+		invalidPolicy := buildBackendTLSPolicy("test-btlspolicy-invalid", ns.Name, svc.Name, cm.Name, "backend.example.com")
+		wellKnown := gatewayapiv1.WellKnownCACertificatesSystem
+		invalidPolicy.Spec.Validation.WellKnownCACertificates = &wellKnown
+
+		err := kclient.Create(ctx, invalidPolicy)
+		if err == nil {
+			t.Fatal("expected CEL validation to reject BackendTLSPolicy with both CACertificateRefs and WellKnownCACertificates, but creation succeeded")
+		}
+		t.Logf("CEL validation correctly rejected invalid BackendTLSPolicy: %v", err)
+	})
+}
+
+func buildReferenceGrantUnstructured(name, namespace string) *unstructured.Unstructured {
+	refGrant := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/v1beta1",
+			"kind":       "ReferenceGrant",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"from": []interface{}{
+					map[string]interface{}{
+						"group":     "gateway.networking.k8s.io",
+						"kind":      "HTTPRoute",
+						"namespace": namespace,
+					},
+				},
+				"to": []interface{}{
+					map[string]interface{}{
+						"group": "",
+						"kind":  "Service",
+					},
+				},
+			},
+		},
+	}
+	return refGrant
+}
+
+func testReferenceGrantCreation(t *testing.T, ns *corev1.Namespace) {
+	t.Helper()
+	ctx := context.Background()
+
+	refGrant := buildReferenceGrantUnstructured("test-referencegrant", ns.Name)
+	if err := createWithRetryOnError(t, ctx, refGrant, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create ReferenceGrant: %v", err)
+	}
+
+	retrieved := &unstructured.Unstructured{}
+	retrieved.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "gateway.networking.k8s.io",
+		Version: "v1beta1",
+		Kind:    "ReferenceGrant",
+	})
+	if err := kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-referencegrant"}, retrieved); err != nil {
+		t.Fatalf("failed to get created ReferenceGrant: %v", err)
+	}
+	t.Logf("successfully created and retrieved ReferenceGrant %s/%s", retrieved.GetNamespace(), retrieved.GetName())
 }

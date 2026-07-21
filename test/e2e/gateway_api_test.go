@@ -116,6 +116,7 @@ func TestGatewayAPI(t *testing.T) {
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
+	t.Run("testGatewayAPICRDValidation", testGatewayAPICRDValidation)
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -272,6 +273,21 @@ func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
 	if err := assertIstioCRDs(t); err != nil {
 		t.Fatalf("Istio CRDs should persist after uninstall: %v", err)
 	}
+}
+
+// testGatewayAPICRDValidation tests that BackendTLSPolicy and ReferenceGrant
+// custom resources can be created and are accepted by the API server. These
+// CRDs are installed by the operator but not reconciled, so this validates
+// the CRD schemas are functional.
+func testGatewayAPICRDValidation(t *testing.T) {
+	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-crd-"))
+
+	t.Run("BackendTLSPolicy", func(t *testing.T) {
+		testBackendTLSPolicyCreation(t, ns)
+	})
+	t.Run("ReferenceGrant", func(t *testing.T) {
+		testReferenceGrantCreation(t, ns)
+	})
 }
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
