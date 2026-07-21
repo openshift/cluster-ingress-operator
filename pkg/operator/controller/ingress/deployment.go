@@ -160,6 +160,10 @@ const (
 
 	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
 
+	// defaultHAProxyVersionAnnotation is the annotation name on Ingress.config.openshift.io,
+	// which can be used to override the default HAProxy version provided as a command-line argument.
+	defaultHAProxyVersionAnnotation = "unsupported.ingress.openshift.io/default-haproxy-version"
+
 	// routerHAProxyAdminSocket has the path to the unix socket of the master process CLI.
 	// This socket is used to issue reload, grab HAProxy version, list and manage active processes.
 	//
@@ -830,10 +834,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	// router image.
 	deployment.Spec.Template.Spec.Containers[0].Image = config.IngressControllerImage
 
-	// haproxy image: using router's image for now, but it needs its own image.
-	// HAProxy images: https://redhat.atlassian.net/browse/NE-2218
-	// API field: https://redhat.atlassian.net/browse/NE-2217
-	deployment.Spec.Template.Spec.InitContainers[1].Image = config.IngressControllerImage
+	// haproxy image.
+	_, haproxyImage, err := getEffectiveHAProxyVersionAndImage(ci, config, ingressConfig)
+	if err != nil {
+		return nil, err
+	}
+	deployment.Spec.Template.Spec.InitContainers[1].Image = haproxyImage
 
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
@@ -1383,6 +1389,47 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 
 	return deployment, nil
+}
+
+// getEffectiveHAProxyVersionAndImage returns the effective HAProxy version and its corresponding image URL
+// based on user configuration in ic.Spec.HAProxyVersion, falling back to the configured default HAProxy version
+// if unset (empty). The router image and empty version is used if there is no provided image.
+func getEffectiveHAProxyVersionAndImage(ic *operatorv1.IngressController, config *Config, ingressConfig *configv1.Ingress) (operatorv1.HAProxyVersion, string, error) {
+	if !config.FeatureMultiHAProxyEnabled {
+		// using router image in case FG is not enabled
+		return "", config.IngressControllerImage, nil
+	}
+
+	if len(config.HAProxyImages) == 0 {
+		// images map is currently optional, using router image as fallback
+		return "", config.IngressControllerImage, nil
+	}
+
+	// version is user provided, fallback to the default one if unset/empty/missing, default can be overridden via command-line option
+	version := ic.Spec.HAProxyVersion
+	if version == "" {
+		if ingressConfig.Annotations != nil {
+			// unset from API, check if ingress.config resource overrides the default version using annotation
+			version = operatorv1.HAProxyVersion(ingressConfig.Annotations[defaultHAProxyVersionAnnotation])
+		}
+		if version == "" {
+			// unset from API, no override from ingress.config, use the default one configured in the command-line
+			// config.DefaultHAProxyVersion is always provided and validated when config.HAProxyImages is provided
+			version = config.DefaultHAProxyVersion
+		}
+	}
+
+	image, found := config.HAProxyImages[version]
+	if !found {
+		if ic.Spec.HAProxyVersion != "" {
+			// user provided an invalid one
+			return "", "", fmt.Errorf("haproxy image for version %q is not available for ingresscontroller %q; ensure the operator is configured with --haproxy-image for this version", ic.Spec.HAProxyVersion, ic.Name)
+		}
+		// invalid configuration provided, either via the images hashmap or the overridden default
+		return "", "", fmt.Errorf("haproxy images map is missing the default version '%s': %+v", version, config.HAProxyImages)
+	}
+
+	return version, image, nil
 }
 
 // accessLoggingForIngressController returns an AccessLogging value for the

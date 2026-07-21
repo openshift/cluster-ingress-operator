@@ -2860,6 +2860,36 @@ func Test_IngressStatusesEqual(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
 			),
 		},
+		{
+			description: "effectiveHAProxyVersion equal",
+			expected:    true,
+			a: operatorv1.IngressControllerStatus{
+				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+			},
+			b: operatorv1.IngressControllerStatus{
+				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+			},
+		},
+		{
+			description: "effectiveHAProxyVersion changed from empty",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EffectiveHAProxyVersion: "",
+			},
+			b: operatorv1.IngressControllerStatus{
+				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+			},
+		},
+		{
+			description: "effectiveHAProxyVersion changed value",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EffectiveHAProxyVersion: operatorv1.HAProxyVersion28,
+			},
+			b: operatorv1.IngressControllerStatus{
+				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+			},
+		},
 	}
 
 	for _, tc := range testCases {

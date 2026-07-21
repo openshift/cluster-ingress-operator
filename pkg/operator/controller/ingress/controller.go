@@ -243,7 +243,10 @@ func hasName(name string) func(o client.Object) bool {
 type Config struct {
 	Namespace                   string
 	IngressControllerImage      string
+	HAProxyImages               map[operatorv1.HAProxyVersion]string
+	DefaultHAProxyVersion       operatorv1.HAProxyVersion
 	IngressControllerDCMEnabled bool
+	FeatureMultiHAProxyEnabled  bool
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to
@@ -1311,7 +1314,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, platformStatus)
+	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, platformStatus, ingressConfig)
 	errs = append(errs, syncStatusErr)
 
 	// If syncIngressControllerStatus updated our ingress status, it's important we query for that new object.

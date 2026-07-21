@@ -70,7 +70,7 @@ const (
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (error, bool) {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress) (error, bool) {
 	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
@@ -102,6 +102,13 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if platformStatus.Type == configv1.OpenStackPlatformType {
 		updateIngressControllerFloatingIPOpenStackStatus(updated, service)
 	}
+
+	haproxyVersion, _, err := getEffectiveHAProxyVersionAndImage(ic, &r.config, ingressConfig)
+	if err != nil {
+		errs = append(errs, err)
+		haproxyVersion = ""
+	}
+	updated.Status.EffectiveHAProxyVersion = haproxyVersion
 
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
@@ -927,6 +934,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 		return false
 	}
 	if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if a.EffectiveHAProxyVersion != b.EffectiveHAProxyVersion {
 		return false
 	}
 
