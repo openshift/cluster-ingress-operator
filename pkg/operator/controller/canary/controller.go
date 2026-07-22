@@ -19,6 +19,7 @@ import (
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/library-go/pkg/crypto"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
@@ -255,7 +256,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if operatorcontroller.IsUnrecognizedTLSAdherence(apiConfig.Spec.TLSAdherence) {
 			log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", apiConfig.Spec.TLSAdherence)
 		}
-		if operatorcontroller.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
+		if crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 			tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 		}
 	}

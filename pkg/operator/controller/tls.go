@@ -111,24 +111,6 @@ func TLSProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *con
 	return copyTLSSpec(configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
 }
 
-// ShouldHonorClusterTLSProfile returns true if the component should honor the
-// cluster-wide TLS security profile settings from apiserver.config.openshift.io/cluster.
-//
-// When this returns true (StrictAllComponents mode), components must honor the
-// cluster-wide TLS profile unless they have a component-specific TLS configuration
-// that overrides it.
-//
-// Unknown enum values are treated as StrictAllComponents for forward compatibility
-// and to default to the more secure behavior.
-func ShouldHonorClusterTLSProfile(tlsAdherence configv1.TLSAdherencePolicy) bool {
-	switch tlsAdherence {
-	case configv1.TLSAdherencePolicyNoOpinion, configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly:
-		return false
-	default:
-		return true
-	}
-}
-
 // IsUnrecognizedTLSAdherence returns true if the given policy is not one of the
 // officially recognized policies.
 func IsUnrecognizedTLSAdherence(policy configv1.TLSAdherencePolicy) bool {

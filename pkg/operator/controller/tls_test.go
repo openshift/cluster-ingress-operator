@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/library-go/pkg/crypto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -180,7 +181,7 @@ func TestShouldHonorClusterTLSProfile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ShouldHonorClusterTLSProfile(tt.tlsAdherence)
+			got := crypto.ShouldHonorClusterTLSProfile(tt.tlsAdherence)
 			assert.Equal(t, tt.expectedHonor, got)
 		})
 	}

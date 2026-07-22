@@ -1156,7 +1156,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	env = append(env, corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion})
 
 	var tlsProfileMetrics *configv1.TLSProfileSpec
-	if apiConfig != nil && controller.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
+	if apiConfig != nil && crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 		tlsProfileMetrics = controller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 	} else {
 		tlsProfileMetrics = configv1.TLSProfiles[configv1.TLSProfileIntermediateType]

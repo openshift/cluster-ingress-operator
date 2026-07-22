@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"os"
 
+	"github.com/openshift/library-go/pkg/crypto"
+
 	"github.com/spf13/cobra"
 	"gopkg.in/fsnotify.v1"
 
@@ -187,7 +189,7 @@ func start(opts *StartOptions) error {
 			log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", apiConfig.Spec.TLSAdherence)
 		}
 		var tlsProfileSpec *configv1.TLSProfileSpec
-		if apiConfig != nil && operatorcontroller.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
+		if apiConfig != nil && crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 			tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 		} else {
 			tlsProfileSpec = configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
