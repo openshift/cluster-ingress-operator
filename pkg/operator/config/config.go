@@ -22,6 +22,9 @@ type Config struct {
 	// DefaultHAProxyVersion defines the default HAProxy version.
 	DefaultHAProxyVersion operatorv1.HAProxyVersion
 
+	// DeprecatedHAProxyVersion defines the HAProxy versions blocking upgrade.
+	DeprecatedHAProxyVersion []string
+
 	// CanaryImage is the ingress operator image, which runs a canary command.
 	CanaryImage string
 

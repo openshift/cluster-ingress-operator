@@ -146,6 +146,11 @@ func TestAll(t *testing.T) {
 		// Serializing the test ensures it runs in isolation with other tests,
 		// preventing any impact of the mutating webhook on pod creation in the cluster
 		t.Run("TestGatewayAPI", TestGatewayAPI)
+		// TestMultiHAProxyUpgradeableCondition checks a ClusterOperator resource condition,
+		// its state could be changed by other parallel tests. Isolating the test ensures that
+		// the ClusterOperator/ingress resource reports only "default" ingress and the ingress
+		// resource being tested.
+		t.Run("TestMultiHAProxyUpgradeableCondition", TestMultiHAProxyUpgradeableCondition)
 		t.Run("TestIngressControllerConditionsMetricAfterRestart", TestIngressControllerConditionsMetricAfterRestart)
 		// TestIngressControllerCustomEndpoints must run last because
 		// modifying Infrastructure.spec.platformSpec.aws.serviceEndpoints
