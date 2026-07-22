@@ -252,7 +252,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			return result, fmt.Errorf("failed to get APIServer 'cluster': %w", err)
 		}
 	} else {
-		tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+		if operatorcontroller.IsUnrecognizedTLSAdherence(apiConfig.Spec.TLSAdherence) {
+			log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", apiConfig.Spec.TLSAdherence)
+		}
+		if operatorcontroller.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
+			tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+		}
 	}
 
 	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec)

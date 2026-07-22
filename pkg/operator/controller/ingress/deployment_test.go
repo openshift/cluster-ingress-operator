@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/library-go/pkg/crypto"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -3455,6 +3457,88 @@ func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 			}
 
 			if err := checkDeploymentEnvironment(t, deployment, tc.expectedEnv); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+// TestDesiredRouterDeploymentTLSAdherence verifies that desiredRouterDeployment
+// gates the ROUTER_METRICS_TLS_CIPHERS and ROUTER_METRICS_TLS_MIN_VERSION by the
+// TLSAdherence policy in apiConfig.
+func TestDesiredRouterDeploymentTLSAdherence(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		tlsAdherence         configv1.TLSAdherencePolicy
+		tlsSecurityProfile   *configv1.TLSSecurityProfile
+		expectedCiphers      string // Empty means expect Intermediate ciphers
+		expectedMinVersion   string // Empty means expect Intermediate min version
+	}{
+		{
+			name:         "NoOpinion (empty): uses Intermediate fallback",
+			tlsAdherence: configv1.TLSAdherencePolicyNoOpinion,
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileOldType,
+			},
+			expectedCiphers:    strings.Join(crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers), ":"),
+			expectedMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].MinTLSVersion),
+		},
+		{
+			name:         "LegacyAdheringComponentsOnly: uses Intermediate fallback",
+			tlsAdherence: configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileOldType,
+			},
+			expectedCiphers:    strings.Join(crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers), ":"),
+			expectedMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].MinTLSVersion),
+		},
+		{
+			name:         "StrictAllComponents: uses configured APIServer profile (Old)",
+			tlsAdherence: configv1.TLSAdherencePolicyStrictAllComponents,
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileOldType,
+			},
+			expectedCiphers:    strings.Join(crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileOldType].Ciphers), ":"),
+			expectedMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileOldType].MinTLSVersion),
+		},
+		{
+			name:         "Unknown policy (defaults to Strict): uses configured APIServer profile (Old)",
+			tlsAdherence: configv1.TLSAdherencePolicy("UnknownFuturePolicy"),
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileOldType,
+			},
+			expectedCiphers:    strings.Join(crypto.OpenSSLToIANACipherSuites(configv1.TLSProfiles[configv1.TLSProfileOldType].Ciphers), ":"),
+			expectedMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileOldType].MinTLSVersion),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.PrivateStrategyType,
+					},
+				},
+			}
+			apiConfig := &configv1.APIServer{
+				Spec: configv1.APIServerSpec{
+					TLSAdherence:       tc.tlsAdherence,
+					TLSSecurityProfile: tc.tlsSecurityProfile,
+				},
+			}
+
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, &configv1.Ingress{}, &configv1.Infrastructure{}, apiConfig, &configv1.Network{}, nil, false, false, nil, &configv1.Proxy{})
+			if err != nil {
+				t.Error(err)
+			}
+
+			expectedEnv := []envData{
+				{"ROUTER_METRICS_TLS_CIPHERS", true, tc.expectedCiphers},
+				{"ROUTER_METRICS_TLS_MIN_VERSION", true, tc.expectedMinVersion},
+			}
+
+			if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
 				t.Error(err)
 			}
 		})

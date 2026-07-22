@@ -149,3 +149,75 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 		assert.Equal(t, []configv1.TLSGroup{configv1.TLSGroupX25519MLKEM768}, spec.Groups, "expected groups=[X25519MLKEM768], got %v", spec.Groups)
 	})
 }
+
+func TestShouldHonorClusterTLSProfile(t *testing.T) {
+	tests := []struct {
+		name          string
+		tlsAdherence  configv1.TLSAdherencePolicy
+		expectedHonor bool
+	}{
+		{
+			name:          "empty string (no opinion) returns false",
+			tlsAdherence:  configv1.TLSAdherencePolicyNoOpinion,
+			expectedHonor: false,
+		},
+		{
+			name:          "LegacyAdheringComponentsOnly returns false",
+			tlsAdherence:  configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+			expectedHonor: false,
+		},
+		{
+			name:          "StrictAllComponents returns true",
+			tlsAdherence:  configv1.TLSAdherencePolicyStrictAllComponents,
+			expectedHonor: true,
+		},
+		{
+			name:          "unknown value defaults to true (strict behavior)",
+			tlsAdherence:  configv1.TLSAdherencePolicy("SomeUnknownFutureValue"),
+			expectedHonor: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShouldHonorClusterTLSProfile(tt.tlsAdherence)
+			assert.Equal(t, tt.expectedHonor, got)
+		})
+	}
+}
+
+func TestIsUnrecognizedTLSAdherence(t *testing.T) {
+	tests := []struct {
+		name                 string
+		tlsAdherence         configv1.TLSAdherencePolicy
+		expectedUnrecognized bool
+	}{
+		{
+			name:                 "empty string is recognized",
+			tlsAdherence:         configv1.TLSAdherencePolicyNoOpinion,
+			expectedUnrecognized: false,
+		},
+		{
+			name:                 "LegacyAdheringComponentsOnly is recognized",
+			tlsAdherence:         configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+			expectedUnrecognized: false,
+		},
+		{
+			name:                 "StrictAllComponents is recognized",
+			tlsAdherence:         configv1.TLSAdherencePolicyStrictAllComponents,
+			expectedUnrecognized: false,
+		},
+		{
+			name:                 "unknown value is unrecognized",
+			tlsAdherence:         configv1.TLSAdherencePolicy("SomeUnknownFutureValue"),
+			expectedUnrecognized: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsUnrecognizedTLSAdherence(tt.tlsAdherence)
+			assert.Equal(t, tt.expectedUnrecognized, got)
+		})
+	}
+}
