@@ -445,7 +445,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 
 	if !domainMatchesBaseDomain {
 		log.Info("Domain does not match base domain, DNS management disabled", "namespace", updated.Namespace, "name", updated.Name, "domain", updated.Status.Domain, "baseDomain", dnsConfig.Spec.BaseDomain)
-		r.recorder.Eventf(updated, "Warning", "DomainNotMatching", fmt.Sprintf("Domain [%s] of ingresscontroller does not match the baseDomain [%s] of the cluster DNS config, so DNS management is not supported.", updated.Status.Domain, dnsConfig.Spec.BaseDomain))
+		r.recorder.Eventf(updated, "Warning", "DomainNotMatching", "Domain [%s] of ingresscontroller does not match the baseDomain [%s] of the cluster DNS config, so DNS management is not supported.", updated.Status.Domain, dnsConfig.Spec.BaseDomain)
 	}
 
 	if !IngressStatusesEqual(current.Status, updated.Status) {
