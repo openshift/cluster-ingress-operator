@@ -41,6 +41,11 @@ const (
 	routerServiceAccountVolumeName = "kube-api-access"
 )
 
+const (
+	defaultHAProxyVersion   = operatorv1.HAProxyVersion32
+	alternateHAProxyVersion = operatorv1.HAProxyVersion28
+)
+
 var toleration = corev1.Toleration{
 	Key:      "foo",
 	Value:    "bar",
@@ -900,8 +905,6 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 }
 
 func TestDesiredRouterDeploymentSpecHAProxyVersion(t *testing.T) {
-	const defaultHAProxyVersion = operatorv1.HAProxyVersion32
-
 	var haproxyImages = map[operatorv1.HAProxyVersion]string{
 		operatorv1.HAProxyVersion28: "quay.io/openshift/haproxy:2.8",
 		operatorv1.HAProxyVersion32: "quay.io/openshift/haproxy:3.2",

@@ -186,6 +186,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		IngressControllerImage:      config.IngressControllerImage,
 		HAProxyImages:               config.HAProxyImages,
 		DefaultHAProxyVersion:       config.DefaultHAProxyVersion,
+		DeprecatedHAProxyVersion:    config.DeprecatedHAProxyVersion,
 		IngressControllerDCMEnabled: ingressControllerDCMEnabled,
 		FeatureMultiHAProxyEnabled:  featureMultiHAProxyEnabled,
 	}); err != nil {

@@ -245,6 +245,7 @@ type Config struct {
 	IngressControllerImage      string
 	HAProxyImages               map[operatorv1.HAProxyVersion]string
 	DefaultHAProxyVersion       operatorv1.HAProxyVersion
+	DeprecatedHAProxyVersion    []string
 	IngressControllerDCMEnabled bool
 	FeatureMultiHAProxyEnabled  bool
 }

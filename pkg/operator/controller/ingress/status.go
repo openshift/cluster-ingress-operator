@@ -122,7 +122,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(updated, r.config, deploymentRef, service, platformStatus, secret))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
@@ -719,10 +719,12 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, config Config, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
 	var errs []error
 
 	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
+
+	errs = append(errs, checkDeprecatedHAProxyVersion(ic, config.DeprecatedHAProxyVersion))
 
 	if service != nil {
 		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
@@ -809,6 +811,18 @@ func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 		}
 	}
 
+	return nil
+}
+
+// checkDeprecatedHAProxyVersion returns an error if the provided IngressController
+// resource references a HAProxy version unsupported in the next release.
+func checkDeprecatedHAProxyVersion(ic *operatorv1.IngressController, deprecatedHAProxyVersion []string) error {
+	if version := string(ic.Spec.HAProxyVersion); slices.Contains(deprecatedHAProxyVersion, version) {
+		return fmt.Errorf("haproxy %q is unsupported in the next release", version)
+	}
+	if version := string(ic.Status.EffectiveHAProxyVersion); slices.Contains(deprecatedHAProxyVersion, version) {
+		return fmt.Errorf("effective haproxy %q is unsupported in the next release", version)
+	}
 	return nil
 }
 
