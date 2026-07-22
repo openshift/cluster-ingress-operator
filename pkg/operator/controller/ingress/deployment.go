@@ -1159,7 +1159,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	if apiConfig != nil && crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 		tlsProfileMetrics = controller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 	} else {
-		tlsProfileMetrics = configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+		tlsProfileMetrics = controller.TLSProfileSpecForSecurityProfile(nil)
 	}
 
 	// User facing config uses OpenSSL names. Internally we always use IANA ones.

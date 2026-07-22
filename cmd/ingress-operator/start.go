@@ -183,23 +183,21 @@ func start(opts *StartOptions) error {
 	if opts.MetricsCertDir != "" {
 		apiConfig := &configv1.APIServer{}
 		if err := cl.Get(signal, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
-			log.Info("failed to get APIServer 'cluster' for metrics TLS; falling back to intermediate profile", "error", err)
+			return fmt.Errorf("failed to get APIServer 'cluster' for metrics TLS: %w", err)
 		}
-		if apiConfig != nil && operatorcontroller.IsUnrecognizedTLSAdherence(apiConfig.Spec.TLSAdherence) {
-			log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", apiConfig.Spec.TLSAdherence)
-		}
+		operatorcontroller.LogUnrecognizedTLSAdherence(log.WithValues("resourceType", "APIServer", "name", "cluster"), apiConfig.Spec.TLSAdherence)
 		var tlsProfileSpec *configv1.TLSProfileSpec
-		if apiConfig != nil && crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
+		if crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 			tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 		} else {
-			tlsProfileSpec = configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+			tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(nil)
 		}
 		tlsCfg, err := operatorcontroller.TLSConfigFromProfile(
 			log.WithValues("resourceType", "APIServer", "name", "cluster"),
 			tlsProfileSpec,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to build TLS config for metrics: %v", err)
+			return fmt.Errorf("failed to build TLS config for metrics: %w", err)
 		}
 		metricsTLSOpts = []func(*tls.Config){
 			func(c *tls.Config) {

@@ -123,3 +123,10 @@ func IsUnrecognizedTLSAdherence(policy configv1.TLSAdherencePolicy) bool {
 		return true
 	}
 }
+
+// LogUnrecognizedTLSAdherence logs a warning if the given policy is not recognized.
+func LogUnrecognizedTLSAdherence(log logr.Logger, policy configv1.TLSAdherencePolicy) {
+	if IsUnrecognizedTLSAdherence(policy) {
+		log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", policy)
+	}
+}

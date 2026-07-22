@@ -346,8 +346,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get apiserver 'cluster': %v", err)
 	}
-	if operatorcontroller.IsUnrecognizedTLSAdherence(apiConfig.Spec.TLSAdherence) {
-		log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", apiConfig.Spec.TLSAdherence)
+	if apiConfig != nil {
+		operatorcontroller.LogUnrecognizedTLSAdherence(log, apiConfig.Spec.TLSAdherence)
 	}
 	dnsConfig := &configv1.DNS{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {

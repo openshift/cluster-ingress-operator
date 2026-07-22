@@ -1967,10 +1967,6 @@ func TestTLSSecurityProfile(t *testing.T) {
 	if !cmp.Equal(actualCiphers, expectedCiphers) || !cmp.Equal(intermediateProfileSpec.MinTLSVersion, ic.Status.TLSProfile.MinTLSVersion) {
 		t.Fatalf("ingresscontroller status has unexpected security profile spec.\n%s", cmp.Diff(*intermediateProfileSpec, *ic.Status.TLSProfile))
 	}
-	tlsGroupsEnabled, err := isFeatureGateEnabled(features.FeatureGateTLSGroupPreferences)
-	if err != nil {
-		t.Fatalf("failed to check TLSGroupPreferences feature gate: %v", err)
-	}
 	if tlsGroupsEnabled {
 		assert.Equal(t, intermediateProfileSpec.Groups, ic.Status.TLSProfile.Groups,
 			"ingresscontroller status has unexpected TLS groups: expected %v, got %v",

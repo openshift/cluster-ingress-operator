@@ -245,7 +245,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// If this read fails (e.g. transient API error), continue with the
 	// intermediate default profile instead of hard-failing reconcile.
 	apiConfig := &configv1.APIServer{}
-	tlsProfileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(nil)
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
 		if kerrors.IsNotFound(err) {
 			log.Info("APIServer 'cluster' not found; falling back to intermediate TLS profile")
@@ -253,8 +253,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			return result, fmt.Errorf("failed to get APIServer 'cluster': %w", err)
 		}
 	} else {
-		if operatorcontroller.IsUnrecognizedTLSAdherence(apiConfig.Spec.TLSAdherence) {
-			log.Info("Warning: unrecognized tlsAdherence policy; defaulting to StrictAllComponents", "policy", apiConfig.Spec.TLSAdherence)
+		if apiConfig != nil {
+			operatorcontroller.LogUnrecognizedTLSAdherence(log, apiConfig.Spec.TLSAdherence)
 		}
 		if crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 			tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
