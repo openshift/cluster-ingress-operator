@@ -2,10 +2,12 @@ package gcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -37,7 +39,30 @@ type Config struct {
 }
 
 func New(config Config) (*Provider, error) {
-	dnsService, err := gdnsv1.NewService(context.TODO(), option.WithCredentialsJSON(config.CredentialsJSON), option.WithUserAgent(config.UserAgent))
+	ctx := context.TODO()
+	// WithAuthCredentialsJSON takes a credentials type argument to allow
+	// restricting which credential types are accepted from external sources.
+	// In this case, there are no restrictions so we simply pass the type through.
+	var f struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(config.CredentialsJSON, &f); err != nil {
+		return nil, fmt.Errorf("failed to parse credentials JSON: %w", err)
+	}
+	creds, err := google.CredentialsFromJSONWithType(ctx, config.CredentialsJSON, google.CredentialsType(f.Type), gdnsv1.CloudPlatformScope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create credentials: %w", err)
+	}
+	ud, err := creds.GetUniverseDomain()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get universe domain: %w", err)
+	}
+	opts := []option.ClientOption{
+		option.WithAuthCredentialsJSON(option.CredentialsType(f.Type), config.CredentialsJSON),
+		option.WithUserAgent(config.UserAgent),
+		option.WithUniverseDomain(ud),
+	}
+	dnsService, err := gdnsv1.NewService(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
