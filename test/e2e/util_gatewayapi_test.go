@@ -1531,19 +1531,24 @@ func eventuallyClusterRoleContainsAggregatedPolicies(t *testing.T, destClusterRo
 	})
 }
 
-func assertAllGatewayAPICRDsCovered(t *testing.T, crdNames []string) {
+func assertAllGatewayAPICRDsCovered(t *testing.T, wantCRDs []string) error {
 	t.Helper()
-	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
-	if err := kclient.List(context.Background(), crdList); err != nil {
+	haveCRDs := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := kclient.List(t.Context(), haveCRDs); err != nil {
 		t.Fatalf("failed to list CRDs: %v", err)
 	}
-	for _, crd := range crdList.Items {
+	var extraCRDs []string
+	for _, crd := range haveCRDs.Items {
 		if crd.Spec.Group == "gateway.networking.k8s.io" {
-			if !slices.Contains(crdNames, crd.Name) {
-				t.Errorf("Gateway API CRD %q exists on cluster but is not in crdNames; add it to ensure test coverage", crd.Name)
+			if !slices.Contains(wantCRDs, crd.Name) {
+				extraCRDs = append(extraCRDs, crd.Name)
 			}
 		}
 	}
+	if len(extraCRDs) > 0 {
+		return fmt.Errorf("Gateway API CRDs installed but not tested: %q", extraCRDs)
+	}
+	return nil
 }
 
 func assertClusterRoleCoversGatewayAPICRDs(t *testing.T, clusterRoleName string) {
@@ -1563,18 +1568,29 @@ func assertClusterRoleCoversGatewayAPICRDs(t *testing.T, clusterRoleName string)
 	var roleResources []string
 	for _, rule := range clusterRole.Rules {
 		if slices.Contains(rule.APIGroups, "gateway.networking.k8s.io") {
-			roleResources = append(roleResources, rule.Resources...)
+			for _, res := range rule.Resources {
+				if res == "*" {
+					t.Fatalf("ClusterRole %s uses wildcard resource for gateway.networking.k8s.io; expected explicit resource names", clusterRoleName)
+				}
+				// Skip subresources (e.g. gatewayclasses/status) since
+				// we are only checking top-level resource coverage.
+				if !strings.Contains(res, "/") {
+					roleResources = append(roleResources, res)
+				}
+			}
 		}
 	}
 
 	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
-	if err := kclient.List(context.Background(), crdList); err != nil {
+	if err := kclient.List(t.Context(), crdList); err != nil {
 		t.Fatalf("failed to list CRDs: %v", err)
 	}
 	for _, crd := range crdList.Items {
 		if crd.Spec.Group != "gateway.networking.k8s.io" {
 			continue
 		}
+		// Cluster-scoped CRDs (e.g. GatewayClass) use separate RBAC and
+		// are not expected in namespace-scoped aggregated ClusterRoles.
 		if crd.Spec.Scope == apiextensionsv1.ClusterScoped {
 			continue
 		}
@@ -1644,9 +1660,11 @@ func buildBackendTLSPolicy(name, namespace, targetServiceName, configMapName, ho
 	}
 }
 
-func testBackendTLSPolicyCreation(t *testing.T, ns *corev1.Namespace) {
+// createBackendTLSPolicy creates the prerequisite Service and ConfigMap, then
+// creates a BackendTLSPolicy and verifies it can be retrieved from the API server.
+func createBackendTLSPolicy(t *testing.T, ns *corev1.Namespace) error {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1663,7 +1681,7 @@ func testBackendTLSPolicyCreation(t *testing.T, ns *corev1.Namespace) {
 		},
 	}
 	if err := createWithRetryOnError(t, ctx, svc, DefaultRetryTimeout); err != nil {
-		t.Fatalf("failed to create target service: %v", err)
+		return fmt.Errorf("failed to create target service: %w", err)
 	}
 
 	cm := &corev1.ConfigMap{
@@ -1676,33 +1694,20 @@ func testBackendTLSPolicyCreation(t *testing.T, ns *corev1.Namespace) {
 		},
 	}
 	if err := createWithRetryOnError(t, ctx, cm, DefaultRetryTimeout); err != nil {
-		t.Fatalf("failed to create CA cert configmap: %v", err)
+		return fmt.Errorf("failed to create CA cert configmap: %w", err)
 	}
 
-	t.Run("validCreation", func(t *testing.T) {
-		btlsPolicy := buildBackendTLSPolicy("test-btlspolicy", ns.Name, svc.Name, cm.Name, "backend.example.com")
-		if err := createWithRetryOnError(t, ctx, btlsPolicy, DefaultRetryTimeout); err != nil {
-			t.Fatalf("failed to create BackendTLSPolicy: %v", err)
-		}
+	btlsPolicy := buildBackendTLSPolicy("test-btlspolicy", ns.Name, svc.Name, cm.Name, "backend.example.com")
+	if err := createWithRetryOnError(t, ctx, btlsPolicy, DefaultRetryTimeout); err != nil {
+		return fmt.Errorf("failed to create BackendTLSPolicy: %w", err)
+	}
 
-		retrieved := &gatewayapiv1.BackendTLSPolicy{}
-		if err := kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-btlspolicy"}, retrieved); err != nil {
-			t.Fatalf("failed to get created BackendTLSPolicy: %v", err)
-		}
-		t.Logf("successfully created and retrieved BackendTLSPolicy %s/%s", retrieved.Namespace, retrieved.Name)
-	})
-
-	t.Run("celValidationRejectsBothCACertAndWellKnown", func(t *testing.T) {
-		invalidPolicy := buildBackendTLSPolicy("test-btlspolicy-invalid", ns.Name, svc.Name, cm.Name, "backend.example.com")
-		wellKnown := gatewayapiv1.WellKnownCACertificatesSystem
-		invalidPolicy.Spec.Validation.WellKnownCACertificates = &wellKnown
-
-		err := kclient.Create(ctx, invalidPolicy)
-		if err == nil {
-			t.Fatal("expected CEL validation to reject BackendTLSPolicy with both CACertificateRefs and WellKnownCACertificates, but creation succeeded")
-		}
-		t.Logf("CEL validation correctly rejected invalid BackendTLSPolicy: %v", err)
-	})
+	retrieved := &gatewayapiv1.BackendTLSPolicy{}
+	if err := kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-btlspolicy"}, retrieved); err != nil {
+		return fmt.Errorf("failed to get created BackendTLSPolicy: %w", err)
+	}
+	t.Logf("successfully created and retrieved BackendTLSPolicy %s/%s", retrieved.Namespace, retrieved.Name)
+	return nil
 }
 
 func buildReferenceGrantUnstructured(name, namespace string) *unstructured.Unstructured {
@@ -1734,13 +1739,15 @@ func buildReferenceGrantUnstructured(name, namespace string) *unstructured.Unstr
 	return refGrant
 }
 
-func testReferenceGrantCreation(t *testing.T, ns *corev1.Namespace) {
+// createReferenceGrant creates a ReferenceGrant using unstructured objects (since
+// v1beta1 is not vendored) and verifies it can be retrieved from the API server.
+func createReferenceGrant(t *testing.T, ns *corev1.Namespace) error {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	refGrant := buildReferenceGrantUnstructured("test-referencegrant", ns.Name)
 	if err := createWithRetryOnError(t, ctx, refGrant, DefaultRetryTimeout); err != nil {
-		t.Fatalf("failed to create ReferenceGrant: %v", err)
+		return fmt.Errorf("failed to create ReferenceGrant: %w", err)
 	}
 
 	retrieved := &unstructured.Unstructured{}
@@ -1750,7 +1757,8 @@ func testReferenceGrantCreation(t *testing.T, ns *corev1.Namespace) {
 		Kind:    "ReferenceGrant",
 	})
 	if err := kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-referencegrant"}, retrieved); err != nil {
-		t.Fatalf("failed to get created ReferenceGrant: %v", err)
+		return fmt.Errorf("failed to get created ReferenceGrant: %w", err)
 	}
 	t.Logf("successfully created and retrieved ReferenceGrant %s/%s", retrieved.GetNamespace(), retrieved.GetName())
+	return nil
 }

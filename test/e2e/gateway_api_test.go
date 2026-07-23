@@ -116,7 +116,6 @@ func TestGatewayAPI(t *testing.T) {
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
-	t.Run("testGatewayAPICRDValidation", testGatewayAPICRDValidation)
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -147,7 +146,9 @@ func testGatewayAPIResources(t *testing.T) {
 	ensureCRDs(t)
 
 	// Verify that all Gateway API CRDs on the cluster are in our test list.
-	assertAllGatewayAPICRDsCovered(t, crdNames)
+	if err := assertAllGatewayAPICRDsCovered(t, crdNames); err != nil {
+		t.Errorf("CRD coverage gap: %v", err)
+	}
 
 	// Deleting CRDs to ensure they gets recreated again
 	bypassVAP(t, deleteCRDs)
@@ -273,21 +274,6 @@ func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
 	if err := assertIstioCRDs(t); err != nil {
 		t.Fatalf("Istio CRDs should persist after uninstall: %v", err)
 	}
-}
-
-// testGatewayAPICRDValidation tests that BackendTLSPolicy and ReferenceGrant
-// custom resources can be created and are accepted by the API server. These
-// CRDs are installed by the operator but not reconciled, so this validates
-// the CRD schemas are functional.
-func testGatewayAPICRDValidation(t *testing.T) {
-	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-crd-"))
-
-	t.Run("BackendTLSPolicy", func(t *testing.T) {
-		testBackendTLSPolicyCreation(t, ns)
-	})
-	t.Run("ReferenceGrant", func(t *testing.T) {
-		testReferenceGrantCreation(t, ns)
-	})
 }
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
@@ -1554,6 +1540,32 @@ func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 		return fmt.Errorf("feature gate was enabled, but http route object could not be created: %v", err)
 	}
 	// The http route is cleaned up when the namespace is deleted.
+
+	// Create BackendTLSPolicy and ReferenceGrant if their CRDs are available.
+	// These CRDs are installed by the operator but not reconciled, so this
+	// validates the CRD schemas are functional and objects can be persisted.
+	// The CRD existence check allows safe backporting to older branches.
+	btlsCRD := &apiextensionsv1.CustomResourceDefinition{}
+	if err := kclient.Get(t.Context(), types.NamespacedName{Name: "backendtlspolicies.gateway.networking.k8s.io"}, btlsCRD); kerrors.IsNotFound(err) {
+		t.Log("BackendTLSPolicy CRD not found, skipping creation test")
+	} else if err != nil {
+		return fmt.Errorf("failed to check for BackendTLSPolicy CRD: %w", err)
+	} else {
+		if err := createBackendTLSPolicy(t, ns); err != nil {
+			return fmt.Errorf("BackendTLSPolicy object could not be created: %w", err)
+		}
+	}
+
+	refGrantCRD := &apiextensionsv1.CustomResourceDefinition{}
+	if err := kclient.Get(t.Context(), types.NamespacedName{Name: "referencegrants.gateway.networking.k8s.io"}, refGrantCRD); kerrors.IsNotFound(err) {
+		t.Log("ReferenceGrant CRD not found, skipping creation test")
+	} else if err != nil {
+		return fmt.Errorf("failed to check for ReferenceGrant CRD: %w", err)
+	} else {
+		if err := createReferenceGrant(t, ns); err != nil {
+			return fmt.Errorf("ReferenceGrant object could not be created: %w", err)
+		}
+	}
 
 	return nil
 }
