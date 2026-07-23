@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1090,20 +1091,52 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		})
 	}
 
-	// The default TLS supportedGroups (curves) include X25519MLKEM768,
-	// x25519, P-256, P-384, and P-521.
-	tlsCurves := "X25519MLKEM768:X25519:P-256:P-384:P-521"
-	// If FIPS is enabled on this cluster, we cannot use
-	// ML-KEM or X25519 in the TLS supportedGroups (aka curves).
-	// ML-KEM and X25519 are not supported by OpenSSL FIPS 140-3.
+	// Determine the candidate group list: use the explicitly configured groups
+	// when set (via a Custom TLS profile), otherwise use the defaults from the
+	// named TLS profiles. Component implementors do not need to check the
+	// TLSCurvePreferences feature gate; an absent field means the gate is
+	// disabled and components fall back to defaults automatically.
+	var tlsGroupList []string
+	if len(tlsProfileSpec.Groups) != 0 {
+		// When an explicit groups list is configured, pass it to the router
+		// as-is. FIPS filtering is applied below after the else clause.
+		for _, g := range tlsProfileSpec.Groups {
+			tlsGroupList = append(tlsGroupList, string(g))
+		}
+	} else {
+		// The default TLS supportedGroups (curves) include X25519MLKEM768,
+		// X25519, secp256r1 (P-256), secp384r1 (P-384), and secp521r1 (P-521).
+		// These use IANA names that HAProxy/OpenSSL accept directly.
+		tlsGroupList = []string{
+			string(configv1.TLSGroupX25519MLKEM768),
+			string(configv1.TLSGroupX25519),
+			string(configv1.TLSGroupSecP256r1),
+			string(configv1.TLSGroupSecP384r1),
+			string(configv1.TLSGroupSecP521r1),
+		}
+	}
+
+	// If FIPS is enabled on this cluster, we cannot use ML-KEM or X25519 in
+	// the TLS supportedGroups (aka curves). ML-KEM and X25519 are not
+	// supported by OpenSSL FIPS 140-3.
 	// See https://redhat.atlassian.net/browse/TRT-2597 and Appendix D of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-56Ar3.pdf
+	// If filtering empties the list, fall back to the FIPS-compliant defaults
+	// (secp256r1:secp384r1:secp521r1) so the router always has at least one
+	// usable group.
 	if isFIPSEnabled {
-		tlsCurves = "P-256:P-384:P-521"
+		tlsGroupList = slices.DeleteFunc(tlsGroupList, nonFIPSGroups.Has)
+		if len(tlsGroupList) == 0 {
+			tlsGroupList = []string{
+				string(configv1.TLSGroupSecP256r1),
+				string(configv1.TLSGroupSecP384r1),
+				string(configv1.TLSGroupSecP521r1),
+			}
+		}
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterTLSCurves,
-		Value: tlsCurves,
+		Value: strings.Join(tlsGroupList, ":"),
 	})
 
 	var minTLSVersion string
@@ -1518,6 +1551,7 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 		ciphersString       string
 		cipherSuitesString  string
 		minTLSVersionString string
+		groupsString        string
 	)
 	for _, v := range env {
 		switch v.Name {
@@ -1527,6 +1561,8 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 			cipherSuitesString = v.Value
 		case "SSL_MIN_VERSION":
 			minTLSVersionString = v.Value
+		case RouterTLSCurves:
+			groupsString = v.Value
 		}
 	}
 
@@ -1550,9 +1586,17 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 		minTLSVersion = configv1.VersionTLS12
 	}
 
+	var groups []configv1.TLSGroup
+	if len(groupsString) != 0 {
+		for _, s := range strings.Split(groupsString, ":") {
+			groups = append(groups, configv1.TLSGroup(s))
+		}
+	}
+
 	profile := &configv1.TLSProfileSpec{
 		Ciphers:       ciphers,
 		MinTLSVersion: minTLSVersion,
+		Groups:        groups,
 	}
 
 	return profile
