@@ -78,6 +78,10 @@ spec:
           - "$(GATEWAY_API_OPERATOR_VERSION)"
           - --istio-version
           - "$(ISTIO_VERSION)"
+          - --metrics-bind-addr
+          - :9393
+          - --metrics-cert-dir
+          - /etc/tls/metrics
           env:
             - name: RELEASE_VERSION
               value: "0.0.1-snapshot"
@@ -103,6 +107,9 @@ spec:
               value: servicemeshoperator3.v3.4.0
             - name: ISTIO_VERSION
               value: v1.28-latest
+          ports:
+          - containerPort: 9393
+            name: metrics
           resources:
             requests:
               cpu: 10m
@@ -114,30 +121,8 @@ spec:
           - name: bound-sa-token
             mountPath: /var/run/secrets/openshift/serviceaccount
             readOnly: true
-        - name: kube-rbac-proxy
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          image: quay.io/openshift/origin-kube-rbac-proxy:latest
-          args:
-          - --logtostderr
-          - --secure-listen-address=:9393
-          - --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
-          - --upstream=http://127.0.0.1:60000/
-          - --tls-cert-file=/etc/tls/private/tls.crt
-          - --tls-private-key-file=/etc/tls/private/tls.key
-          ports:
-          - containerPort: 9393
-            name: metrics
-          resources:
-            requests:
-              cpu: 10m
-              memory: 40Mi
-          terminationMessagePolicy: FallbackToLogsOnError
-          volumeMounts:
-          - mountPath: /etc/tls/private
-            name: metrics-tls
+          - name: metrics-tls
+            mountPath: /etc/tls/metrics
             readOnly: true
       volumes:
       - name: metrics-tls

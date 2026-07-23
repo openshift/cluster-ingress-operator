@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git rebase *)",
+      "Bash(rtk grep *)",
+      "Bash(git checkout *)",
+      "Bash(go mod *)",
+      "Bash(rtk git *)"
+    ]
+  }
+}

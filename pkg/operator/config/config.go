@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/tls"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 )
 
@@ -36,6 +38,19 @@ type Config struct {
 
 	// IstioVersion is the version of Istio to install.
 	IstioVersion string
+
+	// MetricsBindAddress is the TCP address for the metrics endpoint.
+	MetricsBindAddress string
+
+	// MetricsCertDir is the directory containing tls.crt and tls.key
+	// for the metrics server. When empty, the metrics endpoint is served
+	// over plain HTTP without authentication.
+	MetricsCertDir string
+
+	// MetricsTLSOpts are functions that mutate the TLS configuration
+	// for the metrics server (e.g., cipher suites and min version from
+	// the cluster TLS security profile).
+	MetricsTLSOpts []func(*tls.Config)
 
 	Stop chan struct{}
 }

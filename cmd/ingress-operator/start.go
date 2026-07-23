@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/fsnotify.v1"
@@ -23,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
+	configv1 "github.com/openshift/api/config/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -44,8 +47,13 @@ type StartOptions struct {
 	// When this file changes, the operator will shut down. This is useful for simple
 	// reloading when things like a certificate changes.
 	ShutdownFile string
-	// MetricsListenAddr is the address on which to expose the metrics endpoint.
-	MetricsListenAddr string
+	// MetricsBindAddr is the address on which to expose the metrics endpoint.
+	MetricsBindAddr string
+	// MetricsCertDir is the directory containing tls.crt and tls.key
+	// for the metrics server. When set, the metrics server uses TLS
+	// with the cluster-wide TLS security profile and requires
+	// authentication via TokenReview/SubjectAccessReview.
+	MetricsCertDir string
 	// OperatorNamespace is the namespace the operator should watch for
 	// ingresscontroller resources.
 	OperatorNamespace string
@@ -91,7 +99,13 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.DefaultHAProxyVersion, "default-haproxy-version", "", "", "defines the default HAProxy version, required if --haproxy-image is also provided (optional)")
 	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
-	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
+	cmd.Flags().StringVarP(&options.MetricsBindAddr, "metrics-bind-addr", "", "127.0.0.1:60000", "metrics endpoint bind address")
+	// Keep --metrics-listen-addr as a deprecated alias so that existing
+	// deployments (e.g. the HyperShift control-plane-operator) that still
+	// pass the old flag name continue to work.
+	cmd.Flags().StringVar(&options.MetricsBindAddr, "metrics-listen-addr", "127.0.0.1:60000", "deprecated: use --metrics-bind-addr")
+	_ = cmd.Flags().MarkDeprecated("metrics-listen-addr", "use --metrics-bind-addr instead")
+	cmd.Flags().StringVarP(&options.MetricsCertDir, "metrics-cert-dir", "", "", "directory containing tls.crt and tls.key for the metrics endpoint")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorCatalog, "gateway-api-operator-catalog", "", defaultGatewayAPIOperatorCatalog, "catalog source for the Gateway API implementation to install")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorChannel, "gateway-api-operator-channel", "", defaultGatewayAPIOperatorChannel, "release channel of the Gateway API implementation to install")
@@ -162,6 +176,43 @@ func start(opts *StartOptions) error {
 		}
 	}
 
+	// Build the TLS options for the metrics server from the
+	// cluster-wide TLS security profile when a cert directory is provided
+	// and tlsAdherence requires newly adhering components to honor it.
+	var metricsTLSOpts []func(*tls.Config)
+	if opts.MetricsCertDir != "" {
+		apiConfig := &configv1.APIServer{}
+		metricsLog := log.WithValues("resourceType", "APIServer", "name", "cluster")
+		const maxRetries = 3
+		var fetchErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-signal.Done():
+					return fmt.Errorf("interrupted while fetching APIServer for metrics TLS: %w", signal.Err())
+				case <-time.After(time.Duration(attempt) * time.Second):
+				}
+			}
+			if fetchErr = cl.Get(signal, types.NamespacedName{Name: "cluster"}, apiConfig); fetchErr == nil {
+				break
+			}
+			if attempt+1 < maxRetries {
+				metricsLog.Info("failed to get APIServer 'cluster' for metrics TLS; retrying",
+					"error", fetchErr, "attempt", attempt+1, "maxRetries", maxRetries)
+			}
+		}
+		if fetchErr != nil {
+			metricsLog.Info("failed to get APIServer 'cluster' for metrics TLS; using metrics TLS defaults",
+				"error", fetchErr, "attempts", maxRetries)
+		} else {
+			var err error
+			metricsTLSOpts, err = operatorcontroller.MetricsTLSOptsFromAPIServer(metricsLog, apiConfig)
+			if err != nil {
+				return fmt.Errorf("failed to build TLS config for metrics: %v", err)
+			}
+		}
+	}
+
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion:    opts.ReleaseVersion,
 		Namespace:                 opts.OperatorNamespace,
@@ -173,10 +224,11 @@ func start(opts *StartOptions) error {
 		GatewayAPIOperatorChannel: opts.GatewayAPIOperatorChannel,
 		GatewayAPIOperatorVersion: opts.GatewayAPIOperatorVersion,
 		IstioVersion:              opts.IstioVersion,
+		MetricsBindAddress:        opts.MetricsBindAddr,
+		MetricsCertDir:            opts.MetricsCertDir,
+		MetricsTLSOpts:            metricsTLSOpts,
 	}
 
-	// Start operator metrics.
-	go operator.StartMetricsListener(opts.MetricsListenAddr, signal)
 	log.Info("registering Prometheus metrics for canary_controller")
 	if err := canarycontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for canary_controller")

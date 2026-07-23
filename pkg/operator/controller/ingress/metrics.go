@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
+	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -95,7 +96,7 @@ func SetIngressControllerNLBMetric(ci *operatorv1.IngressController) {
 // returns on errors.
 func RegisterMetrics() error {
 	for _, metric := range metricsList {
-		if err := prometheus.Register(metric); err != nil {
+		if err := ctrlruntimemetrics.Registry.Register(metric); err != nil {
 			return err
 		}
 	}
