@@ -26,6 +26,8 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD(),
 	manifests.BackendTLSPolicyCRD(),
+	manifests.ListenerSetCRD(),
+	manifests.TLSRouteCRD(),
 }
 
 // managedCRDMap is a map of CRDs that this controller manages.
@@ -36,6 +38,8 @@ var managedCRDMap = map[string]*apiextensionsv1.CustomResourceDefinition{
 	manifests.HTTPRouteCRD().Name:        manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD().Name:   manifests.ReferenceGrantCRD(),
 	manifests.BackendTLSPolicyCRD().Name: manifests.BackendTLSPolicyCRD(),
+	manifests.ListenerSetCRD().Name:      manifests.ListenerSetCRD(),
+	manifests.TLSRouteCRD().Name:         manifests.TLSRouteCRD(),
 }
 
 // ensureCRD attempts to ensure that the specified CRD exists and returns a

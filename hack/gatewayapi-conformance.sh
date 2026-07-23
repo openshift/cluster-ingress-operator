@@ -50,7 +50,11 @@ if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
 fi
 
 echo "Go version: $(go version)"
-go mod vendor
+if [[ -f go.work ]]; then
+    go work vendor
+else
+    GOWORK=off go mod vendor
+fi
 
 # Modify the default timeout of "MaxTimeToConsistency" to make tests pass on AWS
 # because the AWS ELB needs an extra ~60s for DNS propagation.  See
@@ -58,10 +62,12 @@ go mod vendor
 # Also, GRPCRouteListenerHostnameMatching tests are taking longer than 150s to converge to passing.
 sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,GRPCRoute,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,HTTPRoute,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant"
-# skipping BackendTLSPolicyConflictResolution confornance test because upstream istio is not supporting this at the moment: https://github.com/istio/istio/blob/ba49f7398a8542c3612788e9bd0371c079e44165/tests/integration/pilot/gateway_conformance_test.go#L67
-SKIPPED_TESTS="HTTPRouteCORSAllowCredentialsBehavior,GatewayStaticAddresses,BackendTLSPolicyConflictResolution" 
+SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicyConflictResolution,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
+# Skipping GatewayStaticAddresses: we don't support specific address pool configuration (https://redhat.atlassian.net/browse/NE-2416).
+# Skipping features not supported by Istio 1.30.1: https://github.com/istio/istio/blob/1.30.1/pilot/pkg/config/kube/gateway/supported_features.go#L22
+# Skipping ListenerSet: CRD is installed as part of Gateway API v1.5.1 standard channel, but Istio does not yet support it.
+SKIPPED_TESTS="GatewayStaticAddresses,GatewayBackendClientCertificate,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPSListenerDetectMisdirectedRequests,ListenerSet" 
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.3.1" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
+go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.4.0" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
 cat conformance/openshift.yaml

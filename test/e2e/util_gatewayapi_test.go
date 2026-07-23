@@ -396,6 +396,12 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	case "grpcroutes":
 		kind = "GRPCRoute"
 		versions = []map[string]bool{{"v1": true}}
+	case "listenersets":
+		kind = "ListenerSet"
+		versions = []map[string]bool{{"v1": true}}
+	case "tlsroutes":
+		kind = "TLSRoute"
+		versions = []map[string]bool{{"v1": true}}
 	}
 
 	crd := &apiextensionsv1.CustomResourceDefinition{
