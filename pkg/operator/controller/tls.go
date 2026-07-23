@@ -110,3 +110,53 @@ func TLSProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *con
 	}
 	return copyTLSSpec(configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
 }
+
+// knownTLSAdherence reports whether policy is a recognized TLSAdherencePolicy
+// value. Unrecognized values must be treated as StrictAllComponents with a
+// warning per the API contract.
+func knownTLSAdherence(policy configv1.TLSAdherencePolicy) bool {
+	switch policy {
+	case configv1.TLSAdherencePolicyNoOpinion,
+		configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+		configv1.TLSAdherencePolicyStrictAllComponents:
+		return true
+	default:
+		return false
+	}
+}
+
+// MetricsTLSOptsFromAPIServer returns controller-runtime Metrics TLSOpts that
+// apply the cluster TLS security profile to the operator metrics endpoint when
+// APIServer.spec.tlsAdherence requires newly adhering components to honor it.
+//
+// When ShouldHonorClusterTLSProfile returns false (Legacy / NoOpinion), this
+// returns nil so the metrics server keeps its individual TLS defaults.
+// Unrecognized tlsAdherence values are treated as Strict and logged as a
+// warning for forward compatibility.
+func MetricsTLSOptsFromAPIServer(log logr.Logger, apiConfig *configv1.APIServer) ([]func(*tls.Config), error) {
+	if apiConfig == nil {
+		return nil, nil
+	}
+
+	policy := apiConfig.Spec.TLSAdherence
+	if !knownTLSAdherence(policy) {
+		log.Info("unrecognized tlsAdherence value; treating as StrictAllComponents (will apply cluster TLS profile)", "tlsAdherence", policy)
+	}
+	if !crypto.ShouldHonorClusterTLSProfile(policy) {
+		return nil, nil
+	}
+
+	tlsProfileSpec := TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+	tlsCfg, err := TLSConfigFromProfile(log, tlsProfileSpec)
+	if err != nil {
+		return nil, fmt.Errorf("building TLS config from profile: %w", err)
+	}
+
+	return []func(*tls.Config){
+		func(c *tls.Config) {
+			c.CipherSuites = tlsCfg.CipherSuites
+			c.MinVersion = tlsCfg.MinVersion
+			c.CurvePreferences = tlsCfg.CurvePreferences
+		},
+	}, nil
+}

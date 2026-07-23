@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCopyTLSSpec_CopiesGroups(t *testing.T) {
@@ -147,5 +148,118 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 		}
 		spec := TLSProfileSpecForSecurityProfile(profile)
 		assert.Equal(t, []configv1.TLSGroup{configv1.TLSGroupX25519MLKEM768}, spec.Groups, "expected groups=[X25519MLKEM768], got %v", spec.Groups)
+	})
+}
+
+// captureLogSink records Info messages for assertions.
+type captureLogSink struct {
+	msgs []string
+}
+
+func (c *captureLogSink) Init(logr.RuntimeInfo)               {}
+func (c *captureLogSink) Enabled(int) bool                    { return true }
+func (c *captureLogSink) Info(_ int, msg string, _ ...any)    { c.msgs = append(c.msgs, msg) }
+func (c *captureLogSink) Error(_ error, msg string, _ ...any) { c.msgs = append(c.msgs, msg) }
+func (c *captureLogSink) WithValues(...any) logr.LogSink      { return c }
+func (c *captureLogSink) WithName(string) logr.LogSink        { return c }
+
+func applyMetricsTLSOpts(t *testing.T, opts []func(*tls.Config)) *tls.Config {
+	t.Helper()
+	require.Len(t, opts, 1)
+	cfg := &tls.Config{}
+	opts[0](cfg)
+	return cfg
+}
+
+func TestMetricsTLSOptsFromAPIServer(t *testing.T) {
+	log := logr.Discard()
+
+	t.Run("nil APIServer returns nil opts", func(t *testing.T) {
+		opts, err := MetricsTLSOptsFromAPIServer(log, nil)
+		assert.NoError(t, err)
+		assert.Nil(t, opts)
+	})
+
+	t.Run("NoOpinion returns nil opts", func(t *testing.T) {
+		apiConfig := &configv1.APIServer{
+			Spec: configv1.APIServerSpec{
+				TLSAdherence: configv1.TLSAdherencePolicyNoOpinion,
+				TLSSecurityProfile: &configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileIntermediateType,
+				},
+			},
+		}
+		opts, err := MetricsTLSOptsFromAPIServer(log, apiConfig)
+		assert.NoError(t, err)
+		assert.Nil(t, opts)
+	})
+
+	t.Run("LegacyAdheringComponentsOnly returns nil opts", func(t *testing.T) {
+		apiConfig := &configv1.APIServer{
+			Spec: configv1.APIServerSpec{
+				TLSAdherence: configv1.TLSAdherencePolicyLegacyAdheringComponentsOnly,
+				TLSSecurityProfile: &configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				},
+			},
+		}
+		opts, err := MetricsTLSOptsFromAPIServer(log, apiConfig)
+		assert.NoError(t, err)
+		assert.Nil(t, opts)
+	})
+
+	t.Run("StrictAllComponents applies intermediate when profile nil", func(t *testing.T) {
+		apiConfig := &configv1.APIServer{
+			Spec: configv1.APIServerSpec{
+				TLSAdherence: configv1.TLSAdherencePolicyStrictAllComponents,
+			},
+		}
+		opts, err := MetricsTLSOptsFromAPIServer(log, apiConfig)
+		assert.NoError(t, err)
+		cfg := applyMetricsTLSOpts(t, opts)
+		assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+		assert.NotEmpty(t, cfg.CipherSuites)
+		assert.NotEmpty(t, cfg.CurvePreferences)
+	})
+
+	t.Run("StrictAllComponents applies custom profile", func(t *testing.T) {
+		apiConfig := &configv1.APIServer{
+			Spec: configv1.APIServerSpec{
+				TLSAdherence: configv1.TLSAdherencePolicyStrictAllComponents,
+				TLSSecurityProfile: &configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileCustomType,
+					Custom: &configv1.CustomTLSProfile{
+						TLSProfileSpec: configv1.TLSProfileSpec{
+							Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+							Groups:        []configv1.TLSGroup{configv1.TLSGroupSecP256r1, configv1.TLSGroupSecP384r1},
+							MinTLSVersion: configv1.VersionTLS13,
+						},
+					},
+				},
+			},
+		}
+		opts, err := MetricsTLSOptsFromAPIServer(log, apiConfig)
+		assert.NoError(t, err)
+		cfg := applyMetricsTLSOpts(t, opts)
+		assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
+		assert.Equal(t, []tls.CurveID{tls.CurveP256, tls.CurveP384}, cfg.CurvePreferences)
+	})
+
+	t.Run("unknown tlsAdherence treated as Strict with warning", func(t *testing.T) {
+		sink := &captureLogSink{}
+		captureLog := logr.New(sink)
+		apiConfig := &configv1.APIServer{
+			Spec: configv1.APIServerSpec{
+				TLSAdherence: configv1.TLSAdherencePolicy("FutureStrictMode"),
+				TLSSecurityProfile: &configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileIntermediateType,
+				},
+			},
+		}
+		opts, err := MetricsTLSOptsFromAPIServer(captureLog, apiConfig)
+		assert.NoError(t, err)
+		cfg := applyMetricsTLSOpts(t, opts)
+		assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+		assert.Contains(t, sink.msgs, "unrecognized tlsAdherence value; treating as StrictAllComponents (will apply cluster TLS profile)")
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/fsnotify.v1"
@@ -176,27 +177,39 @@ func start(opts *StartOptions) error {
 	}
 
 	// Build the TLS options for the metrics server from the
-	// cluster-wide TLS security profile when a cert directory is provided.
+	// cluster-wide TLS security profile when a cert directory is provided
+	// and tlsAdherence requires newly adhering components to honor it.
 	var metricsTLSOpts []func(*tls.Config)
 	if opts.MetricsCertDir != "" {
 		apiConfig := &configv1.APIServer{}
-		if err := cl.Get(signal, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
-			log.Info("failed to get APIServer 'cluster' for metrics TLS; falling back to intermediate profile", "error", err)
+		metricsLog := log.WithValues("resourceType", "APIServer", "name", "cluster")
+		const maxRetries = 3
+		var fetchErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-signal.Done():
+					return fmt.Errorf("interrupted while fetching APIServer for metrics TLS: %w", signal.Err())
+				case <-time.After(time.Duration(attempt) * time.Second):
+				}
+			}
+			if fetchErr = cl.Get(signal, types.NamespacedName{Name: "cluster"}, apiConfig); fetchErr == nil {
+				break
+			}
+			if attempt+1 < maxRetries {
+				metricsLog.Info("failed to get APIServer 'cluster' for metrics TLS; retrying",
+					"error", fetchErr, "attempt", attempt+1, "maxRetries", maxRetries)
+			}
 		}
-		tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
-		tlsCfg, err := operatorcontroller.TLSConfigFromProfile(
-			log.WithValues("resourceType", "APIServer", "name", "cluster"),
-			tlsProfileSpec,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to build TLS config for metrics: %v", err)
-		}
-		metricsTLSOpts = []func(*tls.Config){
-			func(c *tls.Config) {
-				c.CipherSuites = tlsCfg.CipherSuites
-				c.MinVersion = tlsCfg.MinVersion
-				c.CurvePreferences = tlsCfg.CurvePreferences
-			},
+		if fetchErr != nil {
+			metricsLog.Info("failed to get APIServer 'cluster' for metrics TLS; using metrics TLS defaults",
+				"error", fetchErr, "attempts", maxRetries)
+		} else {
+			var err error
+			metricsTLSOpts, err = operatorcontroller.MetricsTLSOptsFromAPIServer(metricsLog, apiConfig)
+			if err != nil {
+				return fmt.Errorf("failed to build TLS config for metrics: %v", err)
+			}
 		}
 	}
 
