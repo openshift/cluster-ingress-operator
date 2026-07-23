@@ -3753,34 +3753,34 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 	)
 	testCases := []struct {
 		description string
-		mutate      func(*corev1.Service)
+		mutate      func(*operatorv1.IngressController, *corev1.Service)
 		secret      *corev1.Secret
 		expect      bool
 	}{
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags stays the same",
-			mutate: func(svc *corev1.Service) {
+			mutate: func(_ *operatorv1.IngressController, svc *corev1.Service) {
 				svc.Annotations[awsLBAdditionalResourceTags] = "Key1=Value1"
 			},
 			expect: true,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags annotation changes not by ingress controller",
-			mutate: func(svc *corev1.Service) {
+			mutate: func(_ *operatorv1.IngressController, svc *corev1.Service) {
 				svc.Annotations[awsLBAdditionalResourceTags] = "Key2=Value2"
 			},
 			expect: false,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set",
-			mutate: func(svc *corev1.Service) {
+			mutate: func(_ *operatorv1.IngressController, svc *corev1.Service) {
 				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = "127.0.0.0/8"
 			},
 			expect: true,
 		},
 		{
 			description: "if the LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
-			mutate: func(svc *corev1.Service) {
+			mutate: func(_ *operatorv1.IngressController, svc *corev1.Service) {
 				svc.Spec.LoadBalancerSourceRanges = []string{"127.0.0.0/8"}
 			},
 			expect: true,
@@ -3794,6 +3794,48 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			description: "if the default certificate has no SAN",
 			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{}),
 			expect:      false,
+		},
+		{
+			description: "if the HAProxy version is unsupported",
+			mutate: func(ic *operatorv1.IngressController, _ *corev1.Service) {
+				ic.Spec.HAProxyVersion = alternateHAProxyVersion
+			},
+			expect: false,
+		},
+		{
+			description: "if the HAProxy version is empty",
+			mutate: func(ic *operatorv1.IngressController, _ *corev1.Service) {
+				ic.Spec.HAProxyVersion = ""
+			},
+			expect: true,
+		},
+		{
+			description: "if the HAProxy version is supported",
+			mutate: func(ic *operatorv1.IngressController, _ *corev1.Service) {
+				ic.Spec.HAProxyVersion = defaultHAProxyVersion
+			},
+			expect: true,
+		},
+		{
+			description: "if the effective HAProxy version is unsupported",
+			mutate: func(ic *operatorv1.IngressController, _ *corev1.Service) {
+				ic.Status.EffectiveHAProxyVersion = alternateHAProxyVersion
+			},
+			expect: false,
+		},
+		{
+			description: "if the effective HAProxy version is empty",
+			mutate: func(ic *operatorv1.IngressController, _ *corev1.Service) {
+				ic.Status.EffectiveHAProxyVersion = ""
+			},
+			expect: true,
+		},
+		{
+			description: "if the effective HAProxy version is supported",
+			mutate: func(ic *operatorv1.IngressController, _ *corev1.Service) {
+				ic.Status.EffectiveHAProxyVersion = defaultHAProxyVersion
+			},
+			expect: true,
 		},
 	}
 	for _, tc := range testCases {
@@ -3838,7 +3880,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				return
 			}
 			if tc.mutate != nil {
-				tc.mutate(service)
+				tc.mutate(ic, service)
 			}
 			secret := tc.secret
 			if secret == nil {
@@ -3850,7 +3892,11 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret)
+			config := Config{
+				DeprecatedHAProxyVersion: []string{string(alternateHAProxyVersion)},
+			}
+
+			actual := computeIngressUpgradeableCondition(ic, config, deploymentRef, service, platformStatus, secret)
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
