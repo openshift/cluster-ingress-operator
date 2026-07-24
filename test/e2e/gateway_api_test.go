@@ -158,9 +158,7 @@ func testGatewayAPIResources(t *testing.T) {
 	ensureCRDs(t)
 
 	// Verify that all Gateway API CRDs on the cluster are in our test list.
-	if err := assertAllGatewayAPICRDsCovered(t, crdNames); err != nil {
-		t.Errorf("CRD coverage gap: %v", err)
-	}
+	assertAllGatewayAPICRDsCovered(t, crdNames)
 
 	// Deleting CRDs to ensure they gets recreated again
 	bypassVAP(t, deleteCRDs)
@@ -1653,31 +1651,11 @@ func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 	}
 	// The http route is cleaned up when the namespace is deleted.
 
-	// Create BackendTLSPolicy and ReferenceGrant if their CRDs are available.
-	// These CRDs are installed by the operator but not reconciled, so this
-	// validates the CRD schemas are functional and objects can be persisted.
-	// The CRD existence check allows safe backporting to older branches.
-	btlsCRD := &apiextensionsv1.CustomResourceDefinition{}
-	if err := kclient.Get(t.Context(), types.NamespacedName{Name: "backendtlspolicies.gateway.networking.k8s.io"}, btlsCRD); kerrors.IsNotFound(err) {
-		t.Log("BackendTLSPolicy CRD not found, skipping creation test")
-	} else if err != nil {
-		return fmt.Errorf("failed to check for BackendTLSPolicy CRD: %w", err)
-	} else {
-		if err := createBackendTLSPolicy(t, ns); err != nil {
-			return fmt.Errorf("BackendTLSPolicy object could not be created: %w", err)
-		}
-	}
-
-	refGrantCRD := &apiextensionsv1.CustomResourceDefinition{}
-	if err := kclient.Get(t.Context(), types.NamespacedName{Name: "referencegrants.gateway.networking.k8s.io"}, refGrantCRD); kerrors.IsNotFound(err) {
-		t.Log("ReferenceGrant CRD not found, skipping creation test")
-	} else if err != nil {
-		return fmt.Errorf("failed to check for ReferenceGrant CRD: %w", err)
-	} else {
-		if err := createReferenceGrant(t, ns); err != nil {
-			return fmt.Errorf("ReferenceGrant object could not be created: %w", err)
-		}
-	}
+	// Create BackendTLSPolicy and ReferenceGrant CR instances. The operator
+	// installs these CRDs but does not reconcile them, so this validates
+	// the CRD schemas are functional and objects can be persisted.
+	createBackendTLSPolicy(t, ns)
+	createReferenceGrant(t, ns)
 
 	return nil
 }
