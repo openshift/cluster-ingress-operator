@@ -180,6 +180,8 @@ rules:
   - grpcroutes
   - referencegrants
   - backendtlspolicies
+  - listenersets
+  - listenersets/status
   verbs:
   - '*'
 
