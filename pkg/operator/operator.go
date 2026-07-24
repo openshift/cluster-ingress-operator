@@ -36,6 +36,7 @@ import (
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	gatewaylabelercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-labeler"
+	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	gatewaynetworkpolicycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-networkpolicy"
 	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	gatewaystatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-status"
@@ -47,6 +48,7 @@ import (
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 	"github.com/openshift/library-go/pkg/operator/events"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -376,18 +378,31 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
 	}
 
+	dependentControllers := []controller.Controller{
+		gatewayClassController,
+		gatewayServiceDNSController,
+		gatewayLabelController,
+		gatewayStatusController,
+		gatewayNetworkPolicyController,
+	}
+
+	var listenerSetCRD apiextensionsv1.CustomResourceDefinition
+	if err := mgr.GetClient().Get(context.TODO(), types.NamespacedName{Name: "listenersets.gateway.networking.k8s.io"}, &listenerSetCRD); err != nil {
+		log.Info("ListenerSet CRD not found, skipping listenerset-status controller")
+	} else {
+		listenerSetStatusController, err := listenersetstatuscontroller.NewUnmanaged(mgr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create listenerset-status controller: %w", err)
+		}
+		dependentControllers = append(dependentControllers, listenerSetStatusController)
+	}
+
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
-		DependentControllers: []controller.Controller{
-			gatewayClassController,
-			gatewayServiceDNSController,
-			gatewayLabelController,
-			gatewayStatusController,
-			gatewayNetworkPolicyController,
-		},
+		DependentControllers:            dependentControllers,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}
