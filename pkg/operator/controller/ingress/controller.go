@@ -517,7 +517,8 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 // Approach #2 is preferred for new fields. Use approach #1 only when you need
 // defaulting that cannot be performed in the spec.
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
-	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
+	isNewIngressController := ic.Status.EndpointPublishingStrategy == nil
+	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted, isNewIngressController)
 
 	// updatePublishingStrategy expects ic.Status.EndpointPublishingStrategy
 	// not to be nil.  However, updatePublishingStrategy also expects
@@ -541,7 +542,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 // computeEffectivePublishingStrategy takes an endpoint publishing strategy,
 // fills in missing fields with empty structs or default values, and returns
 // the result.
-func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) *operatorv1.EndpointPublishingStrategy {
+func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool, isNewIngressController bool) *operatorv1.EndpointPublishingStrategy {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
@@ -598,8 +599,8 @@ func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platfo
 			}
 		}
 
-		// Set provider parameters based on the cluster ingress config.
-		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted)
+		// Set provider parameters based on the cluster ingress config and controller-managed defaults.
+		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted, isNewIngressController)
 
 	case operatorv1.NodePortServiceStrategyType:
 		if effectiveStrategy.NodePort == nil {
@@ -835,9 +836,9 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 }
 
 // setDefaultProviderParameters mutates the given LoadBalancerStrategy by
-// defaulting its ProviderParameters field based on the defaults in the provided
-// ingress config object.
-func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool) {
+// defaulting its ProviderParameters field based on the cluster ingress config
+// and controller-managed defaults.
+func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool, isNewIngressController bool) {
 	var provider operatorv1.LoadBalancerProviderType
 	if lbs.ProviderParameters != nil {
 		provider = lbs.ProviderParameters.Type
@@ -877,10 +878,10 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 			}
-			// Only default protocol for new IngressControllers. Existing ICs retain an empty
-			// protocol in status so that on upgrade the operator does not stomp the target-group-attributes
-			// annotation on customers who have already manually set it to work around hairpin failures.
-			if len(lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol) == 0 && !alreadyAdmitted {
+			// Default protocol to PROXY for new IngressControllers. Use isNewIngressController
+			// (status not yet initialized) instead of !alreadyAdmitted because alreadyAdmitted
+			// can flip on re-admission, which would incorrectly re-default protocol for existing NLBs.
+			if len(lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol) == 0 && isNewIngressController {
 				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
 			}
 		}
