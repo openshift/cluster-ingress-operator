@@ -235,8 +235,9 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPodInvalidRequest, DefaultRetryTimeout) })
 
-	// Check curl pod logs for a 400 response since the sent headers
-	// are too large for HAProxy.
+	// Check curl pod logs for a 400 or 431 response since the sent headers
+	// are too large for HAProxy. HAProxy 2.8 returns 400 Bad request,
+	// while HAProxy 3.2+ returns 431 Request Header Fields Too Large (RFC 6585).
 	pollErr = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
 		readCloser, err := cl.CoreV1().Pods(clientPodInvalidRequest.Namespace).GetLogs(clientPodInvalidRequest.Name, &corev1.PodLogOptions{
 			Container: "curl",
@@ -254,7 +255,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		}()
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.Contains(line, "400 Bad request") {
+			if strings.Contains(line, "400 Bad request") || strings.Contains(line, "431 Request Header Fields Too Large") {
 				return true, nil
 			}
 		}
