@@ -743,6 +743,13 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
+			name:                    "existing NLB with empty protocol does not get re-defaulted to PROXY",
+			ic:                      makeIC(spec(nlb()), status(nlbWithNullParameters())),
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
 			name:                    "NLB with cleared spec protocol reverts status to default PROXY",
 			ic:                      makeIC(spec(nlbWithNullParameters()), status(nlbTcpWithNullParameters())),
 			expectedResult:          true,
