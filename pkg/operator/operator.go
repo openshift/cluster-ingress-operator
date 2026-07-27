@@ -59,6 +59,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 var (
@@ -151,9 +153,21 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	marketplaceEnabled := enabledCapabilities.Has(configv1.ClusterVersionCapabilityMarketplace)
 	olmEnabled := enabledCapabilities.Has(configv1.ClusterVersionCapabilityOperatorLifecycleManager)
 
+	// Configure the metrics server options.
+	metricsOpts := metricsserver.Options{
+		BindAddress: config.MetricsBindAddress,
+	}
+	if config.MetricsCertDir != "" {
+		metricsOpts.SecureServing = true
+		metricsOpts.CertDir = config.MetricsCertDir
+		metricsOpts.FilterProvider = filters.WithAuthenticationAndAuthorization
+		metricsOpts.TLSOpts = config.MetricsTLSOpts
+	}
+
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
-		Scheme: scheme,
+		Scheme:  scheme,
+		Metrics: metricsOpts,
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
 				config.Namespace: {},
