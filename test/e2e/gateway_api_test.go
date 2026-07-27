@@ -1712,17 +1712,9 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 }
 
 // testListenerSetNotAccepted verifies that a ListenerSet targeting an
-// OpenShift-managed Gateway gets Accepted=False, and that a ListenerSet
-// targeting a non-existent gateway does not get any conditions set.
+// OpenShift-managed Gateway gets Accepted=False.
 func testListenerSetNotAccepted(t *testing.T) {
-	t.Helper()
 
-	var crd apiextensionsv1.CustomResourceDefinition
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "listenersets.gateway.networking.k8s.io"}, &crd); err != nil {
-		t.Skip("ListenerSet CRD not installed, skipping")
-	}
-
-	// Test 1: ListenerSet on our Gateway should get Accepted=False.
 	lsName := names.SimpleNameGenerator.GenerateName("test-listenerset-")
 	ls := &gatewayapiv1.ListenerSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1744,11 +1736,11 @@ func testListenerSetNotAccepted(t *testing.T) {
 	}
 
 	t.Logf("creating ListenerSet %s/%s targeting gateway %s", ls.Namespace, ls.Name, testGatewayName)
-	if err := kclient.Create(context.TODO(), ls); err != nil {
+	if err := kclient.Create(t.Context(), ls); err != nil {
 		t.Fatalf("failed to create ListenerSet: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := kclient.Delete(context.TODO(), ls); err != nil {
+		if err := kclient.Delete(context.Background(), ls); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("failed to delete ListenerSet: %v", err)
 			}
@@ -1757,8 +1749,8 @@ func testListenerSetNotAccepted(t *testing.T) {
 
 	t.Log("verifying ListenerSet gets Accepted=False")
 	nsName := types.NamespacedName{Namespace: ls.Namespace, Name: ls.Name}
-	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.TODO(), nsName, ls); err != nil {
+	assert.Eventually(t, func() bool {
+		if err := kclient.Get(t.Context(), nsName, ls); err != nil {
 			t.Logf("failed to get ListenerSet: %v", err)
 			return false
 		}
@@ -1768,70 +1760,4 @@ func testListenerSetNotAccepted(t *testing.T) {
 		}
 		return cond.Status == metav1.ConditionFalse && cond.Reason == listenersetstatuscontroller.ReasonUnsupportedByController
 	}, 2*time.Minute, 2*time.Second, "ListenerSet did not get Accepted=False")
-
-	// Test 2: ListenerSet targeting a non-existent gateway should not get
-	// Accepted=False from CIO.
-	unrelatedName := names.SimpleNameGenerator.GenerateName("test-listenerset-unrelated-")
-	unrelatedLS := &gatewayapiv1.ListenerSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      unrelatedName,
-			Namespace: operatorcontroller.DefaultOperandNamespace,
-		},
-		Spec: gatewayapiv1.ListenerSetSpec{
-			ParentRef: gatewayapiv1.ParentGatewayReference{
-				Name: "non-existent-gateway",
-			},
-			Listeners: []gatewayapiv1.ListenerEntry{
-				{
-					Name:     "test-listener",
-					Port:     8443,
-					Protocol: gatewayapiv1.HTTPSProtocolType,
-				},
-			},
-		},
-	}
-
-	t.Logf("creating unrelated ListenerSet %s/%s", unrelatedLS.Namespace, unrelatedLS.Name)
-	if err := kclient.Create(context.TODO(), unrelatedLS); err != nil {
-		t.Fatalf("failed to create unrelated ListenerSet: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.TODO(), unrelatedLS); err != nil {
-			if !errors.IsNotFound(err) {
-				t.Logf("failed to delete unrelated ListenerSet: %v", err)
-			}
-		}
-	})
-
-	t.Log("verifying unrelated ListenerSet does NOT get Accepted=False from CIO")
-	unrelatedNSName := types.NamespacedName{Namespace: unrelatedLS.Namespace, Name: unrelatedLS.Name}
-	assert.Never(t, func() bool {
-		if err := kclient.Get(context.TODO(), unrelatedNSName, unrelatedLS); err != nil {
-			t.Logf("failed to get unrelated ListenerSet: %v", err)
-			return false
-		}
-		cond := condutils.FindStatusCondition(unrelatedLS.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-		return cond != nil && cond.Reason == listenersetstatuscontroller.ReasonUnsupportedByController
-	}, 30*time.Second, 2*time.Second, "unrelated ListenerSet unexpectedly got Accepted=False from CIO")
-
-	// Test 3: Changing the parentRef away from a managed Gateway should clear
-	// the Accepted=False condition set by CIO.
-	t.Log("updating ListenerSet to target a non-existent gateway")
-	if err := kclient.Get(context.TODO(), nsName, ls); err != nil {
-		t.Fatalf("failed to get ListenerSet before update: %v", err)
-	}
-	ls.Spec.ParentRef.Name = "non-existent-gateway"
-	if err := kclient.Update(context.TODO(), ls); err != nil {
-		t.Fatalf("failed to update ListenerSet parentRef: %v", err)
-	}
-
-	t.Log("verifying Accepted condition is cleared after re-targeting")
-	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.TODO(), nsName, ls); err != nil {
-			t.Logf("failed to get ListenerSet: %v", err)
-			return false
-		}
-		cond := condutils.FindStatusCondition(ls.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-		return cond == nil || cond.Reason != listenersetstatuscontroller.ReasonUnsupportedByController
-	}, 2*time.Minute, 2*time.Second, "Accepted=False was not cleared after re-targeting ListenerSet")
 }

@@ -1,6 +1,6 @@
 // The listenerset-status controller watches for ListenerSet resources
 // targeting OpenShift-managed Gateways and sets Accepted=False on them.
-// Istio does not correctly implement hostname conflict resolution for
+// Current Istio (1.30.1) does not correctly implement hostname conflict resolution for
 // ListenerSets, so CIO disables ListenerSet reconciliation via
 // PILOT_IGNORE_RESOURCES. This controller ensures users are informed
 // that their ListenerSets will not be reconciled. It also exposes a
@@ -20,12 +20,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -50,7 +52,10 @@ var (
 )
 
 func RegisterMetrics() error {
-	return prometheus.Register(listenerSetOnManagedGatewayMetric)
+	if err := prometheus.Register(listenerSetOnManagedGatewayMetric); err != nil {
+		return fmt.Errorf("failed to register ListenerSet metric: %w", err)
+	}
+	return nil
 }
 
 func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
@@ -75,22 +80,38 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	}
 
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(toReconcile))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch ListenerSets: %w", err)
 	}
 
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(toReconcile))); err != nil {
-		return nil, err
+	gatewayHasOurController := operatorcontroller.GatewayHasOurController(log, operatorCache, false)
+	gatewayPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return gatewayHasOurController(e.Object) },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return gatewayHasOurController(e.ObjectOld) || gatewayHasOurController(e.ObjectNew)
+		},
+		DeleteFunc:  func(e event.DeleteEvent) bool { return gatewayHasOurController(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(toReconcile), gatewayPredicate)); err != nil {
+		return nil, fmt.Errorf("failed to watch Gateways: %w", err)
 	}
 
-	gatewayClassPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+	isOurGatewayClass := func(o client.Object) bool {
 		gc, ok := o.(*gatewayapiv1.GatewayClass)
 		if !ok {
 			return false
 		}
 		return gc.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
-	})
+	}
+	gatewayClassPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return isOurGatewayClass(e.Object) },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return isOurGatewayClass(e.ObjectOld) || isOurGatewayClass(e.ObjectNew)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool { return isOurGatewayClass(e.Object) },
+	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(toReconcile), gatewayClassPredicate)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch GatewayClasses: %w", err)
 	}
 
 	return c, nil
@@ -141,6 +162,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// Since PILOT_IGNORE_RESOURCES prevents Istio from setting any status,
 	// this is the only signal the user gets that ListenerSets are unsupported.
 	found := false
+	var errs []error
 	for i := range listenerSetList.Items {
 		ls := &listenerSetList.Items[i]
 		parentNS := ls.Namespace
@@ -148,14 +170,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			parentNS = string(*ls.Spec.ParentRef.Namespace)
 		}
 		if !ourGateways[gatewayKey{string(ls.Spec.ParentRef.Name), parentNS}] {
-			if err := r.clearListenerSetNotAccepted(ctx, ls); err != nil {
-				log.Error(err, "failed to clear ListenerSet status", "listenerset", ls.Name, "namespace", ls.Namespace)
-			}
 			continue
 		}
 		found = true
 		if err := r.setListenerSetNotAccepted(ctx, ls); err != nil {
-			log.Error(err, "failed to set ListenerSet status", "listenerset", ls.Name, "namespace", ls.Namespace)
+			errs = append(errs, err)
 		}
 	}
 
@@ -165,7 +184,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		listenerSetOnManagedGatewayMetric.Set(0)
 	}
 
-	return reconcile.Result{}, nil
+	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
 func (r *reconciler) setListenerSetNotAccepted(ctx context.Context, ls *gatewayapiv1.ListenerSet) error {
@@ -184,19 +203,5 @@ func (r *reconciler) setListenerSetNotAccepted(ctx context.Context, ls *gatewaya
 		return fmt.Errorf("failed to patch ListenerSet %s/%s status: %w", ls.Namespace, ls.Name, err)
 	}
 	log.Info("set ListenerSet Accepted=False", "listenerset", ls.Name, "namespace", ls.Namespace)
-	return nil
-}
-
-func (r *reconciler) clearListenerSetNotAccepted(ctx context.Context, ls *gatewayapiv1.ListenerSet) error {
-	found := meta.FindStatusCondition(ls.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-	if found == nil || found.Reason != ReasonUnsupportedByController {
-		return nil
-	}
-	updated := ls.DeepCopy()
-	meta.RemoveStatusCondition(&updated.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-	if err := r.client.Status().Patch(ctx, updated, client.MergeFrom(ls)); err != nil {
-		return fmt.Errorf("failed to clear ListenerSet %s/%s status: %w", ls.Namespace, ls.Name, err)
-	}
-	log.Info("cleared ListenerSet Accepted condition", "listenerset", ls.Name, "namespace", ls.Namespace)
 	return nil
 }
