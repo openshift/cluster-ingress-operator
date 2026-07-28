@@ -4,8 +4,8 @@
 // ListenerSets, so CIO disables ListenerSet reconciliation via
 // PILOT_IGNORE_RESOURCES. This controller ensures users are informed
 // that their ListenerSets will not be reconciled. It also exposes a
-// Prometheus gauge to enable alerting when ListenerSets exist on
-// managed Gateways.
+// per-ListenerSet Prometheus gauge to enable alerting when ListenerSets
+// exist on managed Gateways.
 package listenerset_status
 
 import (
@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,15 +39,19 @@ const (
 	// ReasonUnsupportedByController is the reason set on the Accepted
 	// condition when a ListenerSet targets an OpenShift-managed Gateway.
 	ReasonUnsupportedByController = "UnsupportedByController"
+
+	// listenerSetParentGatewayIndex is the field index key for looking up
+	// ListenerSets by their parent Gateway name (namespace/name).
+	listenerSetParentGatewayIndex = "spec.parentRef.gateway"
 )
 
 var (
 	log = logf.Logger.WithName(controllerName)
 
-	listenerSetOnManagedGatewayMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+	listenerSetOnManagedGatewayMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ingress_operator_listenerset_on_managed_gateway",
 		Help: "Set to 1 when a ListenerSet targets an OpenShift-managed Gateway. ListenerSets are not yet supported and may cause unexpected traffic behavior on upgrade.",
-	})
+	}, []string{"listenerset_namespace", "listenerset_name"})
 )
 
 func RegisterMetrics() error {
@@ -69,33 +72,78 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		return nil, err
 	}
 
-	// Use a single synthetic key so that any ListenerSet or GatewayClass
-	// change triggers one global reconcile. The reconciler lists all
-	// ListenerSets and managed GatewayClasses to compute the full
-	// picture, so per-resource reconciliation would be redundant.
-	toReconcile := func(_ context.Context, _ client.Object) []reconcile.Request {
-		return []reconcile.Request{{
-			NamespacedName: types.NamespacedName{Name: "listenerset-check"},
-		}}
+	// Index ListenerSets by their parent Gateway (namespace/name) so that
+	// Gateway changes can enqueue only the affected ListenerSets.
+	if err := operatorCache.IndexField(context.Background(), &gatewayapiv1.ListenerSet{}, listenerSetParentGatewayIndex, func(o client.Object) []string {
+		ls := o.(*gatewayapiv1.ListenerSet)
+		parentNS := ls.Namespace
+		if ls.Spec.ParentRef.Namespace != nil {
+			parentNS = string(*ls.Spec.ParentRef.Namespace)
+		}
+		return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create index for ListenerSets: %w", err)
 	}
 
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(toReconcile))); err != nil {
+	// Watch ListenerSets directly — each ListenerSet reconciles itself.
+	// Only reconcile on create, delete, or parentRef changes.
+	listenerSetPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldLS, okOld := e.ObjectOld.(*gatewayapiv1.ListenerSet)
+			newLS, okNew := e.ObjectNew.(*gatewayapiv1.ListenerSet)
+			if !okOld || !okNew {
+				return false
+			}
+			return string(oldLS.Spec.ParentRef.Name) != string(newLS.Spec.ParentRef.Name) ||
+				parentRefNamespace(oldLS) != parentRefNamespace(newLS)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+	}
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.ListenerSet{}, &handler.EnqueueRequestForObject{}, listenerSetPredicate)); err != nil {
 		return nil, fmt.Errorf("failed to watch ListenerSets: %w", err)
 	}
 
+	// Watch Gateways — when a Gateway's class changes or it is deleted,
+	// enqueue the ListenerSets that target it via the index.
 	gatewayHasOurController := operatorcontroller.GatewayHasOurController(log, operatorCache, false)
+	gatewayToListenerSets := func(ctx context.Context, o client.Object) []reconcile.Request {
+		key := o.GetNamespace() + "/" + o.GetName()
+		var listenerSets gatewayapiv1.ListenerSetList
+		if err := operatorCache.List(ctx, &listenerSets, client.MatchingFields{listenerSetParentGatewayIndex: key}); err != nil {
+			log.Error(err, "failed to list ListenerSets for Gateway", "gateway", key)
+			return nil
+		}
+		var requests []reconcile.Request
+		for _, ls := range listenerSets.Items {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: ls.Namespace, Name: ls.Name},
+			})
+		}
+		return requests
+	}
 	gatewayPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool { return gatewayHasOurController(e.Object) },
 		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldGW, okOld := e.ObjectOld.(*gatewayapiv1.Gateway)
+			newGW, okNew := e.ObjectNew.(*gatewayapiv1.Gateway)
+			if !okOld || !okNew {
+				return false
+			}
+			if oldGW.Spec.GatewayClassName == newGW.Spec.GatewayClassName {
+				return false
+			}
 			return gatewayHasOurController(e.ObjectOld) || gatewayHasOurController(e.ObjectNew)
 		},
 		DeleteFunc:  func(e event.DeleteEvent) bool { return gatewayHasOurController(e.Object) },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(toReconcile), gatewayPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToListenerSets), gatewayPredicate)); err != nil {
 		return nil, fmt.Errorf("failed to watch Gateways: %w", err)
 	}
 
+	// Watch GatewayClasses — when our GatewayClass is created or deleted,
+	// enqueue all ListenerSets so they can re-evaluate.
 	isOurGatewayClass := func(o client.Object) bool {
 		gc, ok := o.(*gatewayapiv1.GatewayClass)
 		if !ok {
@@ -103,14 +151,27 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		}
 		return gc.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
 	}
-	gatewayClassPredicate := predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool { return isOurGatewayClass(e.Object) },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			return isOurGatewayClass(e.ObjectOld) || isOurGatewayClass(e.ObjectNew)
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool { return isOurGatewayClass(e.Object) },
+	gatewayClassToListenerSets := func(ctx context.Context, _ client.Object) []reconcile.Request {
+		var listenerSets gatewayapiv1.ListenerSetList
+		if err := operatorCache.List(ctx, &listenerSets); err != nil {
+			log.Error(err, "failed to list ListenerSets for GatewayClass change")
+			return nil
+		}
+		var requests []reconcile.Request
+		for _, ls := range listenerSets.Items {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: ls.Namespace, Name: ls.Name},
+			})
+		}
+		return requests
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(toReconcile), gatewayClassPredicate)); err != nil {
+	gatewayClassPredicate := predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return isOurGatewayClass(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return isOurGatewayClass(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(gatewayClassToListenerSets), gatewayClassPredicate)); err != nil {
 		return nil, fmt.Errorf("failed to watch GatewayClasses: %w", err)
 	}
 
@@ -122,69 +183,60 @@ type reconciler struct {
 	cache  cache.Cache
 }
 
+// Reconcile handles a single ListenerSet. It checks whether the
+// ListenerSet targets an OpenShift-managed Gateway and sets
+// Accepted=False if so.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	log.Info("reconciling", "request", request)
+	log.Info("reconciling", "listenerset", request.NamespacedName)
 
-	gatewayClassList := gatewayapiv1.GatewayClassList{}
-	if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
-		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
-	}); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
+	ls := &gatewayapiv1.ListenerSet{}
+	if err := r.cache.Get(ctx, request.NamespacedName, ls); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// ListenerSet was deleted — clean up metric.
+			listenerSetOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("failed to get ListenerSet %s: %w", request.NamespacedName, err)
 	}
-	if len(gatewayClassList.Items) == 0 {
-		listenerSetOnManagedGatewayMetric.Set(0)
+
+	parentNS := ls.Namespace
+	if ls.Spec.ParentRef.Namespace != nil {
+		parentNS = string(*ls.Spec.ParentRef.Namespace)
+	}
+	parentName := types.NamespacedName{Namespace: parentNS, Name: string(ls.Spec.ParentRef.Name)}
+
+	gw := &gatewayapiv1.Gateway{}
+	if err := r.cache.Get(ctx, parentName, gw); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			listenerSetOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("failed to get Gateway %s: %w", parentName, err)
+	}
+
+	gcName := types.NamespacedName{Name: string(gw.Spec.GatewayClassName)}
+	gc := &gatewayapiv1.GatewayClass{}
+	if err := r.cache.Get(ctx, gcName, gc); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			listenerSetOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("failed to get GatewayClass %s: %w", gcName, err)
+	}
+
+	if gc.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+		listenerSetOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
 		return reconcile.Result{}, nil
 	}
-	ourClassNames := make(map[string]bool, len(gatewayClassList.Items))
-	for _, gc := range gatewayClassList.Items {
-		ourClassNames[gc.Name] = true
+
+	// ListenerSet targets an OpenShift-managed Gateway.
+	listenerSetOnManagedGatewayMetric.WithLabelValues(request.Namespace, request.Name).Set(1)
+
+	if err := r.setListenerSetNotAccepted(ctx, ls); err != nil {
+		return reconcile.Result{}, err
 	}
 
-	gatewayList := gatewayapiv1.GatewayList{}
-	if err := r.cache.List(ctx, &gatewayList); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list gateways: %w", err)
-	}
-	type gatewayKey struct{ name, namespace string }
-	ourGateways := make(map[gatewayKey]bool)
-	for _, gw := range gatewayList.Items {
-		if ourClassNames[string(gw.Spec.GatewayClassName)] {
-			ourGateways[gatewayKey{gw.Name, gw.Namespace}] = true
-		}
-	}
-
-	listenerSetList := gatewayapiv1.ListenerSetList{}
-	if err := r.cache.List(ctx, &listenerSetList); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list listenersets: %w", err)
-	}
-
-	// Set Accepted=False on all ListenerSets targeting our Gateways regardless
-	// of whether the Gateway's AllowedListeners would permit attachment.
-	// Since PILOT_IGNORE_RESOURCES prevents Istio from setting any status,
-	// this is the only signal the user gets that ListenerSets are unsupported.
-	found := false
-	var errs []error
-	for i := range listenerSetList.Items {
-		ls := &listenerSetList.Items[i]
-		parentNS := ls.Namespace
-		if ls.Spec.ParentRef.Namespace != nil {
-			parentNS = string(*ls.Spec.ParentRef.Namespace)
-		}
-		if !ourGateways[gatewayKey{string(ls.Spec.ParentRef.Name), parentNS}] {
-			continue
-		}
-		found = true
-		if err := r.setListenerSetNotAccepted(ctx, ls); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if found {
-		listenerSetOnManagedGatewayMetric.Set(1)
-	} else {
-		listenerSetOnManagedGatewayMetric.Set(0)
-	}
-
-	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+	return reconcile.Result{}, nil
 }
 
 func (r *reconciler) setListenerSetNotAccepted(ctx context.Context, ls *gatewayapiv1.ListenerSet) error {
@@ -194,7 +246,7 @@ func (r *reconciler) setListenerSetNotAccepted(ctx context.Context, ls *gatewaya
 		Status:             metav1.ConditionFalse,
 		ObservedGeneration: ls.Generation,
 		Reason:             ReasonUnsupportedByController,
-		Message:            "ListenerSets are not yet supported by the OpenShift Gateway API implementation. This ListenerSet will not be reconciled.",
+		Message:            "ListenerSets are not yet supported by the OpenShift Gateway API implementation. This ListenerSet will not be reconciled. On a future upgrade, this ListenerSet may become active and could cause unexpected traffic routing.",
 	})
 	if !changed {
 		return nil
@@ -204,4 +256,11 @@ func (r *reconciler) setListenerSetNotAccepted(ctx context.Context, ls *gatewaya
 	}
 	log.Info("set ListenerSet Accepted=False", "listenerset", ls.Name, "namespace", ls.Namespace)
 	return nil
+}
+
+func parentRefNamespace(ls *gatewayapiv1.ListenerSet) string {
+	if ls.Spec.ParentRef.Namespace != nil {
+		return string(*ls.Spec.ParentRef.Namespace)
+	}
+	return ls.Namespace
 }
