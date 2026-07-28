@@ -696,10 +696,19 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 		dnsProvider = provider
 	case configv1.GCPPlatformType:
+		// Get IPFamily from GCP platform status if available.
+		// GCP currently doesn't have an IPFamily field in its platform status,
+		// so we default to IPv4. The provider will still detect dual-stack
+		// configurations by examining the IP addresses in the DNS record targets.
+		// When GCP adds IPFamily support to its platform status, update this to:
+		// ipFamily := platformStatus.GCP.IPFamily
+		ipFamily := configv1.IPv4
+
 		provider, err := gcpdns.New(gcpdns.Config{
 			Project:         platformStatus.GCP.ProjectID,
 			CredentialsJSON: creds.Data["service_account.json"],
 			UserAgent:       userAgent,
+			IPFamily:        ipFamily,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
