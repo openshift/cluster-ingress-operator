@@ -133,7 +133,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
-	t.Run("testGatewayAPIListenerSetRejection", testGatewayAPIListenerSetRejection)
+	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	if gatewayAPIWithoutOLMEnabled {
@@ -1441,7 +1441,7 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 	}
 }
 
-func testGatewayAPIListenerSetRejection(t *testing.T) {
+func testGatewayAPIListenerSetIgnored(t *testing.T) {
 	ctx := t.Context()
 
 	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
@@ -1516,30 +1516,27 @@ func testGatewayAPIListenerSetRejection(t *testing.T) {
 		}
 	})
 	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
+	observed := false
 	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
 			t.Logf("Failed to get ListenerSet %v: %v; retrying...", listenerSet.Namespace, err)
+			return false, nil
 		}
+		observed = true
 
-		for _, condition := range listenerSet.Status.Conditions {
-			if condition.Type == string(gatewayapiv1.ListenerSetConditionAccepted) {
-				if condition.Status == metav1.ConditionTrue {
-					t.Logf("ListenerSet has become Accepted. Current status: %v", condition.Status)
-					return false, fmt.Errorf("condition unexpectedly became true")
-
-				}
-			}
-			if condition.Type == string(gatewayapiv1.ListenerSetConditionProgrammed) {
-				if condition.Status == metav1.ConditionTrue {
-					t.Logf("ListenerSet has become Programmed. Current status: %v", condition.Status)
-					return false, fmt.Errorf("condition unexpectedly became true")
-				}
-			}
+		if condutils.IsStatusConditionTrue(listenerSet.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted)) {
+			return false, fmt.Errorf("ListenerSet Accepted condition unexpectedly became true")
+		}
+		if condutils.IsStatusConditionTrue(listenerSet.Status.Conditions, string(gatewayapiv1.ListenerSetConditionProgrammed)) {
+			return false, fmt.Errorf("ListenerSet Programmed condition unexpectedly became true")
 		}
 		t.Logf("Neither ListenerSet Condition has become true. Current status: %v", listenerSet.Status.Conditions)
 		return false, nil
 	}); err != nil && !wait.Interrupted(err) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !observed {
+		t.Fatalf("ListenerSet was never successfully read during polling")
 	}
 
 }

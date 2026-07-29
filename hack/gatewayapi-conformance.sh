@@ -62,12 +62,15 @@ fi
 # Also, GRPCRouteListenerHostnameMatching tests are taking longer than 150s to converge to passing.
 sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicyConflictResolution,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
-# Skipping GatewayStaticAddresses: we don't support specific address pool configuration (https://redhat.atlassian.net/browse/NE-2416).
-# Skipping features not supported by Istio 1.30.1: https://github.com/istio/istio/blob/1.30.1/pilot/pkg/config/kube/gateway/supported_features.go#L22
-# Skipping ListenerSet: CRD is installed as part of Gateway API v1.5.1 standard channel, but Istio does not yet support it.
-SKIPPED_TESTS="GatewayStaticAddresses,GatewayBackendClientCertificate,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPSListenerDetectMisdirectedRequests,ListenerSet" 
+# Features NOT claimed in SUPPORTED_FEATURES (tests auto-skipped):
+# - GatewayStaticAddresses: we don't support specific address pool configuration (https://redhat.atlassian.net/browse/NE-2416).
+# - GatewayBackendClientCertificate, GatewayFrontendClientCertificateValidation,
+#   GatewayFrontendClientCertificateValidationInsecureFallback, GatewayHTTPSListenerDetectMisdirectedRequests:
+#   not supported by Istio 1.30.1 (https://github.com/istio/istio/blob/1.30.1/pilot/pkg/config/kube/gateway/supported_features.go#L22).
+# - ListenerSet: CRD is installed as part of Gateway API v1.5.1 standard channel, but Istio does not yet support it.
+SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
+SKIPPED_TESTS=""
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.4.0" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
+go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.4.0" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC,GATEWAY-TLS" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
 cat conformance/openshift.yaml
