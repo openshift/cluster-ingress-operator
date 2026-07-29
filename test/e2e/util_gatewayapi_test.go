@@ -390,6 +390,10 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	case "referencegrants":
 		kind = "ReferenceGrant"
 		versions = []map[string]bool{{"v1beta1": true}}
+	case "backendtlspolicies":
+		singular = "backendtlspolicy"
+		kind = "BackendTLSPolicy"
+		versions = []map[string]bool{{"v1": true /*storage version*/}, {"v1alpha3": false}}
 	case "tests":
 		kind = "Test"
 		versions = []map[string]bool{{"v1": true}}
