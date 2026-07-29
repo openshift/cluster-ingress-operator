@@ -4,7 +4,6 @@
 package e2e
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -89,6 +88,11 @@ func TestGatewayAPITLSScannerSetup(t *testing.T) {
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err, "Gateway was not accepted/programmed")
 
+	err = assertGatewayInfrastructureLabelsPropagated(t, gateway.Namespace, gateway.Name, string(gateway.Spec.GatewayClassName), map[string]string{
+		"app": gateway.Name,
+	})
+	require.NoError(t, err, "Gateway infrastructure labels were not propagated to Envoy pods")
+
 	err = assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
 		{dnsName: hostname + ".", gatewayName: gateway.Name}: true,
 	})
@@ -120,15 +124,14 @@ func ensureGatewayTLSSecret(t *testing.T, namespace, name, dnsName string) (*cor
 			"tls.key": []byte(keyPEM),
 		},
 	}
-	if err := createOrGetWithRetry(t, context.Background(), secret, DefaultRetryTimeout); err != nil {
+	if err := createOrGetWithRetry(t, t.Context(), secret, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create TLS secret %s/%s: %w", namespace, name, err)
 	}
 	return secret, nil
 }
 
-// ensureHTTPSGateway creates a Gateway with an HTTPS listener and an
-// infrastructure "app" label matching the Gateway name so tls-scanner's
-// COMPONENT_FILTER can select the generated Envoy pods.
+// ensureHTTPSGateway creates a Gateway with an HTTPS listener and the given
+// TLS secret, including an infrastructure "app" label matching the Gateway name.
 func ensureHTTPSGateway(t *testing.T, gatewayClassName, name, namespace, hostname, secretName string) (*gatewayapiv1.Gateway, error) {
 	t.Helper()
 
@@ -145,7 +148,6 @@ func ensureHTTPSGateway(t *testing.T, gatewayClassName, name, namespace, hostnam
 			GatewayClassName: gatewayapiv1.ObjectName(gatewayClassName),
 			Infrastructure: &gatewayapiv1.GatewayInfrastructure{
 				Labels: map[gatewayapiv1.LabelKey]gatewayapiv1.LabelValue{
-					// COMPONENT_FILTER matches app / component / app.kubernetes.io/name.
 					"app": gatewayapiv1.LabelValue(name),
 				},
 			},
@@ -167,7 +169,7 @@ func ensureHTTPSGateway(t *testing.T, gatewayClassName, name, namespace, hostnam
 		},
 	}
 
-	if err := createOrGetWithRetry(t, context.Background(), gateway, DefaultRetryTimeout); err != nil {
+	if err := createOrGetWithRetry(t, t.Context(), gateway, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create gateway %s/%s: %w", namespace, name, err)
 	}
 	return gateway, nil

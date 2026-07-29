@@ -833,6 +833,59 @@ func assertProxyDeployCustomConfigurations(t *testing.T, namespaceName, gatewayN
 	}
 }
 
+// assertGatewayInfrastructureLabelsPropagated verifies that labels from
+// Gateway.spec.infrastructure.labels are present on the generated proxy
+// Deployment pod template and on at least one Ready pod.
+func assertGatewayInfrastructureLabelsPropagated(t *testing.T, namespace, gatewayName, gatewayClassName string, infrastructureLabels map[string]string) error {
+	t.Helper()
+
+	deploymentName := types.NamespacedName{
+		Namespace: namespace,
+		Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayClassName),
+	}
+	expectedLabels := map[string]string{
+		operatorcontroller.GatewayNameLabelKey: gatewayName,
+	}
+	for key, value := range infrastructureLabels {
+		expectedLabels[key] = value
+	}
+
+	return wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+		var dep appsv1.Deployment
+		if err := kclient.Get(ctx, deploymentName, &dep); err != nil {
+			t.Logf("failed to get deployment %v: %v; retrying...", deploymentName, err)
+			return false, nil
+		}
+		for key, want := range expectedLabels {
+			if got := dep.Spec.Template.Labels[key]; got != want {
+				t.Logf("deployment %v pod template missing label %s=%q (got %q); retrying...", deploymentName, key, want, got)
+				return false, nil
+			}
+		}
+
+		var pods corev1.PodList
+		if err := kclient.List(ctx, &pods, client.InNamespace(namespace), client.MatchingLabels(expectedLabels)); err != nil {
+			t.Logf("failed to list pods with infrastructure labels: %v; retrying...", err)
+			return false, nil
+		}
+		ready := 0
+		for _, pod := range pods.Items {
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+					ready++
+					break
+				}
+			}
+		}
+		if ready == 0 {
+			t.Logf("no Ready pods matched labels %v yet (found %d pods); retrying...", expectedLabels, len(pods.Items))
+			return false, nil
+		}
+		t.Logf("observed %d Ready pod(s) with infrastructure labels %v", ready, expectedLabels)
+		return true, nil
+	})
+}
+
 func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditions ...metav1.Condition) error {
 	t.Helper()
 
