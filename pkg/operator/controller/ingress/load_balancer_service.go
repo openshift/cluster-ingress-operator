@@ -469,17 +469,20 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		case configv1.AWSPlatformType:
 			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			effectiveLBType := getEffectiveAWSLoadBalancerType(ci, currentService)
-			// Set proxy protocol annotations based on the effective LB type and NLB protocol.
-			// When nlbProtocol is empty (pre-existing NLB that predates the protocol field),
-			// no case matches and no annotation is set — this is intentional so that
-			// loadBalancerServiceChanged does not stomp any user-set annotation.
 			nlbProtocol := getAWSNLBProtocol(ci.Status.EndpointPublishingStrategy)
-			switch {
-			case effectiveLBType == operatorv1.AWSNetworkLoadBalancer && nlbProtocol == operatorv1.NLBProtocolProxy:
-				service.Annotations[awsLBTargetGroupAttributesAnnotation] = awsNLBTargetGroupAttributesProxy
-			case effectiveLBType == operatorv1.AWSNetworkLoadBalancer && nlbProtocol == operatorv1.NLBProtocolTCP:
-				service.Annotations[awsLBTargetGroupAttributesAnnotation] = awsNLBTargetGroupAttributesTCP
-			case effectiveLBType == operatorv1.AWSClassicLoadBalancer:
+			switch effectiveLBType {
+			case operatorv1.AWSNetworkLoadBalancer:
+				// When nlbProtocol is empty (pre-existing NLB that predates the protocol field),
+				// no annotation is set so that loadBalancerServiceChanged does not stomp any
+				// user-set annotation.
+				if len(nlbProtocol) > 0 {
+					target := awsNLBTargetGroupAttributesTCP
+					if proxyNeeded {
+						target = awsNLBTargetGroupAttributesProxy
+					}
+					service.Annotations[awsLBTargetGroupAttributesAnnotation] = target
+				}
+			case operatorv1.AWSClassicLoadBalancer:
 				service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 			}
 			if lbStatus != nil && lbStatus.ProviderParameters != nil {

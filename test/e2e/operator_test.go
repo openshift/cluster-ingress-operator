@@ -1844,7 +1844,7 @@ func TestAWSLBTypeTransitionSafety(t *testing.T) {
 			}
 
 			t.Logf("creating ingresscontroller %q with LB type %s", ic.Name, tc.initialLBType)
-			if err := createWithRetryOnError(t, context.TODO(), ic, 2*time.Minute); err != nil {
+			if err := createWithRetryOnError(t, t.Context(), ic, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create ingresscontroller: %v", err)
 			}
 			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
