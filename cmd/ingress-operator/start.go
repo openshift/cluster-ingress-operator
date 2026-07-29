@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -223,7 +222,7 @@ func start(opts *StartOptions) error {
 			return fmt.Errorf("failed to add file %q to watcher: %v", opts.ShutdownFile, err)
 		}
 		log.Info("watching file", "filename", opts.ShutdownFile)
-		orig, err = ioutil.ReadFile(opts.ShutdownFile)
+		orig, err = os.ReadFile(opts.ShutdownFile)
 		if err != nil {
 			return fmt.Errorf("failed to read watcher file %q: %v", opts.ShutdownFile, err)
 		}
@@ -239,7 +238,7 @@ func start(opts *StartOptions) error {
 					cancel()
 					return
 				}
-				latest, err := ioutil.ReadFile(opts.ShutdownFile)
+				latest, err := os.ReadFile(opts.ShutdownFile)
 				if err != nil {
 					log.Error(err, "failed to read watched file", "filename", opts.ShutdownFile)
 					cancel()

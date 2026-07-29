@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -87,7 +87,7 @@ func probeRouteEndpoint(route *routev1.Route) error {
 	defer response.Body.Close()
 
 	// Read response body
-	bodyBytes, err := ioutil.ReadAll(response.Body)
+	bodyBytes, err := io.ReadAll(response.Body)
 	if err != nil {
 		return fmt.Errorf("error reading canary response body: %v", err)
 	}
