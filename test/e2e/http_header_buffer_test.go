@@ -6,8 +6,8 @@ package e2e
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
 	"strings"
 	"testing"
 	"time"
