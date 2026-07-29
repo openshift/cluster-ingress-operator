@@ -141,6 +141,7 @@ func Test_Reconcile(t *testing.T) {
 							"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API":         "false",
 							"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT":             "false",
 							"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY":            "true",
+							"PILOT_ENABLE_CA_CRL":                              "false",
 							"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 						},
 						ExtraContainerArgs: []string{},
@@ -268,6 +269,7 @@ func Test_Reconcile(t *testing.T) {
 			"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API":         "false",
 			"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT":             "false",
 			"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY":            "true",
+			"PILOT_ENABLE_CA_CRL":                              "false",
 			"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 		}
 		if gieEnabled {
