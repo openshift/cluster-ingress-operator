@@ -1002,6 +1002,64 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	checkContainerPort(t, deployment, "metrics", 9146)
 }
 
+// TestDesiredRouterDeploymentFIPS verifies that on a FIPS-enabled cluster,
+// TLS_CHACHA20_POLY1305_SHA256 is removed from ROUTER_CIPHERSUITES while
+// FIPS-compliant TLS 1.3 ciphers are kept (OCPBUGS-3917).
+func TestDesiredRouterDeploymentFIPS(t *testing.T) {
+	// Simulate FIPS mode by swapping the package-level isFIPSEnabled var.
+	origFIPS := isFIPSEnabled
+	isFIPSEnabled = true
+	defer func() { isFIPSEnabled = origFIPS }()
+
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+	// Profile: two FIPS-compliant TLS 1.3 ciphers + one non-FIPS TLS 1.3 cipher.
+	ic.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{
+			TLSProfileSpec: configv1.TLSProfileSpec{
+				Ciphers: []string{
+					"ECDHE-RSA-AES128-GCM-SHA256",  // TLS 1.2
+					"TLS_AES_128_GCM_SHA256",       // TLS 1.3, FIPS-compliant
+					"TLS_AES_256_GCM_SHA384",       // TLS 1.3, FIPS-compliant
+					"TLS_CHACHA20_POLY1305_SHA256", // TLS 1.3, non-FIPS — must be removed
+				},
+				MinTLSVersion: configv1.VersionTLS12,
+			},
+		},
+	}
+
+	deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// CHACHA20 must be absent; the two FIPS-compliant ciphers must be present.
+	expected := []envData{
+		{"ROUTER_CIPHERS", true, "ECDHE-RSA-AES128-GCM-SHA256"},
+		{"ROUTER_CIPHERSUITES", true, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"},
+	}
+	if err := checkDeploymentEnvironment(t, deployment, expected); err != nil {
+		t.Errorf("FIPS cipher filtering: %v", err)
+	}
+
+	checkDeploymentHasEnvSorted(t, deployment)
+
+	// Also verify non-FIPS mode leaves all ciphers intact.
+	isFIPSEnabled = false
+	deploymentNonFIPS, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	if err != nil {
+		t.Fatalf("unexpected error (non-FIPS): %v", err)
+	}
+	expectedNonFIPS := []envData{
+		{"ROUTER_CIPHERS", true, "ECDHE-RSA-AES128-GCM-SHA256"},
+		{"ROUTER_CIPHERSUITES", true, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"},
+	}
+	if err := checkDeploymentEnvironment(t, deploymentNonFIPS, expectedNonFIPS); err != nil {
+		t.Errorf("non-FIPS cipher passthrough: %v", err)
+	}
+}
+
 // TestDesiredRouterDeploymentHostNetworkNil verifies that
 // desiredRouterDeployment behaves correctly when
 // status.endpointPublishingStrategy.type is "HostNetwork" but
