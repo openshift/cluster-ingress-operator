@@ -1255,7 +1255,13 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return utilerrors.NewAggregate(errs)
 	}
 
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus, currentLBService)
+	// When auto-delete is set, the service will be deleted and recreated in this reconcile.
+	// Use status (nil) so proxyNeeded reflects the intended state, not the old service.
+	serviceForProxyCheck := currentLBService
+	if _, autoDelete := ci.Annotations[autoDeleteLoadBalancerAnnotation]; autoDelete {
+		serviceForProxyCheck = nil
+	}
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus, serviceForProxyCheck)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %w", ci.Namespace, ci.Name, err))
 		return utilerrors.NewAggregate(errs)

@@ -352,7 +352,17 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		return false, nil, err
 	}
 
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, currentLBService, proxyNeeded)
+	_, autoDeleteLB := ci.Annotations[autoDeleteLoadBalancerAnnotation]
+
+	// When auto-delete is set, the service will be deleted and recreated in this reconcile.
+	// Use status (nil currentService) to compute the desired service so it reflects the
+	// intended state, not the soon-to-be-deleted service.
+	serviceForDesired := currentLBService
+	if autoDeleteLB {
+		serviceForDesired = nil
+	}
+
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, serviceForDesired, proxyNeeded)
 	if err != nil {
 		return false, nil, err
 	}
@@ -387,10 +397,6 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 			if err != nil {
 				return haveLBS, currentLBService, err
 			}
-		}
-		autoDeleteLB := false
-		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
-			autoDeleteLB = true
 		}
 		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, autoDeleteLB); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
