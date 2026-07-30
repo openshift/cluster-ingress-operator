@@ -382,21 +382,19 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create listenerset-status controller: %w", err)
 	}
 
-	dependentControllers := []controller.Controller{
-		gatewayClassController,
-		gatewayServiceDNSController,
-		gatewayLabelController,
-		gatewayStatusController,
-		gatewayNetworkPolicyController,
-		listenerSetStatusController,
-	}
-
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
-		DependentControllers:            dependentControllers,
+		DependentControllers: []controller.Controller{
+			gatewayClassController,
+			gatewayServiceDNSController,
+			gatewayLabelController,
+			gatewayStatusController,
+			gatewayNetworkPolicyController,
+			listenerSetStatusController,
+		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}

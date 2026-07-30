@@ -1714,7 +1714,6 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 // testListenerSetNotAccepted verifies that a ListenerSet targeting an
 // OpenShift-managed Gateway gets Accepted=False.
 func testListenerSetNotAccepted(t *testing.T) {
-
 	lsName := names.SimpleNameGenerator.GenerateName("test-listenerset-")
 	ls := &gatewayapiv1.ListenerSet{
 		ObjectMeta: metav1.ObjectMeta{

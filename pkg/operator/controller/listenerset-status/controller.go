@@ -40,9 +40,9 @@ const (
 	// condition when a ListenerSet targets an OpenShift-managed Gateway.
 	ReasonUnsupportedByController = "UnsupportedByController"
 
-	// listenerSetParentGatewayIndex is the field index key for looking up
+	// ListenerSetParentGatewayIndex is the field index key for looking up
 	// ListenerSets by their parent Gateway name (namespace/name).
-	listenerSetParentGatewayIndex = "spec.parentRef.gateway"
+	ListenerSetParentGatewayIndex = "spec.parentRef.gateway"
 )
 
 var (
@@ -72,19 +72,6 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		return nil, err
 	}
 
-	// Index ListenerSets by their parent Gateway (namespace/name) so that
-	// Gateway changes can enqueue only the affected ListenerSets.
-	if err := operatorCache.IndexField(context.Background(), &gatewayapiv1.ListenerSet{}, listenerSetParentGatewayIndex, func(o client.Object) []string {
-		ls := o.(*gatewayapiv1.ListenerSet)
-		parentNS := ls.Namespace
-		if ls.Spec.ParentRef.Namespace != nil {
-			parentNS = string(*ls.Spec.ParentRef.Namespace)
-		}
-		return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
-	}); err != nil {
-		return nil, fmt.Errorf("failed to create index for ListenerSets: %w", err)
-	}
-
 	// Watch ListenerSets directly — each ListenerSet reconciles itself.
 	// Only reconcile on create, delete, or parentRef changes.
 	listenerSetPredicate := predicate.Funcs{
@@ -110,7 +97,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	gatewayToListenerSets := func(ctx context.Context, o client.Object) []reconcile.Request {
 		key := o.GetNamespace() + "/" + o.GetName()
 		var listenerSets gatewayapiv1.ListenerSetList
-		if err := operatorCache.List(ctx, &listenerSets, client.MatchingFields{listenerSetParentGatewayIndex: key}); err != nil {
+		if err := operatorCache.List(ctx, &listenerSets, client.MatchingFields{ListenerSetParentGatewayIndex: key}); err != nil {
 			log.Error(err, "failed to list ListenerSets for Gateway", "gateway", key)
 			return nil
 		}
@@ -151,7 +138,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		}
 		return gc.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
 	}
-	gatewayClassToListenerSets := func(ctx context.Context, _ client.Object) []reconcile.Request {
+	reconcileAllListenerSets := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		var listenerSets gatewayapiv1.ListenerSetList
 		if err := operatorCache.List(ctx, &listenerSets); err != nil {
 			log.Error(err, "failed to list ListenerSets for GatewayClass change")
@@ -171,7 +158,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		DeleteFunc:  func(e event.DeleteEvent) bool { return isOurGatewayClass(e.Object) },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(gatewayClassToListenerSets), gatewayClassPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(reconcileAllListenerSets), gatewayClassPredicate)); err != nil {
 		return nil, fmt.Errorf("failed to watch GatewayClasses: %w", err)
 	}
 
