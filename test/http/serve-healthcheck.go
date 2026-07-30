@@ -11,6 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	configv1 "github.com/openshift/api/config/v1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	"github.com/openshift/library-go/pkg/crypto"
 )
@@ -78,6 +80,23 @@ func tlsConfigFromEnv() *tls.Config {
 			fmt.Printf("Warning: TLS_MIN_VERSION env var is set (%s) but invalid (%v); using defaults\n", minVersion, err)
 		} else {
 			cfg.MinVersion = v
+		}
+	}
+
+	if groupsEnv := os.Getenv("TLS_GROUPS"); len(groupsEnv) > 0 {
+		raw := strings.Split(groupsEnv, ",")
+		var curves []tls.CurveID
+		for _, name := range raw {
+			if trimmed := strings.TrimSpace(name); trimmed != "" {
+				if id, ok := operatorcontroller.TLSGroupToCurveID(configv1.TLSGroup(trimmed)); ok {
+					curves = append(curves, id)
+				} else {
+					fmt.Printf("Warning: skipping unsupported TLS group %q\n", trimmed)
+				}
+			}
+		}
+		if len(curves) > 0 {
+			cfg.CurvePreferences = curves
 		}
 	}
 

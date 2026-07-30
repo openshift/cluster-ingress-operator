@@ -2,6 +2,7 @@ package routemetrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 var (
@@ -30,7 +31,7 @@ func DeleteRouteMetricsControllerRoutesPerShardMetric(shardName string) {
 // returns on errors.
 func RegisterMetrics() error {
 	for _, metric := range metricsList {
-		if err := prometheus.Register(metric); err != nil {
+		if err := ctrlruntimemetrics.Registry.Register(metric); err != nil {
 			return err
 		}
 	}

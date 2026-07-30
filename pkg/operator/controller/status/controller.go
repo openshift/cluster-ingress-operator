@@ -38,6 +38,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -74,7 +76,7 @@ var orphanedOSSMSubscriptionMetric = prometheus.NewGauge(prometheus.GaugeOpts{
 })
 
 func RegisterMetrics() error {
-	return prometheus.Register(orphanedOSSMSubscriptionMetric)
+	return ctrlruntimemetrics.Registry.Register(orphanedOSSMSubscriptionMetric)
 }
 
 var (

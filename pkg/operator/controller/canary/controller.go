@@ -21,6 +21,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	crypto "github.com/openshift/library-go/pkg/crypto"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -251,7 +252,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		} else {
 			return result, fmt.Errorf("failed to get APIServer 'cluster': %w", err)
 		}
-	} else {
+	} else if crypto.ShouldHonorClusterTLSProfile(apiConfig.Spec.TLSAdherence) {
 		tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 	}
 
