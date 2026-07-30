@@ -2648,7 +2648,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout) })
 
-	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "syslog-netpol", Namespace: clientPod.Namespace})
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "minlength-netpol", Namespace: clientPod.Namespace})
 	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
 		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
 	}
