@@ -71,14 +71,18 @@ spec:
         annotations:
           summary: Internal NLB IngressController may have hairpin connection failures.
           description: >-
-            This alert fires when an IngressController uses an internal AWS Network Load Balancer
-            that may be affected by hairpin connection failures. Hairpin failures occur when a pod
-            connects to a route served by a router pod on the same node — the connection times out
-            because the NLB's default client IP preservation setting causes the return traffic to
-            be dropped. To fix hairpin failures, run
-            `oc edit ingresscontroller/{{ $labels.name }} -n openshift-ingress-operator` and set
+            This IngressController was created before the NLB protocol field was available and has
+            not been explicitly configured. New IngressControllers default to PROXY protocol, which
+            avoids this issue. Without an explicit protocol setting, internal NLBs may be affected
+            by hairpin connection failures — when a pod connects to a route served by a router pod
+            on the same node, the connection may time out because the NLB's default client IP
+            preservation setting causes the return traffic to be dropped. To fix hairpin failures,
+            run `oc edit ingresscontroller/{{ $labels.name }} -n openshift-ingress-operator` and set
             spec.endpointPublishingStrategy.loadBalancer.providerParameters.aws.networkLoadBalancer.protocol
-            to "PROXY". To keep the current behavior and silence this alert, set the protocol to "TCP".
+            to "PROXY". To keep the current behavior and silence this alert, set the protocol to
+            "TCP" — this preserves native client IP visibility but does not fix hairpin failures.
+            Note that setting the protocol may cause brief connection disruptions during
+            the transition as the NLB configuration change and router rollout occur independently.
           message: >-
             The {{ $labels.namespace }}/{{ $labels.name }} IngressController uses an internal
             AWS NLB that may have hairpin connection failures. Connections from pods to routes
