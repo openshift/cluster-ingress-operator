@@ -21,6 +21,8 @@ rules:
       - grpcroutes
       - referencegrants
       - backendtlspolicies
+      - listenersets
+      - tlsroutes
     verbs:
       - get
       - list

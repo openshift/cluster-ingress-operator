@@ -152,6 +152,12 @@ func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
 		// Only create CA Bundle CM in namespaces where there are
 		// Gateway API Gateways
 		"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY": "true",
+		// Disable CRL configmap creation. CRL is for revoking
+		// intermediate CA certificates in service mesh deployments
+		// with plugged-in enterprise CAs. We use a self-signed CA
+		// for internal control plane traffic and don't support
+		// custom CAs, so CRL serves no purpose.
+		"PILOT_ENABLE_CA_CRL": "false",
 		// Don't copy labels or annotations from gateways to resources
 		// that Istiod creates for that gateway.  This is an Istio-
 		// specific behavior which might not be supported by other
@@ -159,6 +165,11 @@ func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
 		// to inject unsupported configuration, for example using
 		// service annotations.
 		"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+		// Ignore ListenerSet resources - Istio does not yet support
+		// ListenerSets, but CIO installs the CRD as part of the
+		// Gateway API v1.5.1 standard channel.
+		// This will be implemented as soon as Istio provides support.
+		"PILOT_IGNORE_RESOURCES": "listenersets.gateway.networking.k8s.io",
 	}
 	if enableInferenceExtension {
 		env["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
