@@ -70,6 +70,12 @@ test-e2e-list: generate
 gatewayapi-conformance:
 	hack/gatewayapi-conformance.sh
 
+# Provision a leave-behind HTTPS Gateway for the CI TLS scanner.
+# GATEWAY_NAME defaults to tls-scanner-gatewayapi (must match COMPONENT_FILTER).
+.PHONY: gatewayapi-tls-scanner-setup
+gatewayapi-tls-scanner-setup:
+	GATEWAYAPI_TLS_SCANNER_SETUP=1 $(GO) test -timeout 30m -count 1 -v -tags e2e -run '^TestGatewayAPITLSScannerSetup$$' ./test/e2e
+
 .PHONY: test-pre-release-ossm
 test-pre-release-ossm:
 	hack/test-pre-release-ossm-images.sh

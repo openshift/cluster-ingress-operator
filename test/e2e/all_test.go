@@ -151,6 +151,10 @@ func TestAll(t *testing.T) {
 		// the ClusterOperator/ingress resource reports only "default" ingress and the ingress
 		// resource being tested.
 		t.Run("TestMultiHAProxyUpgradeableCondition", TestMultiHAProxyUpgradeableCondition)
+		// TestGatewayAPITLSScannerSetup skips unless GATEWAYAPI_TLS_SCANNER_SETUP=1
+		// (make gatewayapi-tls-scanner-setup). It intentionally leaves Gateway
+		// resources for the CI TLS scanner and must not run during normal e2e.
+		t.Run("TestGatewayAPITLSScannerSetup", TestGatewayAPITLSScannerSetup)
 		t.Run("TestIngressControllerConditionsMetricAfterRestart", TestIngressControllerConditionsMetricAfterRestart)
 		// TestIngressControllerCustomEndpoints must run last because
 		// modifying Infrastructure.spec.platformSpec.aws.serviceEndpoints
