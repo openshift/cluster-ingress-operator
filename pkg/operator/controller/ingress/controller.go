@@ -528,7 +528,8 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 // Approach #2 is preferred for new fields. Use approach #1 only when you need
 // defaulting that cannot be performed in the spec.
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
-	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
+	isNewIngressController := ic.Status.EndpointPublishingStrategy == nil
+	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted, isNewIngressController)
 
 	// updatePublishingStrategy expects ic.Status.EndpointPublishingStrategy
 	// not to be nil.  However, updatePublishingStrategy also expects
@@ -552,7 +553,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 // computeEffectivePublishingStrategy takes an endpoint publishing strategy,
 // fills in missing fields with empty structs or default values, and returns
 // the result.
-func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) *operatorv1.EndpointPublishingStrategy {
+func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool, isNewIngressController bool) *operatorv1.EndpointPublishingStrategy {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
@@ -609,8 +610,8 @@ func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platfo
 			}
 		}
 
-		// Set provider parameters based on the cluster ingress config.
-		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted)
+		// Set provider parameters based on the cluster ingress config and controller-managed defaults.
+		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted, isNewIngressController)
 
 	case operatorv1.NodePortServiceStrategyType:
 		if effectiveStrategy.NodePort == nil {
@@ -697,6 +698,7 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 			if statusLB.ProviderParameters.AWS == nil {
 				statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
 			}
+			previousStatusLBType := statusLB.ProviderParameters.AWS.Type
 			if specLB.ProviderParameters.AWS.Type != statusLB.ProviderParameters.AWS.Type {
 				statusLB.ProviderParameters.AWS.Type = specLB.ProviderParameters.AWS.Type
 				changed = true
@@ -725,6 +727,24 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 			if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
 				if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+				}
+				var specNLBProtocol operatorv1.NLBProtocol
+				if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+					specNLBProtocol = specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol
+				}
+				statusNLBProtocol := statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol
+				// isPreExistingNLB is true when this NLB existed before the protocol field
+				// was introduced. Both spec and status protocol are empty, and the status
+				// type was already NLB before this reconcile. Don't default protocol for
+				// these ICs to avoid stomping manually-set target-group-attributes annotations.
+				isPreExistingNLB := len(specNLBProtocol) == 0 && len(statusNLBProtocol) == 0 &&
+					previousStatusLBType == operatorv1.AWSNetworkLoadBalancer
+				if len(specNLBProtocol) > 0 && specNLBProtocol != statusNLBProtocol {
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = specNLBProtocol
+					changed = true
+				} else if len(specNLBProtocol) == 0 && !isPreExistingNLB && statusNLBProtocol != operatorv1.NLBProtocolProxy {
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
+					changed = true
 				}
 			}
 		case operatorv1.GCPLoadBalancerProvider:
@@ -827,9 +847,9 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 }
 
 // setDefaultProviderParameters mutates the given LoadBalancerStrategy by
-// defaulting its ProviderParameters field based on the defaults in the provided
-// ingress config object.
-func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool) {
+// defaulting its ProviderParameters field based on the cluster ingress config
+// and controller-managed defaults.
+func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool, isNewIngressController bool) {
 	var provider operatorv1.LoadBalancerProviderType
 	if lbs.ProviderParameters != nil {
 		provider = lbs.ProviderParameters.Type
@@ -868,6 +888,12 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		case operatorv1.AWSNetworkLoadBalancer:
 			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+			}
+			// Default protocol to PROXY for new IngressControllers. Use isNewIngressController
+			// (status not yet initialized) instead of !alreadyAdmitted because alreadyAdmitted
+			// can flip on re-admission, which would incorrectly re-default protocol for existing NLBs.
+			if len(lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol) == 0 && isNewIngressController {
+				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
 			}
 		}
 
@@ -1161,6 +1187,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	// Delete the metrics related to the ingresscontroller
 	DeleteIngressControllerConditionsMetric(ingress)
 	DeleteActiveNLBMetrics(ingress)
+	DeleteNLBHairpinRiskMetric(ingress)
 
 	// Delete the RoutesPerShard metric label corresponding to the Ingress Controller.
 	routemetrics.DeleteRouteMetricsControllerRoutesPerShardMetric(ingress.Name)
@@ -1239,7 +1266,13 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return utilerrors.NewAggregate(errs)
 	}
 
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus, currentLBService)
+	// When auto-delete is set, the service will be deleted and recreated in this reconcile.
+	// Use status (nil) so proxyNeeded reflects the intended state, not the old service.
+	serviceForProxyCheck := currentLBService
+	if _, autoDelete := ci.Annotations[autoDeleteLoadBalancerAnnotation]; autoDelete {
+		serviceForProxyCheck = nil
+	}
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus, serviceForProxyCheck)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %w", ci.Namespace, ci.Name, err))
 		return utilerrors.NewAggregate(errs)
@@ -1339,6 +1372,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	SetIngressControllerNLBMetric(ci)
+	SetNLBHairpinRiskMetric(ci)
 
 	// If the lbService exists for the "default" IngressController, then update Infra CR's PlatformStatus with the Ingress LB IPs.
 	if haveLB && ci.Name == manifests.DefaultIngressControllerName {
@@ -1390,16 +1424,18 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 		// This can really be done for any external [cloud] LBs that support the proxy protocol.
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			// TRICKY: If the service exists, use the LB Type annotation from the service,
-			//         as status will be inaccurate if a LB Type update is pending.
-			//         If the service does not exist, the status WILL be what determines the next LB Type.
-			var lbType operatorv1.AWSLoadBalancerType
-			if service != nil {
-				lbType = getAWSLoadBalancerTypeFromServiceAnnotation(service)
-			} else {
-				lbType = getAWSLoadBalancerTypeInStatus(ic)
+			// TRICKY: If the service exists, use the LB type annotation from the service,
+			//         as status will be inaccurate if a LB type update is pending.
+			//         If the service does not exist, the status WILL be what determines the next LB type.
+			lbType := getEffectiveAWSLoadBalancerType(ic, service)
+			if lbType == operatorv1.AWSClassicLoadBalancer {
+				return true, nil
 			}
-			return lbType == operatorv1.AWSClassicLoadBalancer, nil
+			if lbType == operatorv1.AWSNetworkLoadBalancer &&
+				getAWSNLBProtocol(ic.Status.EndpointPublishingStrategy) == operatorv1.NLBProtocolProxy {
+				return true, nil
+			}
+			return false, nil
 		case configv1.IBMCloudPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&

@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -206,6 +207,106 @@ func Test_SetIngressControllerNLBMetric(t *testing.T) {
 				t.Error(err)
 			}
 		})
+	}
+}
+
+func awsLBStatus(scope operatorv1.LoadBalancerScope, lbType operatorv1.AWSLoadBalancerType, protocol operatorv1.NLBProtocol) *operatorv1.EndpointPublishingStrategy {
+	eps := &operatorv1.EndpointPublishingStrategy{LoadBalancer: &operatorv1.LoadBalancerStrategy{
+		Scope: scope,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS:  &operatorv1.AWSLoadBalancerParameters{Type: lbType},
+		},
+	}}
+	if len(protocol) > 0 {
+		eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{Protocol: protocol}
+	}
+	return eps
+}
+
+func Test_SetNLBHairpinRiskMetric(t *testing.T) {
+	testCases := []struct {
+		name          string
+		inputIngress  *operatorv1.IngressController
+		expectedValue float64
+	}{
+		{
+			name: "internal NLB, protocol empty — at risk",
+			inputIngress: testIngressControllerWithSpecAndStatus("test1", nil,
+				awsLBStatus(operatorv1.InternalLoadBalancer, operatorv1.AWSNetworkLoadBalancer, "")),
+			expectedValue: 1,
+		},
+		{
+			name: "internal NLB, protocol TCP — not at risk",
+			inputIngress: testIngressControllerWithSpecAndStatus("test1", nil,
+				awsLBStatus(operatorv1.InternalLoadBalancer, operatorv1.AWSNetworkLoadBalancer, operatorv1.NLBProtocolTCP)),
+			expectedValue: 0,
+		},
+		{
+			name: "internal NLB, protocol PROXY — not at risk",
+			inputIngress: testIngressControllerWithSpecAndStatus("test1", nil,
+				awsLBStatus(operatorv1.InternalLoadBalancer, operatorv1.AWSNetworkLoadBalancer, operatorv1.NLBProtocolProxy)),
+			expectedValue: 0,
+		},
+		{
+			name: "external NLB, protocol TCP — not at risk",
+			inputIngress: testIngressControllerWithSpecAndStatus("test1", nil,
+				awsLBStatus(operatorv1.ExternalLoadBalancer, operatorv1.AWSNetworkLoadBalancer, operatorv1.NLBProtocolTCP)),
+			expectedValue: 0,
+		},
+		{
+			name: "external NLB, protocol empty — not at risk",
+			inputIngress: testIngressControllerWithSpecAndStatus("test1", nil,
+				awsLBStatus(operatorv1.ExternalLoadBalancer, operatorv1.AWSNetworkLoadBalancer, "")),
+			expectedValue: 0,
+		},
+		{
+			name: "internal CLB — not at risk",
+			inputIngress: testIngressControllerWithSpecAndStatus("test1", nil,
+				awsLBStatus(operatorv1.InternalLoadBalancer, operatorv1.AWSClassicLoadBalancer, "")),
+			expectedValue: 0,
+		},
+		{
+			name:          "no endpoint publishing strategy — not at risk",
+			inputIngress:  testIngressControllerWithSpecAndStatus("test1", nil, nil),
+			expectedValue: 0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			nlbHairpinRisk.Reset()
+
+			SetNLBHairpinRiskMetric(tc.inputIngress)
+
+			expectedMetricFormat := fmt.Sprintf(`
+			# HELP ingress_controller_aws_nlb_hairpin_risk Reports whether an IngressController using an internal AWS NLB has no explicit protocol setting and may be affected by hairpin connection failures. 0 is no risk, 1 is at risk.
+			# TYPE ingress_controller_aws_nlb_hairpin_risk gauge
+			ingress_controller_aws_nlb_hairpin_risk{name="test1"} %v
+			`, tc.expectedValue)
+			if err := testutil.CollectAndCompare(nlbHairpinRisk, strings.NewReader(expectedMetricFormat)); err != nil {
+				t.Error(err)
+			}
+
+			DeleteNLBHairpinRiskMetric(tc.inputIngress)
+			if err := testutil.CollectAndCompare(nlbHairpinRisk, strings.NewReader("")); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+func testIngressControllerWithSpecAndStatus(name string, spec, status *operatorv1.EndpointPublishingStrategy) *operatorv1.IngressController {
+	return &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: operatorv1.IngressControllerSpec{
+			EndpointPublishingStrategy: spec,
+		},
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: status,
+		},
 	}
 }
 

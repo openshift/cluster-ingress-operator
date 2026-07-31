@@ -2079,6 +2079,23 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			},
 		}
 	}
+	statusWithNLBProtocol := func(protocol operatorv1.NLBProtocol) operatorv1.IngressControllerStatus {
+		status := operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						Type: operatorv1.AWSLoadBalancerProvider,
+						AWS:  &operatorv1.AWSLoadBalancerParameters{Type: operatorv1.AWSNetworkLoadBalancer},
+					},
+				},
+			},
+		}
+		if len(protocol) > 0 {
+			status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{Protocol: protocol}
+		}
+		return status
+	}
 	testCases := []struct {
 		description string
 		expected    bool
@@ -2859,6 +2876,24 @@ func Test_IngressStatusesEqual(t *testing.T) {
 				nil,
 				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
 			),
+		},
+		{
+			description: "NLB protocol same (both PROXY)",
+			expected:    true,
+			a:           statusWithNLBProtocol(operatorv1.NLBProtocolProxy),
+			b:           statusWithNLBProtocol(operatorv1.NLBProtocolProxy),
+		},
+		{
+			description: "NLB protocol differs (PROXY vs TCP)",
+			expected:    false,
+			a:           statusWithNLBProtocol(operatorv1.NLBProtocolProxy),
+			b:           statusWithNLBProtocol(operatorv1.NLBProtocolTCP),
+		},
+		{
+			description: "NLB protocol set vs nil NetworkLoadBalancerParameters",
+			expected:    false,
+			a:           statusWithNLBProtocol(operatorv1.NLBProtocolProxy),
+			b:           statusWithNLBProtocol(""),
 		},
 		{
 			description: "effectiveHAProxyVersion equal",
@@ -3849,7 +3884,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, nil, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -3963,7 +3998,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, nil, true)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
