@@ -15,10 +15,14 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	routev1client "github.com/openshift/client-go/route/clientset/versioned"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+	"github.com/openshift/library-go/test/library/metrics"
+	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	condutils "k8s.io/apimachinery/pkg/api/meta"
@@ -31,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 
@@ -1759,4 +1764,82 @@ func testListenerSetNotAccepted(t *testing.T) {
 		}
 		return cond.Status == metav1.ConditionFalse && cond.Reason == listenersetstatuscontroller.ReasonUnsupportedByController
 	}, 2*time.Minute, 2*time.Second, "ListenerSet did not get Accepted=False")
+
+	// Verify the Prometheus metric is set for this ListenerSet.
+	t.Log("verifying Prometheus metric is set for ListenerSet")
+	prometheusClient := createPrometheusClient(t)
+	metricQuery := fmt.Sprintf(`ingress_operator_listenerset_on_managed_gateway{listenerset_name="%s",listenerset_namespace="%s"}`, lsName, operatorcontroller.DefaultOperandNamespace)
+	assertMetricValue(t, prometheusClient, metricQuery, 1, "Prometheus metric was not set for ListenerSet")
+
+	// Delete the ListenerSet and verify the metric is cleaned up.
+	t.Log("deleting ListenerSet and verifying metric cleanup")
+	if err := kclient.Delete(t.Context(), ls); err != nil {
+		if !errors.IsNotFound(err) {
+			t.Fatalf("failed to delete ListenerSet: %v", err)
+		}
+	}
+	assertMetricGone(t, prometheusClient, metricQuery, "Prometheus metric was not cleaned up after ListenerSet deletion")
+}
+
+func createPrometheusClient(t *testing.T) prometheusv1.API {
+	t.Helper()
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+	routeClient, err := routev1client.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create route client: %v", err)
+	}
+	prometheusClient, err := metrics.NewPrometheusClient(t.Context(), kubeClient, routeClient)
+	if err != nil {
+		t.Fatalf("failed to create Prometheus client: %v", err)
+	}
+	return prometheusClient
+}
+
+func assertMetricValue(t *testing.T, client prometheusv1.API, query string, expected float64, msg string) {
+	t.Helper()
+	assert.Eventually(t, func() bool {
+		result, _, err := client.Query(t.Context(), query, time.Now())
+		if err != nil {
+			t.Logf("failed to query Prometheus: %v", err)
+			return false
+		}
+		vector, ok := result.(model.Vector)
+		if !ok {
+			t.Logf("unexpected result type: %T", result)
+			return false
+		}
+		if len(vector) == 0 {
+			t.Logf("metric not yet available (empty vector)")
+			return false
+		}
+		t.Logf("metric found: labels=%v value=%v", vector[0].Metric, vector[0].Value)
+		return float64(vector[0].Value) == expected
+	}, 2*time.Minute, 5*time.Second, msg)
+}
+
+func assertMetricGone(t *testing.T, client prometheusv1.API, query string, msg string) {
+	t.Helper()
+	assert.Eventually(t, func() bool {
+		result, _, err := client.Query(t.Context(), query, time.Now())
+		if err != nil {
+			t.Logf("failed to query Prometheus: %v", err)
+			return false
+		}
+		vector, ok := result.(model.Vector)
+		if !ok {
+			return false
+		}
+		if len(vector) > 0 {
+			t.Logf("metric still present: labels=%v value=%v", vector[0].Metric, vector[0].Value)
+			return false
+		}
+		return true
+	}, 2*time.Minute, 5*time.Second, msg)
 }
