@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -50,7 +49,7 @@ func render(dir string, prefix string) error {
 
 	for _, file := range files {
 		outputFile := filepath.Join(dir, prefix+filepath.Base(file))
-		if err := ioutil.WriteFile(outputFile, manifests.MustAsset(file), 0640); err != nil {
+		if err := os.WriteFile(outputFile, manifests.MustAsset(file), 0640); err != nil {
 			return fmt.Errorf("failed to write %q: %v", outputFile, err)
 		}
 		fmt.Printf("wrote %s\n", outputFile)
