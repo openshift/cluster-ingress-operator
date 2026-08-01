@@ -44,7 +44,6 @@ import (
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 	"github.com/openshift/library-go/pkg/operator/events"
 
@@ -377,11 +376,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
 	}
 
-	listenerSetStatusController, err := listenersetstatuscontroller.NewUnmanaged(mgr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create listenerset-status controller: %w", err)
-	}
-
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		MarketplaceEnabled:              marketplaceEnabled,
@@ -393,7 +387,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			gatewayLabelController,
 			gatewayStatusController,
 			gatewayNetworkPolicyController,
-			listenerSetStatusController,
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
