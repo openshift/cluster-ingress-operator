@@ -8,7 +8,6 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 
 	"k8s.io/client-go/tools/record"
 
@@ -194,25 +193,6 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 		})); err != nil {
 		return fmt.Errorf("failed to add field indexer: %w", err)
 	}
-	// Index ListenerSets by parent Gateway after CRDs are installed.
-	if err := r.fieldIndexer.IndexField(
-		context.Background(),
-		&gatewayapiv1.ListenerSet{},
-		listenersetstatuscontroller.ListenerSetParentGatewayIndex,
-		client.IndexerFunc(func(o client.Object) []string {
-			ls, ok := o.(*gatewayapiv1.ListenerSet)
-			if !ok {
-				return []string{}
-			}
-			parentNS := ls.GetNamespace()
-			if ls.Spec.ParentRef.Namespace != nil {
-				parentNS = string(*ls.Spec.ParentRef.Namespace)
-			}
-			return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
-		})); err != nil {
-		return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
-	}
-
 	for i := range r.config.DependentControllers {
 		c := &r.config.DependentControllers[i]
 		go func() {

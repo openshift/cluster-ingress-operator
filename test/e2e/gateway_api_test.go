@@ -17,7 +17,6 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -137,7 +136,6 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
-	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
 	}
@@ -1709,54 +1707,4 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	}
 
 	return errs
-}
-
-// testListenerSetNotAccepted verifies that a ListenerSet targeting an
-// OpenShift-managed Gateway gets Accepted=False.
-func testListenerSetNotAccepted(t *testing.T) {
-	lsName := names.SimpleNameGenerator.GenerateName("test-listenerset-")
-	ls := &gatewayapiv1.ListenerSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      lsName,
-			Namespace: operatorcontroller.DefaultOperandNamespace,
-		},
-		Spec: gatewayapiv1.ListenerSetSpec{
-			ParentRef: gatewayapiv1.ParentGatewayReference{
-				Name: gatewayapiv1.ObjectName(testGatewayName),
-			},
-			Listeners: []gatewayapiv1.ListenerEntry{
-				{
-					Name:     "test-listener",
-					Port:     8443,
-					Protocol: gatewayapiv1.HTTPSProtocolType,
-				},
-			},
-		},
-	}
-
-	t.Logf("creating ListenerSet %s/%s targeting gateway %s", ls.Namespace, ls.Name, testGatewayName)
-	if err := kclient.Create(t.Context(), ls); err != nil {
-		t.Fatalf("failed to create ListenerSet: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), ls); err != nil {
-			if !errors.IsNotFound(err) {
-				t.Logf("failed to delete ListenerSet: %v", err)
-			}
-		}
-	})
-
-	t.Log("verifying ListenerSet gets Accepted=False")
-	nsName := types.NamespacedName{Namespace: ls.Namespace, Name: ls.Name}
-	assert.Eventually(t, func() bool {
-		if err := kclient.Get(t.Context(), nsName, ls); err != nil {
-			t.Logf("failed to get ListenerSet: %v", err)
-			return false
-		}
-		cond := condutils.FindStatusCondition(ls.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-		if cond == nil {
-			return false
-		}
-		return cond.Status == metav1.ConditionFalse && cond.Reason == listenersetstatuscontroller.ReasonUnsupportedByController
-	}, 2*time.Minute, 2*time.Second, "ListenerSet did not get Accepted=False")
 }
