@@ -21,3 +21,4 @@ spec:
   selector:
     matchLabels:
       name: ingress-operator
+  serviceDiscoveryRole: EndpointSlice
