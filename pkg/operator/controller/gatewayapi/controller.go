@@ -15,6 +15,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -239,6 +240,10 @@ func (r *reconciler) allManagedCRDsEstablished(ctx context.Context) (bool, error
 	for _, managed := range managedCRDs {
 		var crd apiextensionsv1.CustomResourceDefinition
 		if err := r.client.Get(ctx, types.NamespacedName{Name: managed.Name}, &crd); err != nil {
+			if errors.IsNotFound(err) {
+				log.Info("CRD not yet created, will retry", "name", managed.Name)
+				return false, nil
+			}
 			return false, fmt.Errorf("failed to get CRD %s: %w", managed.Name, err)
 		}
 		if !isCRDEstablished(&crd) {
