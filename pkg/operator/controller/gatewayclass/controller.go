@@ -13,6 +13,8 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -90,6 +92,13 @@ const (
 	// 1. Sail Library mode: Uninstall Istio if this is the last GatewayClass, then remove finalizer
 	// 2. Downgrade to OLM: Clean up Sail Library status and finalizer (then OLM takes over Istio)
 	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
+
+	// controllerAvailableAnnotation is set on the GatewayClass when the
+	// istiod deployment becomes available. This triggers a GatewayClass
+	// watch event in istiod, which re-enqueues any Gateways that were
+	// dropped during the startup race between the gateway deployment
+	// controller and PushContext initialization.
+	controllerAvailableAnnotation = "gatewayclass.openshift.io/controller-available"
 )
 
 type extraIstioConfig struct {
@@ -232,6 +241,16 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return nil, err
 		}
 		if err := c.Watch(&SailLibrarySource[client.Object]{NotifyCh: notifyCh, RequestsFunc: reconciler.requestsForAllManagedGatewayClasses}); err != nil {
+			return nil, err
+		}
+
+		// Watch the istiod deployment so that when it becomes available,
+		// we can annotate the GatewayClass to trigger a re-enqueue of
+		// any Gateways that were dropped during istiod's startup race.
+		isIstiodDeployment := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			return o.GetNamespace() == config.OperandNamespace && o.GetName() == "istiod-"+operatorcontroller.IstioName("").Name
+		})
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.Deployment{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodDeployment)); err != nil {
 			return nil, err
 		}
 	}
@@ -593,7 +612,64 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		errs = append(errs, err)
 	}
 
+	// Annotate the GatewayClass when the istiod deployment is available.
+	// This triggers a GatewayClass watch event in istiod that re-enqueues
+	// any Gateways dropped during the PushContext startup race.
+	if status.Installed {
+		if result, err := r.ensureControllerAvailableAnnotation(ctx, gatewayClass); err != nil {
+			errs = append(errs, err)
+		} else if result.RequeueAfter > 0 {
+			return result, utilerrors.NewAggregate(errs)
+		}
+	}
+
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// ensureControllerAvailableAnnotation checks if the istiod deployment is
+// available and, if so, annotates the GatewayClass. The annotation triggers a
+// GatewayClass watch event in istiod's gateway deployment controller, which
+// re-enqueues all Gateways referencing this class. This works around a startup
+// race in istiod where the gateway deployment controller can exhaust its retry
+// budget before PushContext is initialized, permanently dropping Gateways.
+func (r *reconciler) ensureControllerAvailableAnnotation(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
+	deployName := types.NamespacedName{
+		Namespace: r.config.OperandNamespace,
+		Name:      "istiod-" + operatorcontroller.IstioName("").Name,
+	}
+	deploy := &appsv1.Deployment{}
+	if err := r.cache.Get(ctx, deployName, deploy); err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("failed to get istiod deployment: %w", err)
+	}
+
+	available := false
+	for _, c := range deploy.Status.Conditions {
+		if c.Type == appsv1.DeploymentAvailable && c.Status == corev1.ConditionTrue {
+			available = true
+			break
+		}
+	}
+	if !available {
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	if gatewayClass.Annotations[controllerAvailableAnnotation] == "true" {
+		return reconcile.Result{}, nil
+	}
+
+	updated := gatewayClass.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = make(map[string]string)
+	}
+	updated.Annotations[controllerAvailableAnnotation] = "true"
+	if err := r.client.Patch(ctx, updated, client.MergeFrom(gatewayClass)); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to annotate gatewayclass: %w", err)
+	}
+	log.Info("annotated gatewayclass to trigger istiod gateway re-enqueue", "gatewayclass", gatewayClass.Name)
+	return reconcile.Result{}, nil
 }
 
 // countActiveGatewayClasses returns the number of managed GatewayClasses that

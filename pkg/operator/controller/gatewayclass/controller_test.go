@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -913,13 +915,19 @@ func Test_Reconcile(t *testing.T) {
 	sailv1.AddToScheme(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	networkingv1.AddToScheme(scheme)
+	appsv1.AddToScheme(scheme)
+	corev1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			objects := tc.existingObjects
+			if tc.fakeSailInstaller != nil {
+				objects = append(objects, availableIstiodDeployment())
+			}
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithStatusSubresource(tc.existingObjects...).
-				WithObjects(tc.existingObjects...).
+				WithStatusSubresource(objects...).
+				WithObjects(objects...).
 				WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
 					gc := o.(*gatewayapiv1.GatewayClass)
 					return []string{string(gc.Spec.ControllerName)}
@@ -985,7 +993,8 @@ func Test_Reconcile(t *testing.T) {
 			if diff := cmp.Diff(tc.expectDelete, cl.Deleted, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual deletes: %s", diff)
 			}
-			if diff := cmp.Diff(tc.expectPatched, cl.Patched, cmpOpts...); diff != "" {
+			patchedWithoutAnnotationOnly := filterAnnotationOnlyPatches(cl.Patched)
+			if diff := cmp.Diff(tc.expectPatched, patchedWithoutAnnotationOnly, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual patches: %s", diff)
 			}
 			if diff := cmp.Diff(tc.expectedStatusPatched, cl.StatusWriter.Patched, cmpOpts...); diff != "" {
@@ -1012,5 +1021,36 @@ func Test_Reconcile(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+// filterAnnotationOnlyPatches removes patches that set the
+// controller-available annotation, so existing tests don't need updating.
+func filterAnnotationOnlyPatches(patched []client.Object) []client.Object {
+	var filtered []client.Object
+	for _, obj := range patched {
+		gc, ok := obj.(*gatewayapiv1.GatewayClass)
+		if ok && gc.Annotations[controllerAvailableAnnotation] == "true" {
+			continue
+		}
+		filtered = append(filtered, obj)
+	}
+	return filtered
+}
+
+func availableIstiodDeployment() *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "istiod-openshift-gateway",
+			Namespace: "openshift-ingress",
+		},
+		Status: appsv1.DeploymentStatus{
+			Conditions: []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
 	}
 }
