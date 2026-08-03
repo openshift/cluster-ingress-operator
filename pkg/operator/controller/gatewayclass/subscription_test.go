@@ -6,9 +6,13 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	securityv1 "github.com/openshift/api/security/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/google/go-cmp/cmp"
@@ -20,6 +24,514 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
+	tests := []struct {
+		name               string
+		catalog            string
+		channel            string
+		version            string
+		existingObjects    []runtime.Object
+		expectCreate       []client.Object
+		expectUpdate       []client.Object
+		expectDelete       []client.Object
+		expectSubscription *operatorsv1alpha1.Subscription
+	}{
+		{
+			name:            "No subscription exists, should create one",
+			catalog:         "redhat-operators",
+			channel:         "stable",
+			version:         "servicemeshoperator3.v3.1.0",
+			existingObjects: []runtime.Object{},
+			expectCreate: []client.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						Annotations: map[string]string{
+							operatorcontroller.IngressOperatorOwnedAnnotation: "",
+						},
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.1.0",
+					},
+				},
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.1.0",
+				},
+			},
+		},
+		{
+			name:    "Subscription exists with servicemeshoperator3 package without ingress operator annotation, should not create or update the subscription",
+			catalog: "redhat-operators",
+			channel: "stable",
+			version: "servicemeshoperator3.v3.1.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "user-catalog",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.0.0",
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel:                "stable",
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "user-catalog",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.0.0",
+				},
+			},
+		},
+		{
+			name:    "Subscription exists in different namespace with servicemeshoperator3 package without annotation, should return early",
+			catalog: "redhat-operators",
+			channel: "stable",
+			version: "servicemeshoperator3.v3.1.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "other-namespace",
+						Name:      "user-managed-subscription",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "user-catalog",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.0.0",
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "other-namespace",
+					Name:      "user-managed-subscription",
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel:                "stable",
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "user-catalog",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.0.0",
+				},
+			},
+		},
+		{
+			name:    "Subscription exists with servicemeshoperator3 package WITH ingress operator annotation and is consistent with the desired subscription, should do nothing",
+			catalog: "redhat-operators",
+			channel: "stable",
+			version: "servicemeshoperator3.v3.1.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						Annotations: map[string]string{
+							operatorcontroller.IngressOperatorOwnedAnnotation: "",
+						},
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.1.0",
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.1.0",
+				},
+			},
+		},
+		{
+			name:    "Subscription exists with DIFFERENT package name, should create CIO subscription",
+			catalog: "redhat-operators",
+			channel: "stable",
+			version: "servicemeshoperator3.v3.1.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      "different-subscription",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "some-other-operator",
+						CatalogSource:          "user-catalog",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "some-other-operator.v1.0.0",
+					},
+				},
+			},
+			expectCreate: []client.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						Annotations: map[string]string{
+							operatorcontroller.IngressOperatorOwnedAnnotation: "",
+						},
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.1.0",
+					},
+				},
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.1.0",
+				},
+			},
+		},
+		{
+			name:    "Multiple subscriptions exist, one with servicemeshoperator3 without annotation, should return early",
+			catalog: "redhat-operators",
+			channel: "stable",
+			version: "servicemeshoperator3.v3.1.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "namespace1",
+						Name:      "subscription1",
+						Annotations: map[string]string{
+							operatorcontroller.IngressOperatorOwnedAnnotation: "",
+						},
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Package: "some-other-package",
+					},
+				},
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "namespace2",
+						Name:      "subscription2",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "user-catalog",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.0.0",
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "namespace2",
+					Name:      "subscription2",
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel:                "stable",
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "user-catalog",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.0.0",
+				},
+			},
+		},
+		{
+			name:    "CIO-owned subscription needs version update",
+			catalog: "redhat-operators",
+			channel: "stable",
+			version: "servicemeshoperator3.v3.2.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						Annotations: map[string]string{
+							operatorcontroller.IngressOperatorOwnedAnnotation: "",
+						},
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.1.0",
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						Annotations: map[string]string{
+							operatorcontroller.IngressOperatorOwnedAnnotation: "",
+						},
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator3",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator3.v3.2.0",
+					},
+				},
+			},
+			expectDelete: []client.Object{},
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.2.0",
+				},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	configv1.Install(scheme)
+	apiextensionsv1.AddToScheme(scheme)
+	operatorsv1alpha1.AddToScheme(scheme)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(tc.existingObjects...).
+				Build()
+			cl := &fakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
+			reconciler := &reconciler{
+				client: cl,
+				config: Config{
+					OperatorNamespace:         "",
+					OperandNamespace:          "",
+					GatewayAPIOperatorCatalog: tc.catalog,
+					GatewayAPIOperatorChannel: tc.channel,
+					GatewayAPIOperatorVersion: tc.version,
+				},
+			}
+			_, actualSubscription, err := reconciler.ensureServiceMeshOperatorSubscription(context.Background(), tc.catalog, tc.channel, tc.version)
+			require.NoError(t, err)
+			cmpOpts := []cmp.Option{
+				cmpopts.EquateEmpty(),
+				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion"),
+				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
+			}
+			if diff := cmp.Diff(tc.expectCreate, cl.added, cmpOpts...); diff != "" {
+				t.Fatalf("found diff between expected and actual creates: %s", diff)
+			}
+			if diff := cmp.Diff(tc.expectUpdate, cl.updated, cmpOpts...); diff != "" {
+				t.Fatalf("found diff between expected and actual updates: %s", diff)
+			}
+			if diff := cmp.Diff(tc.expectDelete, cl.deleted, cmpOpts...); diff != "" {
+				t.Fatalf("found diff between expected and actual deletes: %s", diff)
+			}
+
+			// Verify the returned subscription matches expectations
+			if tc.expectSubscription != nil {
+				require.NotNil(t, actualSubscription, "expected subscription to be returned but got nil")
+				if diff := cmp.Diff(tc.expectSubscription, actualSubscription, cmpOpts...); diff != "" {
+					t.Fatalf("found diff between expected and actual returned subscription: %s", diff)
+				}
+			}
+		})
+	}
+}
 
 func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 	tests := []struct {
