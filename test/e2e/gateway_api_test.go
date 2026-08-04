@@ -583,9 +583,11 @@ func testGatewayAPIDNS(t *testing.T) {
 		name                       string
 		createGateways             []testGateway
 		expectedListenerConditions []metav1.Condition
-		expectedDNSRecords         map[expectedDnsRecord]bool
+		expectedDNSRecords         map[expectedDnsRecord]dnsRecordExpectation
 	}{
-		// TODO: In this case Gateway Listeners should be reported as conflicted. To be fixed in the future release.
+		// Only the oldest DNSRecord for a DNS name is published (#1229).
+		// gw1 is created first (and wins ns/name tie-break), so gw2 is blocked.
+		// TODO: Gateway Listeners should eventually be reported as Conflicted.
 		{
 			name: "multipleGatewaysSameListenerHostname",
 			createGateways: []testGateway{
@@ -613,12 +615,14 @@ func testGatewayAPIDNS(t *testing.T) {
 				{Type: "Programmed", Status: metav1.ConditionTrue},
 				{Type: "ResolvedRefs", Status: metav1.ConditionTrue},
 			},
-			expectedDNSRecords: map[expectedDnsRecord]bool{
-				{dnsName: "abc." + domain + ".", gatewayName: "gw1"}: true,
-				{dnsName: "abc." + domain + ".", gatewayName: "gw2"}: true,
+			expectedDNSRecords: map[expectedDnsRecord]dnsRecordExpectation{
+				{dnsName: "abc." + domain + ".", gatewayName: "gw1"}: expectDNSRecordPublished(),
+				{dnsName: "abc." + domain + ".", gatewayName: "gw2"}: expectDNSRecordUnpublished("DomainAlreadyInUse"),
 			},
 		},
 		{
+			// Use a dedicated subdomain so this case does not collide with the
+			// suite-scoped test-gateway (*.gws.<basedomain>) from testGatewayAPIObjects.
 			name: "gatewayListenersWithOverlappingHostname",
 			createGateways: []testGateway{
 				{gatewayName: "gw3",
@@ -626,7 +630,7 @@ func testGatewayAPIDNS(t *testing.T) {
 					listeners: []testListener{
 						{
 							name:     "http",
-							hostname: ptr.To("qwe." + domain)},
+							hostname: ptr.To("qwe.overlap-gws." + dnsConfig.Spec.BaseDomain)},
 					},
 				},
 				{gatewayName: "gw4",
@@ -634,7 +638,7 @@ func testGatewayAPIDNS(t *testing.T) {
 					listeners: []testListener{
 						{
 							name:     "http",
-							hostname: ptr.To("*." + domain),
+							hostname: ptr.To("*.overlap-gws." + dnsConfig.Spec.BaseDomain),
 						},
 					},
 				},
@@ -645,9 +649,9 @@ func testGatewayAPIDNS(t *testing.T) {
 				{Type: "Programmed", Status: metav1.ConditionTrue},
 				{Type: "ResolvedRefs", Status: metav1.ConditionTrue},
 			},
-			expectedDNSRecords: map[expectedDnsRecord]bool{
-				{dnsName: "qwe." + domain + ".", gatewayName: "gw3"}: true,
-				{dnsName: "*." + domain + ".", gatewayName: "gw4"}:   true,
+			expectedDNSRecords: map[expectedDnsRecord]dnsRecordExpectation{
+				{dnsName: "qwe.overlap-gws." + dnsConfig.Spec.BaseDomain + ".", gatewayName: "gw3"}: expectDNSRecordPublished(),
+				{dnsName: "*.overlap-gws." + dnsConfig.Spec.BaseDomain + ".", gatewayName: "gw4"}:   expectDNSRecordPublished(),
 			},
 		},
 	}
@@ -817,8 +821,8 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
 		require.NoError(t, err, "failed waiting gateway to be ready")
 
-		err = assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
-			{dnsName: "*." + testDomain + ".", gatewayName: name}: true})
+		err = assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+			{dnsName: "*." + testDomain + ".", gatewayName: name}: expectDNSRecordPublished()})
 
 		require.NoError(t, err, "dnsrecord never got ready")
 
@@ -1039,61 +1043,57 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			assert.Equal(t, originalListenerAcceptedCondition.LastTransitionTime, currentListenerAcceptedCondition.LastTransitionTime, "the Accepted condition LastTransitionTime should not change")
 		})
 
-		// This test verifies if creating a 2nd Gateway using the same domain of the 1st one returns
-		// all of the conditions as Ready.
-		// This test should be changed and fixed once https://github.com/openshift/cluster-ingress-operator/pull/1229
-		// is merged, as this will become an unsupported scenario (2 gateways with a conflicting DNS)
-		t.Run("should not conflict with a second Gateway created with the same domain", func(t *testing.T) {
-			t.Skip("skipping while the PR for duplicate DNS is not merged")
+		// Creating a second Gateway with the same domain is unsupported after
+		// #1229: only the oldest DNSRecord is published; the duplicate is blocked.
+		t.Run("should report DNS conflict when a second Gateway uses the same domain", func(t *testing.T) {
 			dupName := gateway.GetName() + "-dup"
 			dupGateway, err := createGateway(t, gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
-			require.NoError(t, err, "failed to create gateway", "name", name)
+			require.NoError(t, err, "failed to create duplicate gateway", "name", dupName)
 			t.Cleanup(func() {
 				if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)); err != nil {
-					t.Errorf("failed to clean duplicated test gateway %q: %v", name, err)
+					t.Errorf("failed to clean duplicated test gateway %q: %v", dupName, err)
 				}
 			})
-			assert.Eventually(t, func() bool {
-				current := &gatewayapiv1.Gateway{}
+
+			_, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, dupName)
+			require.NoError(t, err, "failed waiting for duplicate gateway to be Accepted/Programmed")
+
+			require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+				{dnsName: "*." + testDomain + ".", gatewayName: name}:    expectDNSRecordPublished(),
+				{dnsName: "*." + testDomain + ".", gatewayName: dupName}: expectDNSRecordUnpublished("DomainAlreadyInUse"),
+			}), "expected original DNSRecord published and duplicate blocked")
+
+			assert.Eventuallyf(t, func() bool {
+				original := &gatewayapiv1.Gateway{}
 				nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
-
-				if err := kclient.Get(context.Background(), nsName, current); err != nil {
-					t.Logf("Failed to get current gateway %v: %v; retrying...", nsName, err)
+				if err := kclient.Get(context.Background(), nsName, original); err != nil {
+					t.Logf("Failed to get original gateway %v: %v; retrying...", nsName, err)
 					return false
 				}
-				lsIndex := -1
-				for i, ls := range current.Status.Listeners {
-					if ls.Name == gatewayapiv1.SectionName("http") {
-						lsIndex = i
-					}
-				}
-				if lsIndex < 0 {
-					t.Logf("matching listener not found yet")
-					return false
-				}
-				if !condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSReady") ||
-					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerReady") {
-					t.Logf("current gateway %v does not have the right conditions yet %v; retrying...", nsName, err)
-					return false
-				}
-
 				duplicate := &gatewayapiv1.Gateway{}
-				duplicate.SetName(dupName)
-				duplicate.SetNamespace(dupGateway.Namespace)
-				if err := kclient.Get(context.Background(), client.ObjectKeyFromObject(duplicate), duplicate); err != nil {
-					t.Logf("Failed to get current gateway %v: %v; retrying...", nsName, err)
+				dupNSName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: dupName}
+				if err := kclient.Get(context.Background(), dupNSName, duplicate); err != nil {
+					t.Logf("Failed to get duplicate gateway %v: %v; retrying...", dupNSName, err)
 					return false
 				}
 
-				// This should be false once the duplicate DNSRecord PR is merged
-				if !condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSReady") ||
-					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerReady") {
-					t.Logf("duplicate gateway %v does not have the right conditions yet %v; retrying...", nsName, err)
+				if !condutils.IsStatusConditionTrue(original.Status.Conditions, "DNSReady") ||
+					!condutils.IsStatusConditionTrue(original.Status.Conditions, "LoadBalancerReady") {
+					t.Logf("original gateway conditions not ready yet: %v; retrying...", original.Status.Conditions)
 					return false
 				}
-
+				if !condutils.IsStatusConditionFalse(duplicate.Status.Conditions, "DNSReady") ||
+					!condutils.IsStatusConditionTrue(duplicate.Status.Conditions, "LoadBalancerReady") {
+					t.Logf("duplicate gateway conditions not conflicted yet: %v; retrying...", duplicate.Status.Conditions)
+					return false
+				}
+				dnsReady := condutils.FindStatusCondition(duplicate.Status.Conditions, "DNSReady")
+				if dnsReady == nil || dnsReady.Reason != "FailedZones" {
+					t.Logf("duplicate DNSReady reason want FailedZones, got %#v; retrying...", dnsReady)
+					return false
+				}
 				return true
-			}, 3*time.Minute, 3*time.Second)
+			}, 3*time.Minute, 3*time.Second, "expected original DNSReady=True and duplicate DNSReady=False/FailedZones")
 		})
 
 	})
@@ -1134,8 +1134,8 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		t.Fatalf("failed to accept/program gateway test-gateway-update: %v", err)
 	}
 
-	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
-		{dnsName: "foo." + domain + ".", gatewayName: "test-gateway-update"}: true,
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+		{dnsName: "foo." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordPublished(),
 	}); err != nil {
 		t.Fatalf("DNSRecord %s expectations not met: %v", "foo."+domain+".", err)
 	}
@@ -1151,10 +1151,10 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 	}
 	t.Logf("Modified gateway %s's listener hostname from %s to: %s", gateway.Name, "foo."+domain+".", "baz."+domain+".")
 
-	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
-		{dnsName: "foo." + domain + ".", gatewayName: "test-gateway-update"}: false,
-		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: true,
-		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: true,
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+		{dnsName: "foo." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordAbsent(),
+		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordPublished(),
+		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordPublished(),
 	}); err != nil {
 		t.Fatalf("DNSRecord %s expectations not met: %v", "baz."+domain+".", err)
 	}
@@ -1168,9 +1168,9 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 	t.Logf("Deleted listener %s from gateway %s.", "http-listener2", gateway.Name)
 
 	t.Logf("Checking that the dnsRecord for %s gets removed after removing the listener.", "bar."+domain+".")
-	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
-		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: true,
-		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: false,
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordPublished(),
+		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordAbsent(),
 	}); err != nil {
 		t.Fatalf("expected bar.%s. to be deleted, but it was not", domain)
 	}
@@ -1178,8 +1178,8 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 	deleteWithRetryOnError(t, context.TODO(), gateway, DefaultRetryTimeout)
 
 	t.Logf("Checking the remaining DNSRecord %s gets deleted after gateway deletion.", "baz."+domain+".")
-	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
-		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: false,
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordAbsent(),
 	}); err != nil {
 		t.Fatalf("expected baz.%s. to be deleted, but it was not", domain)
 	}

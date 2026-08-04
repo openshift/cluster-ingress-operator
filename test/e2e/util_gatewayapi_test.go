@@ -930,10 +930,31 @@ func gatewayListenerConditionMap(conditions ...metav1.Condition) map[string]stri
 	return conds
 }
 
-// expectedDnsRecord is used to represent a DNSRecord expectation.
+// expectedDnsRecord is used to represent a DNSRecord expectation key.
 type expectedDnsRecord struct {
 	dnsName     string
 	gatewayName string
+}
+
+// dnsRecordExpectation describes the desired presence and publish state of a DNSRecord.
+type dnsRecordExpectation struct {
+	present   bool
+	published bool
+	// reason, when non-empty and published is false, must match the Published
+	// condition Reason on at least one zone.
+	reason string
+}
+
+func expectDNSRecordPublished() dnsRecordExpectation {
+	return dnsRecordExpectation{present: true, published: true}
+}
+
+func expectDNSRecordAbsent() dnsRecordExpectation {
+	return dnsRecordExpectation{present: false}
+}
+
+func expectDNSRecordUnpublished(reason string) dnsRecordExpectation {
+	return dnsRecordExpectation{present: true, published: false, reason: reason}
 }
 
 type testGateway struct {
@@ -948,16 +969,15 @@ type testListener struct {
 }
 
 // assertExpectedDNSRecords polls until the DNSRecords in the default operand namespace match the given expectations.
-// The expectations parameter is a map where keys are expectations for DNSRecord and values indicate whether a DNSRecord should be present.
-func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]bool) error {
+func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]dnsRecordExpectation) error {
 	t.Helper()
 
 	var expectationsMet bool
 
 	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
 		haveExpectNotPresent := false
-		// expectationsMet starts true and gets set to false when some expectation is not met.
-		expectationsMet = true
+		// Only mark met after a successful evaluation of all expectations.
+		expectationsMet = false
 
 		dnsRecords := &v1.DNSRecordList{}
 		if err := kclient.List(ctx, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
@@ -965,57 +985,70 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]b
 			return false, nil
 		}
 
-		// Iterate over all expectations.
-		for exp, shouldBePresent := range expectations {
-			if !shouldBePresent {
+		for exp, want := range expectations {
+			if !want.present {
 				haveExpectNotPresent = true
 			}
 
-			// Reset the found and foundReady flags for each expectation.
 			found := false
-			foundReady := false
 			// Look for a DNSRecord that matches the expected gateway and DNS name.
 			for _, record := range dnsRecords.Items {
-				if record.Labels["gateway.networking.k8s.io/gateway-name"] == exp.gatewayName &&
-					record.Spec.DNSName == exp.dnsName {
+				if record.Labels["gateway.networking.k8s.io/gateway-name"] != exp.gatewayName ||
+					record.Spec.DNSName != exp.dnsName {
+					continue
+				}
+				found = true
 
-					if !shouldBePresent {
-						expectationsMet = false
-						found = true
-						t.Logf("DNSRecord %q (%s) found but should not be present.", record.Name, exp.dnsName)
-						return false, nil
-					}
-					found = true
-					// DNSRecord found and should be present, check if it is published
-					for _, zone := range record.Status.Zones {
-						for _, condition := range zone.Conditions {
-							if condition.Type == v1.DNSRecordPublishedConditionType && condition.Status == string(metav1.ConditionTrue) {
-								t.Logf("Found DNSRecord %q (%s) %s=%s as expected", record.Name, exp.dnsName, condition.Type, condition.Status)
-								foundReady = true
+				if !want.present {
+					t.Logf("DNSRecord %q (%s) found but should not be present.", record.Name, exp.dnsName)
+					return false, nil
+				}
+
+				publishedTrue, publishedFalseMatchingReason := false, false
+				for _, zone := range record.Status.Zones {
+					for _, condition := range zone.Conditions {
+						if condition.Type != v1.DNSRecordPublishedConditionType {
+							continue
+						}
+						t.Logf("Found DNSRecord %q (%s) %s=%s reason=%s", record.Name, exp.dnsName, condition.Type, condition.Status, condition.Reason)
+						switch condition.Status {
+						case string(metav1.ConditionTrue):
+							publishedTrue = true
+						case string(metav1.ConditionFalse):
+							if want.reason == "" || condition.Reason == want.reason {
+								publishedFalseMatchingReason = true
 							}
 						}
 					}
-					if !foundReady {
-						t.Logf("Found DNSRecord %v but could not determine its readiness; retrying...", record.Name)
-						expectationsMet = false
+				}
+
+				if want.published {
+					if !publishedTrue {
+						t.Logf("DNSRecord %q (%s) is expected to be published but is not; retrying...", record.Name, exp.dnsName)
+						return false, nil
+					}
+				} else {
+					if publishedTrue {
+						t.Logf("DNSRecord %q (%s) is published but expected not to be; retrying...", record.Name, exp.dnsName)
+						return false, nil
+					}
+					if !publishedFalseMatchingReason {
+						t.Logf("DNSRecord %q (%s) is expected unpublished (reason=%q) but matching condition not found; retrying...", record.Name, exp.dnsName, want.reason)
 						return false, nil
 					}
 				}
 			}
 
-			// If the record is expected but not found, return false to continue polling.
-			if shouldBePresent && !found {
+			if want.present && !found {
 				t.Logf("DNSRecord for hostname %q (gateway: %s) is expected to be present but was not found; retrying...", exp.dnsName, exp.gatewayName)
-				expectationsMet = false
 				return false, nil
 			}
-			// If the record is not expected but was found, return false to continue polling.
-			if !shouldBePresent && found {
+			if !want.present && found {
 				t.Logf("DNSRecord for hostname %q (gateway: %s) is present but was expected to be absent; retrying...", exp.dnsName, exp.gatewayName)
-				expectationsMet = false
 				return false, nil
 			}
 		}
+		expectationsMet = true
 		if haveExpectNotPresent {
 			t.Logf("Continuing polling to ensure non-expected DNSRecords do not exist...")
 		}
