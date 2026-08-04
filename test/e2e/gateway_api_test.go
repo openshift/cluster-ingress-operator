@@ -584,12 +584,20 @@ func testGatewayAPIDNS(t *testing.T) {
 		createGateways             []testGateway
 		expectedListenerConditions []metav1.Condition
 		expectedDNSRecords         map[expectedDnsRecord]dnsRecordExpectation
+		// establishDNSOwnershipFirst waits for each gateway (except the last)
+		// to have its DNSRecords published before creating the next gateway.
+		// Required for same-hostname conflict cases: ownership is based on
+		// DNSRecord CreationTimestamp, not Gateway create order, and Istio may
+		// provision Services/DNSRecords out of Gateway creation order.
+		establishDNSOwnershipFirst bool
 	}{
 		// Only the oldest DNSRecord for a DNS name is published (#1229).
-		// gw1 is created first (and wins ns/name tie-break), so gw2 is blocked.
+		// Serialize ownership: publish gw1's DNSRecord before creating gw2 so
+		// gw1 is guaranteed to be the oldest claimant.
 		// TODO: Gateway Listeners should eventually be reported as Conflicted.
 		{
-			name: "multipleGatewaysSameListenerHostname",
+			name:                       "multipleGatewaysSameListenerHostname",
+			establishDNSOwnershipFirst: true,
 			createGateways: []testGateway{
 				{gatewayName: "gw1",
 					namespace: operatorcontroller.DefaultOperandNamespace,
@@ -660,13 +668,19 @@ func testGatewayAPIDNS(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var gateways []*gatewayapiv1.Gateway
 
-			// Create gateways
-			for _, gateway := range tc.createGateways {
+			for i, gateway := range tc.createGateways {
 				createdGateway, err := createGatewayWithListeners(t, gatewayClass, gateway.gatewayName, gateway.namespace, gateway.listeners)
 				if err != nil {
 					t.Fatalf("failed to create gateway %s: %v", gateway.gatewayName, err)
 				}
 				gateways = append(gateways, createdGateway)
+
+				if tc.establishDNSOwnershipFirst && i < len(tc.createGateways)-1 {
+					_, err := assertGatewaySuccessful(t, gateway.namespace, gateway.gatewayName)
+					require.NoErrorf(t, err, "failed to accept/program gateway %s before creating the next gateway", gateway.gatewayName)
+					err = assertExpectedDNSRecords(t, publishedDNSRecordExpectations(gateway))
+					require.NoErrorf(t, err, "failed to establish DNS ownership for gateway %s before creating the next gateway", gateway.gatewayName)
+				}
 			}
 
 			t.Cleanup(func() {
@@ -1048,9 +1062,11 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		t.Run("should report DNS conflict when a second Gateway uses the same domain", func(t *testing.T) {
 			dupName := gateway.GetName() + "-dup"
 			dupGateway, err := createGateway(t, gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
-			require.NoError(t, err, "failed to create duplicate gateway", "name", dupName)
+			require.NoErrorf(t, err, "failed to create duplicate gateway %q", dupName)
 			t.Cleanup(func() {
-				if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)); err != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), DefaultRetryTimeout)
+				defer cancel()
+				if err := client.IgnoreNotFound(kclient.Delete(ctx, dupGateway)); err != nil {
 					t.Errorf("failed to clean duplicated test gateway %q: %v", dupName, err)
 				}
 			})
@@ -1066,13 +1082,17 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			assert.Eventuallyf(t, func() bool {
 				original := &gatewayapiv1.Gateway{}
 				nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
-				if err := kclient.Get(context.Background(), nsName, original); err != nil {
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				if err := kclient.Get(ctx, nsName, original); err != nil {
 					t.Logf("Failed to get original gateway %v: %v; retrying...", nsName, err)
 					return false
 				}
 				duplicate := &gatewayapiv1.Gateway{}
 				dupNSName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: dupName}
-				if err := kclient.Get(context.Background(), dupNSName, duplicate); err != nil {
+				ctx, cancel = context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				if err := kclient.Get(ctx, dupNSName, duplicate); err != nil {
 					t.Logf("Failed to get duplicate gateway %v: %v; retrying...", dupNSName, err)
 					return false
 				}
@@ -1087,13 +1107,31 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 					t.Logf("duplicate gateway conditions not conflicted yet: %v; retrying...", duplicate.Status.Conditions)
 					return false
 				}
+				// Gateway-level DNSReady aggregates listener DNS failures as
+				// SomeListenersNotReady; FailedZones is reported on the listener.
 				dnsReady := condutils.FindStatusCondition(duplicate.Status.Conditions, "DNSReady")
-				if dnsReady == nil || dnsReady.Reason != "FailedZones" {
-					t.Logf("duplicate DNSReady reason want FailedZones, got %#v; retrying...", dnsReady)
+				if dnsReady == nil || dnsReady.Reason != "SomeListenersNotReady" {
+					t.Logf("duplicate gateway DNSReady reason want SomeListenersNotReady, got %#v; retrying...", dnsReady)
+					return false
+				}
+				lsIndex := -1
+				for i, ls := range duplicate.Status.Listeners {
+					if ls.Name == gatewayapiv1.SectionName("http") {
+						lsIndex = i
+						break
+					}
+				}
+				if lsIndex < 0 {
+					t.Logf("duplicate gateway http listener status not found yet; retrying...")
+					return false
+				}
+				listenerDNSReady := condutils.FindStatusCondition(duplicate.Status.Listeners[lsIndex].Conditions, "DNSReady")
+				if listenerDNSReady == nil || listenerDNSReady.Status != metav1.ConditionFalse || listenerDNSReady.Reason != "FailedZones" {
+					t.Logf("duplicate listener DNSReady want False/FailedZones, got %#v; retrying...", listenerDNSReady)
 					return false
 				}
 				return true
-			}, 3*time.Minute, 3*time.Second, "expected original DNSReady=True and duplicate DNSReady=False/FailedZones")
+			}, 3*time.Minute, 3*time.Second, "expected original DNSReady=True and duplicate DNSReady=False/SomeListenersNotReady with listener FailedZones")
 		})
 
 	})
@@ -1172,16 +1210,20 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordPublished(),
 		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordAbsent(),
 	}); err != nil {
-		t.Fatalf("expected bar.%s. to be deleted, but it was not", domain)
+		t.Fatalf("expected bar.%s. to be deleted, but it was not: %v", domain, err)
 	}
 
-	deleteWithRetryOnError(t, context.TODO(), gateway, DefaultRetryTimeout)
+	{
+		ctx, cancel := context.WithTimeout(t.Context(), DefaultRetryTimeout)
+		defer cancel()
+		deleteWithRetryOnError(t, ctx, gateway, DefaultRetryTimeout)
+	}
 
 	t.Logf("Checking the remaining DNSRecord %s gets deleted after gateway deletion.", "baz."+domain+".")
 	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
 		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: expectDNSRecordAbsent(),
 	}); err != nil {
-		t.Fatalf("expected baz.%s. to be deleted, but it was not", domain)
+		t.Fatalf("expected baz.%s. to be deleted, but it was not: %v", domain, err)
 	}
 	t.Logf("Confirmed DNSRecord removed after gateway deletion.")
 }

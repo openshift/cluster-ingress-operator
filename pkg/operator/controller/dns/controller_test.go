@@ -12,6 +12,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1094,6 +1095,33 @@ func Test_isOldestRecordForDomain(t *testing.T) {
 			expectOldest: true,
 		},
 		{
+			name:   "zero creation timestamp yields to live peer",
+			record: dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, later),
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "zero creation timestamp wins when all peers are deleting",
+			record: dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			existingObjects: []runtime.Object{
+				deletingDNSRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier, deleting),
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			},
+			expectOldest: true,
+		},
+		{
+			name:   "zero creation timestamp peer is ignored",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: true,
+		},
+		{
 			name:   "older unmanaged record still blocks",
 			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
 			existingObjects: []runtime.Object{
@@ -1132,6 +1160,148 @@ func Test_isOldestRecordForDomain(t *testing.T) {
 	}
 }
 
+func Test_dnsRecordIsPreferred(t *testing.T) {
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	earlier := metav1.NewTime(now.Add(-time.Minute))
+
+	a := dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now)
+	older := dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier)
+	newer := dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now)
+	earlierNS := dnsRecord("foo.com", "ns-a", "zzz", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now)
+	laterNS := dnsRecord("foo.com", "ns-b", "aaa", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now)
+	earlierName := dnsRecord("foo.com", "ns-a", "aaa", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now)
+	laterName := dnsRecord("foo.com", "ns-a", "zzz", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now)
+
+	tests := []struct {
+		name     string
+		a, b     *iov1.DNSRecord
+		expected bool
+	}{
+		{
+			name:     "identical record is not preferred over itself",
+			a:        a,
+			b:        a,
+			expected: false,
+		},
+		{
+			name:     "older timestamp is preferred",
+			a:        older,
+			b:        newer,
+			expected: true,
+		},
+		{
+			name:     "newer timestamp is not preferred",
+			a:        newer,
+			b:        older,
+			expected: false,
+		},
+		{
+			name:     "earlier namespace wins on equal timestamps",
+			a:        earlierNS,
+			b:        laterNS,
+			expected: true,
+		},
+		{
+			name:     "earlier name wins on equal timestamps and namespace",
+			a:        earlierName,
+			b:        laterName,
+			expected: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.expected, dnsRecordIsPreferred(test.a, test.b))
+		})
+	}
+}
+
+func Test_mapOnRecordDelete(t *testing.T) {
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	earlier := metav1.NewTime(now.Add(-time.Minute))
+	deleting := metav1.NewTime(now.Add(-time.Second))
+
+	onlyDeleted := dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier)
+
+	tests := []struct {
+		name           string
+		deleted        *iov1.DNSRecord
+		existing       []runtime.Object
+		expectRequests []string // "namespace/name"
+	}{
+		{
+			name:           "empty index returns no requests",
+			deleted:        dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing:       []runtime.Object{},
+			expectRequests: nil,
+		},
+		{
+			name:           "only deleted record in index returns no requests",
+			deleted:        onlyDeleted,
+			existing:       []runtime.Object{onlyDeleted},
+			expectRequests: nil,
+		},
+		{
+			name:    "requeues preferred equal-timestamp survivor when earlier-name peer is deleted",
+			deleted: dnsRecord("foo.com", "ns", "aaa", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existing: []runtime.Object{
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+		{
+			name:    "requeues lexicographically earlier survivor among equal-timestamp peers",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "ns", "aaa", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/aaa"},
+		},
+		{
+			name:    "skips deleting survivors when choosing next owner",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				deletingDNSRecord("foo.com", "ns", "aaa", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now, deleting),
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+		{
+			name:    "skips unmanaged survivors when choosing next owner",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				dnsRecord("foo.com", "ns", "aaa", iov1.ARecordType, "2.2.2.2", iov1.UnmanagedDNS, now),
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+		{
+			name:    "skips zero creation timestamp survivors when choosing next owner",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns", "aaa", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r := &reconciler{cache: buildFakeCache(t, test.existing)}
+			got := r.mapOnRecordDelete(context.TODO(), test.deleted)
+			var gotNames []string
+			for _, req := range got {
+				gotNames = append(gotNames, req.Namespace+"/"+req.Name)
+			}
+			if diff := cmp.Diff(test.expectRequests, gotNames); diff != "" {
+				t.Fatalf("unexpected requests (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func dnsRecord(dnsName, namespace, name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy, created metav1.Time) *iov1.DNSRecord {
 	return &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1147,6 +1317,12 @@ func dnsRecord(dnsName, namespace, name string, recordType iov1.DNSRecordType, t
 			DNSManagementPolicy: managed,
 		},
 	}
+}
+
+func dnsRecordWithZeroCreationTimestamp(dnsName, namespace, name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy) *iov1.DNSRecord {
+	record := dnsRecord(dnsName, namespace, name, recordType, target, managed, metav1.Time{})
+	record.CreationTimestamp = metav1.Time{}
+	return record
 }
 
 func deletingDNSRecord(dnsName, namespace, name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy, created, deletion metav1.Time) *iov1.DNSRecord {

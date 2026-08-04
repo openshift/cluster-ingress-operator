@@ -428,7 +428,10 @@ func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *confi
 // and block publishing (same DNS name may only have one owner). Records that
 // are being deleted are ignored. When creation timestamps are equal, the
 // lexicographically earlier namespace wins, then name (Gateway API-style
-// tie-break).
+// tie-break). A subject with a zero CreationTimestamp always yields to any
+// non-deleted peer (it is still being created and must not win). An empty
+// index result is treated as an error so the caller requeues with an
+// InternalError condition rather than publishing under cache lag.
 func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov1.DNSRecord) (bool, error) {
 	records := iov1.DNSRecordList{}
 	if err := cache.List(ctx, &records, client.MatchingFields{dnsRecordIndexFieldName: record.Spec.DNSName}); err != nil {
@@ -453,8 +456,13 @@ func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov
 		if !existingRecord.DeletionTimestamp.IsZero() {
 			continue
 		}
-		// If this record is currently in the creation process, then any
-		// existing record must be older.
+		// Skip peers that are still being created; a zero timestamp would
+		// otherwise look older than any real CreationTimestamp.
+		if existingRecord.CreationTimestamp.IsZero() {
+			continue
+		}
+		// A record still being created (zero CreationTimestamp) always yields
+		// to any existing non-deleted peer, even a newer one.
 		if record.CreationTimestamp.IsZero() {
 			return false, nil
 		}
@@ -700,6 +708,11 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 		}
 		// Exclude records that are marked for deletion.
 		if !existingRecord.DeletionTimestamp.IsZero() {
+			continue
+		}
+		// Skip survivors still being created; a zero timestamp would otherwise
+		// look older than any real CreationTimestamp via dnsRecordIsPreferred.
+		if existingRecord.CreationTimestamp.IsZero() {
 			continue
 		}
 		// Exclude unmanaged DNS records.

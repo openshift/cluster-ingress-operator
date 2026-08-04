@@ -957,6 +957,23 @@ func expectDNSRecordUnpublished(reason string) dnsRecordExpectation {
 	return dnsRecordExpectation{present: true, published: false, reason: reason}
 }
 
+// publishedDNSRecordExpectations builds Published=True expectations for every
+// listener hostname on the given gateway.
+func publishedDNSRecordExpectations(gateway testGateway) map[expectedDnsRecord]dnsRecordExpectation {
+	expectations := make(map[expectedDnsRecord]dnsRecordExpectation, len(gateway.listeners))
+	for _, listener := range gateway.listeners {
+		if listener.hostname == nil || len(*listener.hostname) == 0 {
+			continue
+		}
+		dnsName := *listener.hostname
+		if !strings.HasSuffix(dnsName, ".") {
+			dnsName += "."
+		}
+		expectations[expectedDnsRecord{dnsName: dnsName, gatewayName: gateway.gatewayName}] = expectDNSRecordPublished()
+	}
+	return expectations
+}
+
 type testGateway struct {
 	gatewayName string
 	namespace   string
@@ -975,7 +992,6 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]d
 	var expectationsMet bool
 
 	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
-		haveExpectNotPresent := false
 		// Only mark met after a successful evaluation of all expectations.
 		expectationsMet = false
 
@@ -986,14 +1002,10 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]d
 		}
 
 		for exp, want := range expectations {
-			if !want.present {
-				haveExpectNotPresent = true
-			}
-
 			found := false
 			// Look for a DNSRecord that matches the expected gateway and DNS name.
 			for _, record := range dnsRecords.Items {
-				if record.Labels["gateway.networking.k8s.io/gateway-name"] != exp.gatewayName ||
+				if record.Labels[operatorcontroller.GatewayNameLabelKey] != exp.gatewayName ||
 					record.Spec.DNSName != exp.dnsName {
 					continue
 				}
@@ -1048,11 +1060,11 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]d
 				return false, nil
 			}
 		}
+		// All expectations (including absences) are satisfied; succeed immediately
+		// rather than burning the full timeout, which races a final List against a
+		// cancelled poll context and can falsely fail.
 		expectationsMet = true
-		if haveExpectNotPresent {
-			t.Logf("Continuing polling to ensure non-expected DNSRecords do not exist...")
-		}
-		return !haveExpectNotPresent, nil
+		return true, nil
 	})
 
 	if !expectationsMet {
