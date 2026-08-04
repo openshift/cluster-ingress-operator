@@ -93,6 +93,29 @@ var (
 		"TLS_AES_256_GCM_SHA384",
 	)
 
+	// fipsPQHybridGroups is the ordered list of FIPS-approved ML-KEM
+	// post-quantum hybrid groups (NIST P-curve based, approved as of Go 1.26).
+	// These are injected into any FIPS-filtered group list that doesn't already
+	// contain them, so every FIPS cluster gets post-quantum protection
+	// regardless of which TLS profile is configured.
+	fipsPQHybridGroups = []string{
+		string(configv1.TLSGroupSecP256r1MLKEM768),
+		string(configv1.TLSGroupSecP384r1MLKEM1024),
+	}
+
+	// fipsApprovedTLSGroups is the ordered fallback list used when FIPS
+	// filtering empties the entire group list (e.g. an all-X25519 custom
+	// profile). It contains NIST P-curves and their ML-KEM hybrids, with
+	// hybrids first so PQ-capable peers negotiate ML-KEM. X25519-based groups
+	// are excluded — see nonFIPSGroups.
+	fipsApprovedTLSGroups = []string{
+		string(configv1.TLSGroupSecP256r1MLKEM768),
+		string(configv1.TLSGroupSecP384r1MLKEM1024),
+		string(configv1.TLSGroupSecP256r1),
+		string(configv1.TLSGroupSecP384r1),
+		string(configv1.TLSGroupSecP521r1),
+	}
+
 	// nonFIPSGroups is the set of TLS groups that are NOT approved for use
 	// under FIPS 140-3 / NIST SP 800-56Ar3. X25519 and X25519MLKEM768 rely
 	// on Curve25519 arithmetic which is excluded from the FIPS-approved list

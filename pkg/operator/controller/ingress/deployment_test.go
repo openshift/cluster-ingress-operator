@@ -3358,8 +3358,8 @@ func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 			name:        "Pre-defined: groups are filtered when FIPS is enabled",
 			fipsEnabled: true,
 			expectedEnv: []envData{
-				// X25519MLKEM768 and X25519 are filtered;
-				{"ROUTER_CURVES", true, "secp256r1:secp384r1"},
+				// X25519MLKEM768 and X25519 are filtered; PQ hybrids are prepended.
+				{"ROUTER_CURVES", true, "SecP256r1MLKEM768:SecP384r1MLKEM1024:secp256r1:secp384r1"},
 			},
 		},
 		// ── Custom groups (Custom TLS profile) ────────────────────────────
@@ -3385,8 +3385,8 @@ func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 				configv1.TLSGroupSecP384r1,
 			},
 			expectedEnv: []envData{
-				// X25519MLKEM768 and X25519 are non-FIPS; only secp256r1 and secp384r1 remain.
-				{"ROUTER_CURVES", true, "secp256r1:secp384r1"},
+				// X25519MLKEM768 and X25519 are non-FIPS; PQ hybrids are prepended to remainder.
+				{"ROUTER_CURVES", true, "SecP256r1MLKEM768:SecP384r1MLKEM1024:secp256r1:secp384r1"},
 			},
 		},
 		{
@@ -3397,8 +3397,8 @@ func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 				configv1.TLSGroupX25519,
 			},
 			expectedEnv: []envData{
-				// Entire list is non-FIPS; must fall back to secp256r1:secp384r1:secp521r1.
-				{"ROUTER_CURVES", true, "secp256r1:secp384r1:secp521r1"},
+				// Entire list is non-FIPS; must fall back to SecP256r1MLKEM768:SecP384r1MLKEM1024:secp256r1:secp384r1:secp521r1.
+				{"ROUTER_CURVES", true, "SecP256r1MLKEM768:SecP384r1MLKEM1024:secp256r1:secp384r1:secp521r1"},
 			},
 		},
 		// ── Feature-gate disabled (Groups field absent) ──────────────────────
@@ -3418,8 +3418,8 @@ func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 			fipsEnabled:    true,
 			explicitGroups: []configv1.TLSGroup{}, // non-nil but empty → Custom profile with no groups
 			expectedEnv: []envData{
-				// X25519MLKEM768 and X25519 filtered; secp521r1 (P-521) survives.
-				{"ROUTER_CURVES", true, "secp256r1:secp384r1:secp521r1"},
+				// X25519MLKEM768 and X25519 filtered; PQ hybrids prepended to remainder.
+				{"ROUTER_CURVES", true, "SecP256r1MLKEM768:SecP384r1MLKEM1024:secp256r1:secp384r1:secp521r1"},
 			},
 		},
 	}
