@@ -424,23 +424,33 @@ func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *confi
 }
 
 // isOldestRecordForDomain returns true if the provided DNSRecord is the oldest
-// record claiming its domain name.
+// record claiming its domain name. Unmanaged records are treated as claimants
+// and block publishing (same DNS name may only have one owner). Records that
+// are being deleted are ignored. When creation timestamps are equal, the
+// lexicographically earlier namespace wins, then name (Gateway API-style
+// tie-break).
 func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov1.DNSRecord) (bool, error) {
 	records := iov1.DNSRecordList{}
 	if err := cache.List(ctx, &records, client.MatchingFields{dnsRecordIndexFieldName: record.Spec.DNSName}); err != nil {
 		return false, err
 	}
 
-	// If there are no other records claiming this domain name, this record must
-	// be the oldest record.
+	// The record being reconciled should appear in the index. An empty result
+	// indicates the index is not yet consistent; requeue rather than risk
+	// publishing a duplicate while another record for the same name is racing.
 	if len(records.Items) == 0 {
-		return true, nil
+		return false, fmt.Errorf("DNS name %q not found in DNSRecord index", record.Spec.DNSName)
 	}
 
-	// Look for any older DNS records.
-	for _, existingRecord := range records.Items {
+	// Look for any older (or tie-break preferred) DNS records.
+	for i := range records.Items {
+		existingRecord := &records.Items[i]
 		// This record is, by definition, not older than itself.
 		if record.UID == existingRecord.UID {
+			continue
+		}
+		// Ignore records that are already marked for deletion.
+		if !existingRecord.DeletionTimestamp.IsZero() {
 			continue
 		}
 		// If this record is currently in the creation process, then any
@@ -448,13 +458,27 @@ func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov
 		if record.CreationTimestamp.IsZero() {
 			return false, nil
 		}
-		// After considering all special cases, compare the creation timestamps
-		// to determine which record is older.
-		if existingRecord.CreationTimestamp.Before(&record.CreationTimestamp) {
+		if dnsRecordIsPreferred(existingRecord, record) {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// dnsRecordIsPreferred reports whether a is preferred over b for ownership of
+// the same DNS name. Preference is older CreationTimestamp; when timestamps
+// are equal, the lexicographically earlier namespace wins, then name.
+func dnsRecordIsPreferred(a, b *iov1.DNSRecord) bool {
+	if a.CreationTimestamp.Before(&b.CreationTimestamp) {
+		return true
+	}
+	if b.CreationTimestamp.Before(&a.CreationTimestamp) {
+		return false
+	}
+	if a.Namespace != b.Namespace {
+		return a.Namespace < b.Namespace
+	}
+	return a.Name < b.Name
 }
 
 func (r *reconciler) delete(record *iov1.DNSRecord) error {
@@ -665,8 +689,9 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 		// Nothing to do.
 		return []reconcile.Request{}
 	}
-	oldestExistingRecord := iov1.DNSRecord{}
-	for _, existingRecord := range otherRecords.Items {
+	var oldestExistingRecord *iov1.DNSRecord
+	for i := range otherRecords.Items {
+		existingRecord := &otherRecords.Items[i]
 		// mapOnRecordDelete should be called after the deleted record is
 		// actually removed from the cache, but just in case, filter out the
 		// deleted record.
@@ -681,13 +706,13 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 		if existingRecord.Spec.DNSManagementPolicy == iov1.UnmanagedDNS {
 			continue
 		}
-		if oldestExistingRecord.CreationTimestamp.IsZero() || existingRecord.CreationTimestamp.Before(&oldestExistingRecord.CreationTimestamp) {
+		if oldestExistingRecord == nil || dnsRecordIsPreferred(existingRecord, oldestExistingRecord) {
 			oldestExistingRecord = existingRecord
 		}
 	}
 	// If there is no existing record that can be published, don't return a
 	// request.
-	if oldestExistingRecord.Name == "" {
+	if oldestExistingRecord == nil {
 		return []reconcile.Request{}
 	}
 	return []reconcile.Request{
