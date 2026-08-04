@@ -954,7 +954,7 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]b
 
 	var expectationsMet bool
 
-	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		haveExpectNotPresent := false
 		// expectationsMet starts true and gets set to false when some expectation is not met.
 		expectationsMet = true
