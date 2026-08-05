@@ -909,14 +909,18 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
-	configv1.Install(scheme)
-	gatewayapiv1.Install(scheme)
-	operatorsv1alpha1.AddToScheme(scheme)
-	sailv1.AddToScheme(scheme)
-	apiextensionsv1.AddToScheme(scheme)
-	networkingv1.AddToScheme(scheme)
-	appsv1.AddToScheme(scheme)
-	corev1.AddToScheme(scheme)
+	if err := configv1.Install(scheme); err != nil {
+		t.Fatalf("failed to install configv1 scheme: %v", err)
+	}
+	if err := gatewayapiv1.Install(scheme); err != nil {
+		t.Fatalf("failed to install gatewayapiv1 scheme: %v", err)
+	}
+	require.NoError(t, operatorsv1alpha1.AddToScheme(scheme))
+	require.NoError(t, sailv1.AddToScheme(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	require.NoError(t, networkingv1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1030,7 +1034,7 @@ func filterAnnotationOnlyPatches(patched []client.Object) []client.Object {
 	var filtered []client.Object
 	for _, obj := range patched {
 		gc, ok := obj.(*gatewayapiv1.GatewayClass)
-		if ok && gc.Annotations[controllerAvailableAnnotation] == "true" {
+		if ok && gc.Annotations[syncAnnotation] != "" {
 			continue
 		}
 		filtered = append(filtered, obj)
@@ -1047,10 +1051,59 @@ func availableIstiodDeployment() *appsv1.Deployment {
 		Status: appsv1.DeploymentStatus{
 			Conditions: []appsv1.DeploymentCondition{
 				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
+					Type:               appsv1.DeploymentAvailable,
+					Status:             corev1.ConditionTrue,
+					LastTransitionTime: metav1.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 				},
 			},
 		},
 	}
+}
+
+func TestEnsureGatewayClassSyncAnnotation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	gc := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "openshift-default",
+		},
+		Spec: gatewayapiv1.GatewayClassSpec{
+			ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		},
+	}
+
+	deploy := availableIstiodDeployment()
+	deploy.Generation = 3
+	deploy.Status.ObservedGeneration = 3
+	expectedValue := fmt.Sprintf("%d-%d", deploy.Generation, deploy.Status.Conditions[0].LastTransitionTime.Unix())
+
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(gc, deploy).
+		Build()
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := testutil.FakeCache{Informers: &informer, Reader: cl}
+
+	r := &reconciler{
+		client: cl,
+		cache:  fakeCache,
+		config: Config{OperandNamespace: "openshift-ingress"},
+	}
+
+	// First call should set the annotation.
+	result, err := r.ensureGatewayClassSyncAnnotation(context.Background(), gc)
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+
+	updated := &gatewayapiv1.GatewayClass{}
+	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: "openshift-default"}, updated))
+	assert.Equal(t, expectedValue, updated.Annotations[syncAnnotation], "sync annotation should be generation-epoch")
+
+	// Second call should be a no-op (annotation already matches).
+	result, err = r.ensureGatewayClassSyncAnnotation(context.Background(), updated)
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
 }

@@ -93,12 +93,13 @@ const (
 	// 2. Downgrade to OLM: Clean up Sail Library status and finalizer (then OLM takes over Istio)
 	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
 
-	// controllerAvailableAnnotation is set on the GatewayClass when the
-	// istiod deployment becomes available. This triggers a GatewayClass
-	// watch event in istiod, which re-enqueues any Gateways that were
-	// dropped during the startup race between the gateway deployment
-	// controller and PushContext initialization.
-	controllerAvailableAnnotation = "gatewayclass.openshift.io/controller-available"
+	// syncAnnotation is set on the GatewayClass when the istiod
+	// deployment becomes available. This triggers a GatewayClass watch
+	// event in istiod, which re-enqueues any Gateways that were dropped
+	// during the startup race between the gateway deployment controller
+	// and PushContext initialization.
+	// TODO: Remove when https://github.com/istio/istio/issues/61095 is resolved.
+	syncAnnotation = "ingress.operator.openshift.io/sync"
 )
 
 type extraIstioConfig struct {
@@ -251,7 +252,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return o.GetNamespace() == config.OperandNamespace && o.GetName() == "istiod-"+operatorcontroller.IstioName("").Name
 		})
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.Deployment{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodDeployment)); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to watch istiod deployment: %w", err)
 		}
 	}
 
@@ -616,23 +617,30 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	// This triggers a GatewayClass watch event in istiod that re-enqueues
 	// any Gateways dropped during the PushContext startup race.
 	if status.Installed {
-		if result, err := r.ensureControllerAvailableAnnotation(ctx, gatewayClass); err != nil {
+		if result, err := r.ensureGatewayClassSyncAnnotation(ctx, gatewayClass); err != nil {
 			errs = append(errs, err)
 		} else if result.RequeueAfter > 0 {
-			return result, utilerrors.NewAggregate(errs)
+			if len(errs) > 0 {
+				return result, utilerrors.NewAggregate(errs)
+			}
+			return result, nil
 		}
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
-// ensureControllerAvailableAnnotation checks if the istiod deployment is
-// available and, if so, annotates the GatewayClass. The annotation triggers a
-// GatewayClass watch event in istiod's gateway deployment controller, which
-// re-enqueues all Gateways referencing this class. This works around a startup
-// race in istiod where the gateway deployment controller can exhaust its retry
-// budget before PushContext is initialized, permanently dropping Gateways.
-func (r *reconciler) ensureControllerAvailableAnnotation(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
+// ensureGatewayClassSyncAnnotation checks if the istiod deployment is
+// available and, if so, annotates the GatewayClass to trigger a watch
+// event in istiod's gateway deployment controller, which re-enqueues
+// all Gateways referencing this class. This works around a startup
+// race in istiod where the gateway deployment controller can exhaust
+// its retry budget before PushContext is initialized, permanently
+// dropping Gateways. The annotation value combines the deployment's
+// generation and the Available condition's LastTransitionTime so it
+// changes on both spec updates (rolling updates) and restarts.
+// TODO: Remove when https://github.com/istio/istio/issues/61095 is resolved.
+func (r *reconciler) ensureGatewayClassSyncAnnotation(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
 	deployName := types.NamespacedName{
 		Namespace: r.config.OperandNamespace,
 		Name:      "istiod-" + operatorcontroller.IstioName("").Name,
@@ -640,23 +648,43 @@ func (r *reconciler) ensureControllerAvailableAnnotation(ctx context.Context, ga
 	deploy := &appsv1.Deployment{}
 	if err := r.cache.Get(ctx, deployName, deploy); err != nil {
 		if errors.IsNotFound(err) {
-			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+			// The deployment doesn't exist yet; the deployment
+			// watch will trigger a reconcile when it appears.
+			return reconcile.Result{}, nil
 		}
 		return reconcile.Result{}, fmt.Errorf("failed to get istiod deployment: %w", err)
 	}
 
-	available := false
+	// Wait for the deployment controller to observe the latest spec
+	// before checking conditions. During a rolling update, Generation
+	// increments immediately but Available=True may be stale from the
+	// prior rollout.
+	if deploy.Status.ObservedGeneration < deploy.Generation {
+		// Rollout in progress; the deployment watch will trigger
+		// a reconcile when the status catches up.
+		return reconcile.Result{}, nil
+	}
+
+	// Build an opaque sync value from the deployment's generation and the
+	// Available condition's LastTransitionTime. Generation catches rolling
+	// updates (spec changes) where istiod stays Available throughout, and
+	// LastTransitionTime catches restarts where the pod goes down and back
+	// up. Together they ensure the annotation changes whenever a new
+	// istiod instance starts, triggering the workaround kick.
+	var syncValue string
 	for _, c := range deploy.Status.Conditions {
 		if c.Type == appsv1.DeploymentAvailable && c.Status == corev1.ConditionTrue {
-			available = true
+			syncValue = fmt.Sprintf("%d-%d", deploy.Generation, c.LastTransitionTime.Unix())
 			break
 		}
 	}
-	if !available {
-		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	if syncValue == "" {
+		// Not yet available; the deployment watch will trigger
+		// a reconcile when the condition changes.
+		return reconcile.Result{}, nil
 	}
 
-	if gatewayClass.Annotations[controllerAvailableAnnotation] == "true" {
+	if gatewayClass.Annotations[syncAnnotation] == syncValue {
 		return reconcile.Result{}, nil
 	}
 
@@ -664,7 +692,7 @@ func (r *reconciler) ensureControllerAvailableAnnotation(ctx context.Context, ga
 	if updated.Annotations == nil {
 		updated.Annotations = make(map[string]string)
 	}
-	updated.Annotations[controllerAvailableAnnotation] = "true"
+	updated.Annotations[syncAnnotation] = syncValue
 	if err := r.client.Patch(ctx, updated, client.MergeFrom(gatewayClass)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to annotate gatewayclass: %w", err)
 	}
