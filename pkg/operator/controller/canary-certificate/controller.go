@@ -85,7 +85,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		defaultIC := &operatorv1.IngressController{}
 		if err := reconciler.client.Get(context.Background(), defaultICName, defaultIC); err != nil {
 			if !errors.IsNotFound(err) {
-				log.Error(err, "Failed to get default IngressController")
+				log.Error(err, "Failed to get default IngressController", "namespace", defaultICName.Namespace, "name", defaultICName.Name)
 			}
 			return false
 		}
@@ -98,7 +98,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// reconcile target: the canary certificate's secret.
 	enqueueRequestForCanaryCertificate := handler.EnqueueRequestsFromMapFunc(toCanaryCertificate)
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Secret{}, enqueueRequestForCanaryCertificate, predicate.Or(isCanaryCert, isDefaultIngressCert))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch Secrets: %w", err)
 	}
 
 	// The certificate Secret can be observed before the default IngressController
@@ -109,7 +109,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return isDefaultIngressControllerDependency(o, config.OperatorNamespace)
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, enqueueRequestForCanaryCertificate, predicate.And(isDefaultIngressController, predicate.GenerationChangedPredicate{}))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch IngressControllers: %w", err)
 	}
 
 	// The canary DaemonSet supplies the certificate's controller owner reference.
@@ -117,7 +117,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// controller-runtime's rate-limited error retry.
 	isCanaryDaemonSet := predicate.NewPredicateFuncs(isCanaryDaemonSetDependency)
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.DaemonSet{}, enqueueRequestForCanaryCertificate, predicate.And(isCanaryDaemonSet, predicate.GenerationChangedPredicate{}))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch DaemonSets: %w", err)
 	}
 	return c, nil
 }
