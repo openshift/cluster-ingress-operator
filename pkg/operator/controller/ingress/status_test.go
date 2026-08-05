@@ -1957,76 +1957,143 @@ func Test_computeIngressProgressingCondition(t *testing.T) {
 }
 
 func Test_computeIngressAvailableCondition(t *testing.T) {
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
+	clock = fakeClock
+	defer func() {
+		clock = utilclock.RealClock{}
+	}()
+
 	testCases := []struct {
-		description string
-		conditions  []operatorv1.OperatorCondition
-		expect      operatorv1.OperatorCondition
+		description       string
+		conditions        []operatorv1.OperatorCondition
+		availableReplicas int32
+		expect            operatorv1.OperatorCondition
+		expectRequeue     bool
+		expectAfter       time.Duration
 	}{
 		{
 			description: "deployment, dns, and lb available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
+			availableReplicas: 2,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
+			expectRequeue:     false,
 		},
 		{
-			description: "deployment not available, but dns and lb available",
+			description: "deployment unavailable for <60s, within grace period, at least one replica available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionFalse},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-30)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			availableReplicas: 1,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
+			expectRequeue:     true,
+			expectAfter:       time.Second * 30,
+		},
+		{
+			description: "deployment unavailable for <60s, but zero replicas available (real outage, no grace)",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-30)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			},
+			availableReplicas: 0,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue:     true,
+			expectAfter:       time.Minute,
+		},
+		{
+			description: "deployment unavailable for >60s, past grace period",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-61)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			},
+			availableReplicas: 1,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue:     true,
+			expectAfter:       time.Minute,
 		},
 		{
 			description: "dns not available, but deployment and lb available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionFalse},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now()),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			availableReplicas: 2,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue:     true,
+			expectAfter:       time.Minute,
 		},
 		{
 			description: "lb not available, but dns and deployment available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionFalse},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now()),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			availableReplicas: 2,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue:     true,
+			expectAfter:       time.Minute,
 		},
 		{
 			description: "all availability unknown",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionUnknown},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionUnknown, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionUnknown, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionUnknown, "", clock.Now()),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			availableReplicas: 0,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue:     true,
+			expectAfter:       time.Minute,
 		},
 		{
-			description: "all availability not present",
-			conditions:  []operatorv1.OperatorCondition{},
-			expect:      operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			description:   "all availability not present",
+			conditions:    []operatorv1.OperatorCondition{},
+			expect:        operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			actual := computeIngressAvailableCondition(tc.conditions)
+			actual, err := computeIngressAvailableCondition(tc.conditions, tc.availableReplicas)
+			switch e := err.(type) {
+			case retryable.Error:
+				if !tc.expectRequeue {
+					t.Error("expected not to be told to requeue")
+				}
+				if tc.expectAfter != e.After() {
+					t.Errorf("expected requeue after %s, got %s", tc.expectAfter.String(), e.After().String())
+				}
+			case nil:
+				if tc.expectRequeue {
+					t.Error("expected to be told to requeue")
+				}
+			default:
+				t.Fatalf("unexpected error: %v", err)
+			}
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 				cmpopts.EquateEmpty(),
@@ -2035,6 +2102,27 @@ func Test_computeIngressAvailableCondition(t *testing.T) {
 				t.Fatalf("expected %#v, got %#v", tc.expect, actual)
 			}
 		})
+	}
+}
+
+func Test_findOperatorCondition(t *testing.T) {
+	conditions := []operatorv1.OperatorCondition{
+		cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "DeploymentAvailable", time.Time{}),
+		cond(operatorv1.OperatorStatusTypeDegraded, operatorv1.ConditionFalse, "", time.Time{}),
+	}
+
+	if found, ok := findOperatorCondition(conditions, IngressControllerDeploymentAvailableConditionType); !ok {
+		t.Error("expected to find DeploymentAvailable condition")
+	} else if found.Status != operatorv1.ConditionTrue {
+		t.Errorf("expected status %s, got %s", operatorv1.ConditionTrue, found.Status)
+	}
+
+	if _, ok := findOperatorCondition(conditions, "NonExistent"); ok {
+		t.Error("expected not to find a non-existent condition type")
+	}
+
+	if _, ok := findOperatorCondition(nil, IngressControllerDeploymentAvailableConditionType); ok {
+		t.Error("expected not to find any condition in a nil slice")
 	}
 }
 

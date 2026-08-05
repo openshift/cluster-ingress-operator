@@ -296,6 +296,97 @@ func Test_SetNLBHairpinRiskMetric(t *testing.T) {
 	}
 }
 
+func Test_RecordDeploymentAvailableTransition(t *testing.T) {
+	condition := func(status operatorv1.ConditionStatus) operatorv1.OperatorCondition {
+		return operatorv1.OperatorCondition{Type: IngressControllerDeploymentAvailableConditionType, Status: status}
+	}
+
+	testCases := []struct {
+		name          string
+		icName        string
+		previous      operatorv1.OperatorCondition
+		current       operatorv1.OperatorCondition
+		expectedCount float64
+	}{
+		{
+			name:          "status unchanged",
+			icName:        "test1",
+			previous:      condition(operatorv1.ConditionTrue),
+			current:       condition(operatorv1.ConditionTrue),
+			expectedCount: 0,
+		},
+		{
+			name:          "status flipped true to false",
+			icName:        "test1",
+			previous:      condition(operatorv1.ConditionTrue),
+			current:       condition(operatorv1.ConditionFalse),
+			expectedCount: 1,
+		},
+		{
+			name:          "status flipped false to true",
+			icName:        "test1",
+			previous:      condition(operatorv1.ConditionFalse),
+			current:       condition(operatorv1.ConditionTrue),
+			expectedCount: 1,
+		},
+		{
+			name:          "no previous observation is not counted as a transition",
+			icName:        "test1",
+			previous:      operatorv1.OperatorCondition{},
+			current:       condition(operatorv1.ConditionFalse),
+			expectedCount: 0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			deploymentAvailableTransitions.Reset()
+
+			RecordDeploymentAvailableTransition(tc.icName, tc.previous, tc.current)
+
+			expectedMetricFormat := ""
+			if tc.expectedCount != 0 {
+				expectedMetricFormat = fmt.Sprintf(`
+				# HELP ingress_controller_deployment_available_transitions_total Reports the cumulative number of times the DeploymentAvailable status condition has changed status for an IngressController. A high rate indicates the underlying deployment is flapping between available and unavailable.
+				# TYPE ingress_controller_deployment_available_transitions_total counter
+				ingress_controller_deployment_available_transitions_total{name="%s"} %v
+				`, tc.icName, tc.expectedCount)
+			}
+			if err := testutil.CollectAndCompare(deploymentAvailableTransitions, strings.NewReader(expectedMetricFormat)); err != nil {
+				t.Error(err)
+			}
+
+			DeleteDeploymentAvailableTransitionsMetric(testIngressControllerWithConditions(tc.icName, nil))
+		})
+	}
+}
+
+func Test_RecordDeploymentAvailableTransition_Cumulative(t *testing.T) {
+	deploymentAvailableTransitions.Reset()
+	defer deploymentAvailableTransitions.Reset()
+
+	condition := func(status operatorv1.ConditionStatus) operatorv1.OperatorCondition {
+		return operatorv1.OperatorCondition{Type: IngressControllerDeploymentAvailableConditionType, Status: status}
+	}
+
+	// Simulate a deployment flapping repeatedly; each flip should increment
+	// the counter, demonstrating that the flapping remains visible via this
+	// metric even though it may be masked by the Available/Degraded grace
+	// period.
+	RecordDeploymentAvailableTransition("test1", condition(operatorv1.ConditionTrue), condition(operatorv1.ConditionFalse))
+	RecordDeploymentAvailableTransition("test1", condition(operatorv1.ConditionFalse), condition(operatorv1.ConditionTrue))
+	RecordDeploymentAvailableTransition("test1", condition(operatorv1.ConditionTrue), condition(operatorv1.ConditionFalse))
+
+	expectedMetricFormat := `
+	# HELP ingress_controller_deployment_available_transitions_total Reports the cumulative number of times the DeploymentAvailable status condition has changed status for an IngressController. A high rate indicates the underlying deployment is flapping between available and unavailable.
+	# TYPE ingress_controller_deployment_available_transitions_total counter
+	ingress_controller_deployment_available_transitions_total{name="test1"} 3
+	`
+	if err := testutil.CollectAndCompare(deploymentAvailableTransitions, strings.NewReader(expectedMetricFormat)); err != nil {
+		t.Error(err)
+	}
+}
+
 func testIngressControllerWithSpecAndStatus(name string, spec, status *operatorv1.EndpointPublishingStrategy) *operatorv1.IngressController {
 	return &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
