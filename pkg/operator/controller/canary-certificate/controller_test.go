@@ -66,7 +66,7 @@ func TestCanaryCertificateDependencyEvents(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			if !hasNamespacedName(tc.object, tc.expected) {
+			if !operatorcontroller.HasNamespacedName(tc.object, tc.expected) {
 				t.Fatalf("expected %s/%s to match", tc.expected.Namespace, tc.expected.Name)
 			}
 			if !tc.matches(tc.object) {

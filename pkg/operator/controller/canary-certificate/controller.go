@@ -129,22 +129,18 @@ func toCanaryCertificate(_ context.Context, _ client.Object) []reconcile.Request
 }
 
 func isCanaryCertificate(o client.Object) bool {
-	return hasNamespacedName(o, operatorcontroller.CanaryCertificateName())
+	return operatorcontroller.HasNamespacedName(o, operatorcontroller.CanaryCertificateName())
 }
 
 func isDefaultIngressControllerDependency(o client.Object, operatorNamespace string) bool {
-	return hasNamespacedName(o, types.NamespacedName{
+	return operatorcontroller.HasNamespacedName(o, types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      manifests.DefaultIngressControllerName,
 	})
 }
 
 func isCanaryDaemonSetDependency(o client.Object) bool {
-	return hasNamespacedName(o, operatorcontroller.CanaryDaemonSetName())
-}
-
-func hasNamespacedName(o client.Object, name types.NamespacedName) bool {
-	return o.GetNamespace() == name.Namespace && o.GetName() == name.Name
+	return operatorcontroller.HasNamespacedName(o, operatorcontroller.CanaryDaemonSetName())
 }
 
 // Reconcile ensures the canary's certificate mirrors the default ingress

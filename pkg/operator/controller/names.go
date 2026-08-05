@@ -11,6 +11,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -384,4 +386,8 @@ func IstiodNetworkPolicyName() types.NamespacedName {
 		Name:      "istiod-allow",
 		Namespace: "openshift-ingress",
 	}
+}
+
+func HasNamespacedName(o client.Object, name types.NamespacedName) bool {
+	return o.GetNamespace() == name.Namespace && o.GetName() == name.Name
 }
