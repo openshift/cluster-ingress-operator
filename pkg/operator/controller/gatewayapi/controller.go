@@ -15,6 +15,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -161,6 +162,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
+	if established, err := r.allManagedCRDsEstablished(ctx); err != nil {
+		return reconcile.Result{}, err
+	} else if !established {
+		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	if err := r.ensureDependentControllers(ctx); err != nil {
 		log.Error(err, "failed to ensure dependent controllers, will retry")
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
@@ -224,4 +231,34 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 
 	r.controllersStarted = true
 	return nil
+}
+
+// allManagedCRDsEstablished checks that all managed Gateway API CRDs
+// are established and served by the API server before dependent
+// controllers attempt to create field indexes on those types.
+func (r *reconciler) allManagedCRDsEstablished(ctx context.Context) (bool, error) {
+	for _, managed := range managedCRDs {
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := r.client.Get(ctx, types.NamespacedName{Name: managed.Name}, &crd); err != nil {
+			if errors.IsNotFound(err) {
+				log.Info("CRD not yet created, will retry", "name", managed.Name)
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to get CRD %s: %w", managed.Name, err)
+		}
+		if !isCRDEstablished(&crd) {
+			log.Info("CRD not yet established, will retry", "name", managed.Name)
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func isCRDEstablished(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	for _, c := range crd.Status.Conditions {
+		if c.Type == apiextensionsv1.Established {
+			return c.Status == apiextensionsv1.ConditionTrue
+		}
+	}
+	return false
 }

@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -55,7 +56,7 @@ var (
 )
 
 func RegisterMetrics() error {
-	if err := prometheus.Register(listenerSetOnManagedGatewayMetric); err != nil {
+	if err := ctrlruntimemetrics.Registry.Register(listenerSetOnManagedGatewayMetric); err != nil {
 		return fmt.Errorf("failed to register ListenerSet metric: %w", err)
 	}
 	return nil
