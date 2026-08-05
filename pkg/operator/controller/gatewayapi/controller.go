@@ -8,12 +8,14 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 
 	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -160,6 +162,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
+	if established, err := r.allManagedCRDsEstablished(ctx); err != nil {
+		return reconcile.Result{}, err
+	} else if !established {
+		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
 	if err := r.ensureDependentControllers(ctx); err != nil {
 		log.Error(err, "failed to ensure dependent controllers, will retry")
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
@@ -193,6 +201,25 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 		})); err != nil {
 		return fmt.Errorf("failed to add field indexer: %w", err)
 	}
+	// Index ListenerSets by parent Gateway after CRDs are installed.
+	if err := r.fieldIndexer.IndexField(
+		context.Background(),
+		&gatewayapiv1.ListenerSet{},
+		listenersetstatuscontroller.ListenerSetParentGatewayIndex,
+		client.IndexerFunc(func(o client.Object) []string {
+			ls, ok := o.(*gatewayapiv1.ListenerSet)
+			if !ok {
+				return []string{}
+			}
+			parentNS := ls.GetNamespace()
+			if ls.Spec.ParentRef.Namespace != nil {
+				parentNS = string(*ls.Spec.ParentRef.Namespace)
+			}
+			return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
+		})); err != nil {
+		return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
+	}
+
 	for i := range r.config.DependentControllers {
 		c := &r.config.DependentControllers[i]
 		go func() {
@@ -204,4 +231,34 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 
 	r.controllersStarted = true
 	return nil
+}
+
+// allManagedCRDsEstablished checks that all managed Gateway API CRDs
+// are established and served by the API server before dependent
+// controllers attempt to create field indexes on those types.
+func (r *reconciler) allManagedCRDsEstablished(ctx context.Context) (bool, error) {
+	for _, managed := range managedCRDs {
+		var crd apiextensionsv1.CustomResourceDefinition
+		if err := r.client.Get(ctx, types.NamespacedName{Name: managed.Name}, &crd); err != nil {
+			if errors.IsNotFound(err) {
+				log.Info("CRD not yet created, will retry", "name", managed.Name)
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to get CRD %s: %w", managed.Name, err)
+		}
+		if !isCRDEstablished(&crd) {
+			log.Info("CRD not yet established, will retry", "name", managed.Name)
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func isCRDEstablished(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	for _, c := range crd.Status.Conditions {
+		if c.Type == apiextensionsv1.Established {
+			return c.Status == apiextensionsv1.ConditionTrue
+		}
+	}
+	return false
 }

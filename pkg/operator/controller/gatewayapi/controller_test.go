@@ -70,6 +70,7 @@ func Test_Reconcile(t *testing.T) {
 		// whose status is expected to be updated by the test.
 		expectStatusUpdate []client.Object
 		expectStartCtrl    bool
+		expectRequeue      bool
 	}{
 		{
 			name:               "gateway API enabled",
@@ -91,6 +92,29 @@ func Test_Reconcile(t *testing.T) {
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
 			expectUpdate:    []client.Object{},
+			expectDelete:    []client.Object{},
+			expectStartCtrl: false,
+			expectRequeue:   true,
+		},
+		{
+			name:               "gateway API enabled with established CRDs",
+			marketplaceEnabled: true,
+			olmEnabled:         true,
+			existingObjects:    append(establishedManagedCRDs(), co("ingress")),
+			expectCreate: []client.Object{
+				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
+				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+			},
+			expectUpdate: []client.Object{
+				crd("gatewayclasses.gateway.networking.k8s.io"),
+				crd("gateways.gateway.networking.k8s.io"),
+				crd("grpcroutes.gateway.networking.k8s.io"),
+				crd("httproutes.gateway.networking.k8s.io"),
+				crd("referencegrants.gateway.networking.k8s.io"),
+				crd("backendtlspolicies.gateway.networking.k8s.io"),
+				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tlsroutes.gateway.networking.k8s.io"),
+			},
 			expectDelete:    []client.Object{},
 			expectStartCtrl: true,
 		},
@@ -146,7 +170,8 @@ func Test_Reconcile(t *testing.T) {
 			expectStatusUpdate: []client.Object{
 				coWithExtension("ingress", `{"unmanagedGatewayAPICRDNames":"another.test.gateway.networking.k8s.io,invalid.test.gateway.networking.k8s.io"}`),
 			},
-			expectStartCtrl: true,
+			expectStartCtrl: false,
+			expectRequeue:   true,
 		},
 		{
 			name:               "unmanaged gateway API CRDs removed",
@@ -175,7 +200,8 @@ func Test_Reconcile(t *testing.T) {
 			expectStatusUpdate: []client.Object{
 				coWithExtension("ingress", `{}`),
 			},
-			expectStartCtrl: true,
+			expectStartCtrl: false,
+			expectRequeue:   true,
 		},
 		{
 			name:               "third party CRDs",
@@ -205,7 +231,8 @@ func Test_Reconcile(t *testing.T) {
 			expectDelete: []client.Object{},
 			// Third party CRDs have no impact on cluster operator status.
 			expectStatusUpdate: []client.Object{},
-			expectStartCtrl:    true,
+			expectStartCtrl:    false,
+			expectRequeue:      true,
 		},
 	}
 
@@ -258,7 +285,11 @@ func Test_Reconcile(t *testing.T) {
 			}
 			res, err := reconciler.Reconcile(context.Background(), req)
 			assert.NoError(t, err)
-			assert.Equal(t, reconcile.Result{}, res)
+			if tc.expectRequeue {
+				assert.Equal(t, reconcile.Result{RequeueAfter: 10 * time.Second}, res, "expected requeue after 10s")
+			} else {
+				assert.Equal(t, reconcile.Result{}, res)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			select {
@@ -272,7 +303,7 @@ func Test_Reconcile(t *testing.T) {
 				cmpopts.EquateEmpty(),
 				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "Labels", "Annotations", "ResourceVersion"),
 				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
-				cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinition{}, "Spec"),
+				cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinition{}, "Spec", "Status"),
 				cmpopts.IgnoreFields(rbacv1.ClusterRole{}, "Rules", "AggregationRule"),
 			}
 			if diff := cmp.Diff(tc.expectCreate, cl.Added, cmpOpts...); diff != "" {
@@ -298,10 +329,11 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	rbacv1.AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithRuntimeObjects(
+		WithRuntimeObjects(append(establishedManagedCRDs(),
 			&configv1.ClusterOperator{
 				ObjectMeta: metav1.ObjectMeta{Name: "ingress"},
-			}).
+			},
+		)...).
 		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, "gatewayAPICRD", client.IndexerFunc(func(o client.Object) []string {
 			// Assume that there are no unmanaged CRDs.
 			return []string{}
@@ -362,4 +394,19 @@ type FakeIndexer struct{}
 
 func (indexer FakeIndexer) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
 	return nil
+}
+
+func establishedManagedCRDs() []runtime.Object {
+	var objs []runtime.Object
+	for _, managed := range managedCRDs {
+		objs = append(objs, &apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: managed.Name},
+			Status: apiextensionsv1.CustomResourceDefinitionStatus{
+				Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{
+					{Type: apiextensionsv1.Established, Status: apiextensionsv1.ConditionTrue},
+				},
+			},
+		})
+	}
+	return objs
 }
