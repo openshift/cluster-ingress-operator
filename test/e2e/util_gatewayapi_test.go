@@ -33,6 +33,11 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -1589,6 +1594,60 @@ func eventuallyClusterRoleContainsAggregatedPolicies(t *testing.T, destClusterRo
 	})
 }
 
+func assertAllGatewayAPICRDsCovered(t *testing.T, wantCRDs []string) {
+	t.Helper()
+	haveCRDs := &apiextensionsv1.CustomResourceDefinitionList{}
+	require.NoError(t, kclient.List(t.Context(), haveCRDs), "failed to list CRDs")
+	var extraCRDs []string
+	for _, crd := range haveCRDs.Items {
+		if crd.Spec.Group == "gateway.networking.k8s.io" {
+			if !slices.Contains(wantCRDs, crd.Name) {
+				extraCRDs = append(extraCRDs, crd.Name)
+			}
+		}
+	}
+	assert.Len(t, extraCRDs, 0, "Gateway API CRDs installed but not tested: %q", extraCRDs)
+}
+
+func assertClusterRoleCoversGatewayAPICRDs(t *testing.T, clusterRoleName string) {
+	t.Helper()
+
+	var clusterRole rbacv1.ClusterRole
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, types.NamespacedName{Name: clusterRoleName}, &clusterRole); err != nil {
+			t.Logf("failed to get ClusterRole %s: %v; retrying...", clusterRoleName, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	require.NoError(t, err, "failed to get ClusterRole %s", clusterRoleName)
+
+	var roleResources []string
+	for _, rule := range clusterRole.Rules {
+		if slices.Contains(rule.APIGroups, "gateway.networking.k8s.io") {
+			for _, res := range rule.Resources {
+				require.NotEqual(t, "*", res, "ClusterRole %s uses wildcard resource for gateway.networking.k8s.io; expected explicit resource names", clusterRoleName)
+				// Skip subresources (e.g. gatewayclasses/status) since
+				// we are only checking top-level resource coverage.
+				if !strings.Contains(res, "/") {
+					roleResources = append(roleResources, res)
+				}
+			}
+		}
+	}
+
+	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
+	require.NoError(t, kclient.List(t.Context(), crdList), "failed to list CRDs")
+	for _, crd := range crdList.Items {
+		// Cluster-scoped CRDs (e.g. GatewayClass) use separate RBAC and
+		// are not expected in namespace-scoped aggregated ClusterRoles.
+		if crd.Spec.Group == "gateway.networking.k8s.io" && crd.Spec.Scope == apiextensionsv1.NamespaceScoped {
+			assert.Contains(t, roleResources, crd.Spec.Names.Plural,
+				"ClusterRole %s missing rule for Gateway API resource %q (CRD %s)", clusterRoleName, crd.Spec.Names.Plural, crd.Name)
+		}
+	}
+}
+
 func containsPolicyRules(destRules, srcRules []rbacv1.PolicyRule) bool {
 	for _, srcRule := range srcRules {
 		if !slices.ContainsFunc(destRules, func(destRule rbacv1.PolicyRule) bool {
@@ -1620,4 +1679,138 @@ func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout
 		}
 		return true, nil
 	})
+}
+
+func buildBackendTLSPolicy(name, namespace, targetServiceName, configMapName, hostname string) *gatewayapiv1.BackendTLSPolicy {
+	return &gatewayapiv1.BackendTLSPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gatewayapiv1.BackendTLSPolicySpec{
+			TargetRefs: []gatewayapiv1.LocalPolicyTargetReferenceWithSectionName{{
+				LocalPolicyTargetReference: gatewayapiv1.LocalPolicyTargetReference{
+					Group: "",
+					Kind:  "Service",
+					Name:  gatewayapiv1.ObjectName(targetServiceName),
+				},
+			}},
+			Validation: gatewayapiv1.BackendTLSPolicyValidation{
+				CACertificateRefs: []gatewayapiv1.LocalObjectReference{{
+					Group: "",
+					Kind:  "ConfigMap",
+					Name:  gatewayapiv1.ObjectName(configMapName),
+				}},
+				Hostname: gatewayapiv1.PreciseHostname(hostname),
+			},
+		},
+	}
+}
+
+// createBackendTLSPolicy creates the prerequisite Service and ConfigMap, then
+// creates a BackendTLSPolicy and verifies it can be retrieved from the API server.
+func createBackendTLSPolicy(t *testing.T, ns *corev1.Namespace) {
+	t.Helper()
+	ctx := t.Context()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "btlspolicy-target-svc",
+			Namespace: ns.Name,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{
+				Name:     "https",
+				Port:     443,
+				Protocol: corev1.ProtocolTCP,
+			}},
+			Selector: map[string]string{"app": "btlspolicy-target"},
+		},
+	}
+	require.NoError(t, createWithRetryOnError(t, ctx, svc, DefaultRetryTimeout), "failed to create target service")
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "btlspolicy-ca-cert",
+			Namespace: ns.Name,
+		},
+		Data: map[string]string{
+			"ca.crt": "placeholder-ca-cert-data",
+		},
+	}
+	require.NoError(t, createWithRetryOnError(t, ctx, cm, DefaultRetryTimeout), "failed to create CA cert configmap")
+
+	btlsPolicy := buildBackendTLSPolicy("test-btlspolicy", ns.Name, svc.Name, cm.Name, "backend.example.com")
+	require.NoError(t, createWithRetryOnError(t, ctx, btlsPolicy, DefaultRetryTimeout), "failed to create BackendTLSPolicy")
+
+	retrieved := &gatewayapiv1.BackendTLSPolicy{}
+	require.NoError(t, kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-btlspolicy"}, retrieved), "failed to get created BackendTLSPolicy")
+	t.Logf("successfully created and retrieved BackendTLSPolicy %s/%s", retrieved.Namespace, retrieved.Name)
+}
+
+func buildReferenceGrantUnstructured(name, namespace, version string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "gateway.networking.k8s.io/" + version,
+			"kind":       "ReferenceGrant",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"from": []interface{}{
+					map[string]interface{}{
+						"group":     "gateway.networking.k8s.io",
+						"kind":      "HTTPRoute",
+						"namespace": namespace,
+					},
+				},
+				"to": []interface{}{
+					map[string]interface{}{
+						"group": "",
+						"kind":  "Service",
+					},
+				},
+			},
+		},
+	}
+}
+
+// referenceGrantStorageVersion returns the storage version of the ReferenceGrant
+// CRD so we can build unstructured objects with the correct apiVersion rather
+// than hardcoding v1beta1, which may change as the API graduates.
+func referenceGrantStorageVersion(t *testing.T) string {
+	t.Helper()
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	require.NoError(t, kclient.Get(t.Context(),
+		types.NamespacedName{Name: "referencegrants.gateway.networking.k8s.io"}, crd),
+		"failed to get ReferenceGrant CRD")
+	for _, v := range crd.Spec.Versions {
+		if v.Storage {
+			return v.Name
+		}
+	}
+	return "v1beta1"
+}
+
+// createReferenceGrant creates a ReferenceGrant using unstructured objects (since
+// the Go type lives in v1beta1 which is not vendored) and verifies it can be
+// retrieved from the API server. The version is determined dynamically from the
+// CRD to avoid hardcoding v1beta1 across a Gateway API upgrade.
+func createReferenceGrant(t *testing.T, ns *corev1.Namespace) {
+	t.Helper()
+	ctx := t.Context()
+
+	version := referenceGrantStorageVersion(t)
+	refGrant := buildReferenceGrantUnstructured("test-referencegrant", ns.Name, version)
+	require.NoError(t, createWithRetryOnError(t, ctx, refGrant, DefaultRetryTimeout), "failed to create ReferenceGrant")
+
+	retrieved := &unstructured.Unstructured{}
+	retrieved.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "gateway.networking.k8s.io",
+		Version: version,
+		Kind:    "ReferenceGrant",
+	})
+	require.NoError(t, kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-referencegrant"}, retrieved), "failed to get created ReferenceGrant")
+	t.Logf("successfully created and retrieved ReferenceGrant %s/%s", retrieved.GetNamespace(), retrieved.GetName())
 }
