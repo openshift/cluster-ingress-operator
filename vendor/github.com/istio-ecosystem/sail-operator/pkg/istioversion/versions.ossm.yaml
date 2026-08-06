@@ -12,7 +12,17 @@
 # as well as all the Istio CRDs (e.g. VirtualService).
 versions:
   - name: v1.30-latest
-    ref: v1.30.1
+    ref: v1.30.3
+  - name: v1.30.3
+    version: 1.30.3
+    repo: https://github.com/istio/istio
+    commit: 1.30.3
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/c81a7ff0ec7e930d0d90158649dc6bbe6e9a0e67/1.30.3-redhat/helm/base-1.30.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/c81a7ff0ec7e930d0d90158649dc6bbe6e9a0e67/1.30.3-redhat/helm/istiod-1.30.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/c81a7ff0ec7e930d0d90158649dc6bbe6e9a0e67/1.30.3-redhat/helm/gateway-1.30.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/c81a7ff0ec7e930d0d90158649dc6bbe6e9a0e67/1.30.3-redhat/helm/cni-1.30.3.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/c81a7ff0ec7e930d0d90158649dc6bbe6e9a0e67/1.30.3-redhat/helm/ztunnel-1.30.3.tgz
   - name: v1.30.1
     version: 1.30.1
     repo: https://github.com/istio/istio
@@ -24,7 +34,17 @@ versions:
       - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/cni-1.30.1.tgz
       - https://github.com/openshift-service-mesh/istio-release/raw/955783b36f7cd572d66c431378db7381d705af08/1.30.1-redhat/helm/ztunnel-1.30.1.tgz
   - name: v1.28-latest
-    ref: v1.28.8
+    ref: v1.28.10
+  - name: v1.28.10
+    version: 1.28.10
+    repo: https://github.com/istio/istio
+    commit: 1.28.10
+    charts:
+      - https://github.com/openshift-service-mesh/istio-release/raw/86f311e8c40f5e5c0cc74e255c877846d50e06df/1.28.10-redhat/helm/base-1.28.10.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/86f311e8c40f5e5c0cc74e255c877846d50e06df/1.28.10-redhat/helm/istiod-1.28.10.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/86f311e8c40f5e5c0cc74e255c877846d50e06df/1.28.10-redhat/helm/gateway-1.28.10.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/86f311e8c40f5e5c0cc74e255c877846d50e06df/1.28.10-redhat/helm/cni-1.28.10.tgz
+      - https://github.com/openshift-service-mesh/istio-release/raw/86f311e8c40f5e5c0cc74e255c877846d50e06df/1.28.10-redhat/helm/ztunnel-1.28.10.tgz
   - name: v1.28.8
     version: 1.28.8
     repo: https://github.com/istio/istio
