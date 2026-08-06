@@ -2,8 +2,8 @@ package dns
 
 import (
 	"context"
-	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -12,6 +12,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -110,6 +111,12 @@ func Test_publishRecordToZones(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			record := &iov1.DNSRecord{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-record",
+					Namespace:         "test-ns",
+					UID:               uuid.NewUUID(),
+					CreationTimestamp: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+				},
 				Spec: iov1.DNSRecordSpec{
 					DNSName:             "subdomain.dnszone.io.",
 					RecordType:          iov1.ARecordType,
@@ -123,7 +130,7 @@ func Test_publishRecordToZones(t *testing.T) {
 			r := &reconciler{
 				// TODO To write a fake provider that can return errors and add more test cases.
 				dnsProvider: &dns.FakeProvider{},
-				cache:       buildFakeCache(t, nil),
+				cache:       buildFakeCache(t, []runtime.Object{record.DeepCopy()}),
 			}
 
 			_, actual := r.publishRecordToZones(context.TODO(), test.zones, record)
@@ -217,14 +224,21 @@ func Test_publishRecordToZonesMergesStatus(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			record := &iov1.DNSRecord{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-record",
+					Namespace:         "test-ns",
+					UID:               uuid.NewUUID(),
+					CreationTimestamp: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+				},
 				Spec: iov1.DNSRecordSpec{
+					DNSName:             "subdomain.dnszone.io.",
 					DNSManagementPolicy: iov1.ManagedDNS,
 				},
 				Status: iov1.DNSRecordStatus{Zones: tc.oldZoneStatuses},
 			}
 			r := &reconciler{
 				dnsProvider: &dns.FakeProvider{},
-				cache:       buildFakeCache(t, nil),
+				cache:       buildFakeCache(t, []runtime.Object{record.DeepCopy()}),
 			}
 			zone := []configv1.DNSZone{{ID: "zone2"}}
 			oldStatuses := record.Status.DeepCopy().Zones
@@ -852,6 +866,9 @@ func Test_customCABundle(t *testing.T) {
 }
 
 func TestConflictingDNSRecords(t *testing.T) {
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	earlier := metav1.NewTime(now.Add(-time.Minute))
+
 	tests := []struct {
 		name            string
 		recordName      string
@@ -886,7 +903,7 @@ func TestConflictingDNSRecords(t *testing.T) {
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
 			existingObjects: []runtime.Object{
-				dnsRecord("foo.com", "foo", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS),
+				dnsRecord("foo.com", "foo", "record-foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, earlier),
 			},
 			zones: []configv1.DNSZone{
 				{ID: "foobar"},
@@ -908,7 +925,7 @@ func TestConflictingDNSRecords(t *testing.T) {
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
 			existingObjects: []runtime.Object{
-				dnsRecord("bar.com", "foo", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS),
+				dnsRecord("bar.com", "foo", "record-bar.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, earlier),
 			},
 			zones: []configv1.DNSZone{
 				{ID: "foobar"},
@@ -930,7 +947,7 @@ func TestConflictingDNSRecords(t *testing.T) {
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
 			existingObjects: []runtime.Object{
-				dnsRecord("foo.com", "foo", iov1.ARecordType, "111.22.33.44", iov1.UnmanagedDNS),
+				dnsRecord("foo.com", "foo", "record-foo.com", iov1.ARecordType, "111.22.33.44", iov1.UnmanagedDNS, earlier),
 			},
 			zones: []configv1.DNSZone{
 				{ID: "foobar"},
@@ -951,6 +968,12 @@ func TestConflictingDNSRecords(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			record := &iov1.DNSRecord{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "subject",
+					Namespace:         "test-ns",
+					UID:               uuid.NewUUID(),
+					CreationTimestamp: now,
+				},
 				Spec: iov1.DNSRecordSpec{
 					DNSName:             test.recordName,
 					RecordType:          test.recordType,
@@ -961,10 +984,11 @@ func TestConflictingDNSRecords(t *testing.T) {
 			if test.unmanagedDNS {
 				record.Spec.DNSManagementPolicy = iov1.UnmanagedDNS
 			}
+			existing := append([]runtime.Object{record.DeepCopy()}, test.existingObjects...)
 			r := &reconciler{
 				// TODO To write a fake provider that can return errors and add more test cases.
 				dnsProvider: &dns.FakeProvider{},
-				cache:       buildFakeCache(t, test.existingObjects),
+				cache:       buildFakeCache(t, existing),
 			}
 
 			_, actual := r.publishRecordToZones(context.TODO(), test.zones, record)
@@ -976,20 +1000,336 @@ func TestConflictingDNSRecords(t *testing.T) {
 	}
 }
 
-func dnsRecord(name, namespace string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy) *iov1.DNSRecord {
+func Test_isOldestRecordForDomain(t *testing.T) {
+	// Kubernetes stores CreationTimestamp at second precision; use truncated
+	// times so subject and cached objects compare consistently in unit tests.
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	earlier := metav1.NewTime(now.Add(-time.Minute))
+	later := metav1.NewTime(now.Add(time.Minute))
+	deleting := metav1.NewTime(now.Add(-time.Second))
+
+	tests := []struct {
+		name            string
+		record          *iov1.DNSRecord
+		existingObjects []runtime.Object
+		expectOldest    bool
+		expectErr       bool
+	}{
+		{
+			name:   "only self in index is oldest",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			},
+			expectOldest: true,
+		},
+		{
+			name:            "empty index returns error",
+			record:          dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{},
+			expectErr:       true,
+		},
+		{
+			name:   "older existing record wins",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "newer existing record loses to self",
+			record: dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, later),
+			},
+			expectOldest: true,
+		},
+		{
+			name:   "equal timestamp prefers lexicographically earlier namespace",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "equal timestamp self wins when earlier namespace",
+			record: dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: true,
+		},
+		{
+			// Namespace-then-name (not "ns/name" string compare): foo beats
+			// foo-bar even though "foo-bar/a" < "foo/zzz" as a single string.
+			name:   "equal timestamp prefers shorter namespace over prefix sibling",
+			record: dnsRecord("foo.com", "foo-bar", "a", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "foo", "zzz", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "foo-bar", "a", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "equal timestamp same namespace prefers earlier name",
+			record: dnsRecord("foo.com", "ns-a", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "ns-a", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "deleting older record is ignored",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				deletingDNSRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier, deleting),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: true,
+		},
+		{
+			name:   "zero creation timestamp yields to live peer",
+			record: dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, later),
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "zero creation timestamp wins when all peers are deleting",
+			record: dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			existingObjects: []runtime.Object{
+				deletingDNSRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier, deleting),
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+			},
+			expectOldest: true,
+		},
+		{
+			name:   "zero creation timestamp peer is ignored",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: true,
+		},
+		{
+			name:   "older unmanaged record still blocks",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.UnmanagedDNS, earlier),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Ensure the subject shares UID with its cache copy when present.
+			for _, obj := range test.existingObjects {
+				if existing, ok := obj.(*iov1.DNSRecord); ok &&
+					existing.Namespace == test.record.Namespace &&
+					existing.Name == test.record.Name {
+					test.record.UID = existing.UID
+				}
+			}
+			cache := buildFakeCache(t, test.existingObjects)
+			oldest, err := isOldestRecordForDomain(context.TODO(), cache, test.record)
+			if test.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got oldest=%v", oldest)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if oldest != test.expectOldest {
+				t.Fatalf("expected oldest=%v, got %v", test.expectOldest, oldest)
+			}
+		})
+	}
+}
+
+func Test_dnsRecordIsPreferred(t *testing.T) {
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	earlier := metav1.NewTime(now.Add(-time.Minute))
+
+	a := dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now)
+	older := dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier)
+	newer := dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now)
+	earlierNS := dnsRecord("foo.com", "ns-a", "zzz", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now)
+	laterNS := dnsRecord("foo.com", "ns-b", "aaa", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now)
+	earlierName := dnsRecord("foo.com", "ns-a", "aaa", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now)
+	laterName := dnsRecord("foo.com", "ns-a", "zzz", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now)
+
+	tests := []struct {
+		name     string
+		a, b     *iov1.DNSRecord
+		expected bool
+	}{
+		{
+			name:     "identical record is not preferred over itself",
+			a:        a,
+			b:        a,
+			expected: false,
+		},
+		{
+			name:     "older timestamp is preferred",
+			a:        older,
+			b:        newer,
+			expected: true,
+		},
+		{
+			name:     "newer timestamp is not preferred",
+			a:        newer,
+			b:        older,
+			expected: false,
+		},
+		{
+			name:     "earlier namespace wins on equal timestamps",
+			a:        earlierNS,
+			b:        laterNS,
+			expected: true,
+		},
+		{
+			name:     "earlier name wins on equal timestamps and namespace",
+			a:        earlierName,
+			b:        laterName,
+			expected: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.expected, dnsRecordIsPreferred(test.a, test.b))
+		})
+	}
+}
+
+func Test_mapOnRecordDelete(t *testing.T) {
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	earlier := metav1.NewTime(now.Add(-time.Minute))
+	deleting := metav1.NewTime(now.Add(-time.Second))
+
+	onlyDeleted := dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier)
+
+	tests := []struct {
+		name           string
+		deleted        *iov1.DNSRecord
+		existing       []runtime.Object
+		expectRequests []string // "namespace/name"
+	}{
+		{
+			name:           "empty index returns no requests",
+			deleted:        dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing:       []runtime.Object{},
+			expectRequests: nil,
+		},
+		{
+			name:           "only deleted record in index returns no requests",
+			deleted:        onlyDeleted,
+			existing:       []runtime.Object{onlyDeleted},
+			expectRequests: nil,
+		},
+		{
+			name:    "requeues preferred equal-timestamp survivor when earlier-name peer is deleted",
+			deleted: dnsRecord("foo.com", "ns", "aaa", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existing: []runtime.Object{
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+		{
+			name:    "requeues lexicographically earlier survivor among equal-timestamp peers",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now),
+				dnsRecord("foo.com", "ns", "aaa", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/aaa"},
+		},
+		{
+			name:    "skips deleting survivors when choosing next owner",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				deletingDNSRecord("foo.com", "ns", "aaa", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, now, deleting),
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+		{
+			name:    "skips unmanaged survivors when choosing next owner",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				dnsRecord("foo.com", "ns", "aaa", iov1.ARecordType, "2.2.2.2", iov1.UnmanagedDNS, now),
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+		{
+			name:    "skips zero creation timestamp survivors when choosing next owner",
+			deleted: dnsRecord("foo.com", "ns", "deleted", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+			existing: []runtime.Object{
+				dnsRecordWithZeroCreationTimestamp("foo.com", "ns", "aaa", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS),
+				dnsRecord("foo.com", "ns", "zzz", iov1.ARecordType, "3.3.3.3", iov1.ManagedDNS, now),
+			},
+			expectRequests: []string{"ns/zzz"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r := &reconciler{cache: buildFakeCache(t, test.existing)}
+			got := r.mapOnRecordDelete(context.TODO(), test.deleted)
+			var gotNames []string
+			for _, req := range got {
+				gotNames = append(gotNames, req.Namespace+"/"+req.Name)
+			}
+			if diff := cmp.Diff(test.expectRequests, gotNames); diff != "" {
+				t.Fatalf("unexpected requests (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func dnsRecord(dnsName, namespace, name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy, created metav1.Time) *iov1.DNSRecord {
 	return &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("record-%s", name),
-			Namespace: namespace,
-			UID:       uuid.NewUUID(),
+			Name:              name,
+			Namespace:         namespace,
+			UID:               uuid.NewUUID(),
+			CreationTimestamp: created,
 		},
 		Spec: iov1.DNSRecordSpec{
-			DNSName:             name,
+			DNSName:             dnsName,
 			RecordType:          recordType,
 			Targets:             []string{target},
 			DNSManagementPolicy: managed,
 		},
 	}
+}
+
+func dnsRecordWithZeroCreationTimestamp(dnsName, namespace, name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy) *iov1.DNSRecord {
+	record := dnsRecord(dnsName, namespace, name, recordType, target, managed, metav1.Time{})
+	record.CreationTimestamp = metav1.Time{}
+	return record
+}
+
+func deletingDNSRecord(dnsName, namespace, name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy, created, deletion metav1.Time) *iov1.DNSRecord {
+	record := dnsRecord(dnsName, namespace, name, recordType, target, managed, created)
+	record.Finalizers = []string{"test.finalizer"}
+	record.DeletionTimestamp = &deletion
+	return record
 }
 
 // buildFakeCache returns a fake cache, with the necessary schema and index function(s) to mimic the parts of the cache

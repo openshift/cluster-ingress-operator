@@ -93,8 +93,8 @@ func TestGatewayAPITLSScannerSetup(t *testing.T) {
 	})
 	require.NoError(t, err, "Gateway infrastructure labels were not propagated to Envoy pods")
 
-	err = assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
-		{dnsName: hostname + ".", gatewayName: gateway.Name}: true,
+	err = assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+		{dnsName: hostname + ".", gatewayName: gateway.Name}: expectDNSRecordPublished(),
 	})
 	require.NoError(t, err, "DNSRecord never got ready")
 
