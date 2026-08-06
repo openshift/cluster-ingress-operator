@@ -21,14 +21,15 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description            string
-		noNamespace            bool
-		allIngressesAvailable  bool
-		someIngressProgressing bool
-		reportedVersions       versions
-		oldVersions            versions
-		curVersions            versions
-		expectProgressing      configv1.ConditionStatus
+		description                string
+		noNamespace                bool
+		allIngressesAvailable      bool
+		someIngressProgressing     bool
+		deploymentRollingOutReason string
+		reportedVersions           versions
+		oldVersions                versions
+		curVersions                versions
+		expectProgressing          configv1.ConditionStatus
 	}{
 		{
 			description:           "all ingress controllers are available",
@@ -44,6 +45,21 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 		{
 			description:       "all ingress controllers are not available",
 			expectProgressing: configv1.ConditionTrue,
+		},
+		{
+			description:                "unavailable due to infrastructure-driven replicas stabilizing",
+			deploymentRollingOutReason: ingress.ReasonReplicasStabilizing,
+			expectProgressing:          configv1.ConditionFalse,
+		},
+		{
+			description:                "unavailable due to infrastructure-driven pods starting",
+			deploymentRollingOutReason: ingress.ReasonPodsStarting,
+			expectProgressing:          configv1.ConditionFalse,
+		},
+		{
+			description:                "unavailable due to genuine deployment rollout",
+			deploymentRollingOutReason: ingress.ReasonDeploymentRollingOut,
+			expectProgressing:          configv1.ConditionTrue,
 		},
 		{
 			description:           "versions match",
@@ -156,10 +172,17 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 					}},
 				},
 			}
-			ingresscontrollers = append(ingresscontrollers, ic)
 			if tc.someIngressProgressing {
-				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
+				ic.Status.Conditions[0].Status = operatorv1.ConditionTrue
 			}
+			if len(tc.deploymentRollingOutReason) > 0 {
+				ic.Status.Conditions = append(ic.Status.Conditions, operatorv1.OperatorCondition{
+					Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
+					Status: operatorv1.ConditionTrue,
+					Reason: tc.deploymentRollingOutReason,
+				})
+			}
+			ingresscontrollers = append(ingresscontrollers, ic)
 
 			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
 			conditionsCmpOpts := []cmp.Option{
