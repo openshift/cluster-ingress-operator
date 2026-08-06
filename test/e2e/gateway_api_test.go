@@ -300,6 +300,17 @@ func testGatewayAPIObjects(t *testing.T) {
 	} else {
 		t.Log("gateway class, gateway, and http route created successfully")
 	}
+
+	// Verify the sync annotation was set on the GatewayClass. The
+	// annotation patch is asynchronous, so poll until it appears.
+	assert.Eventually(t, func() bool {
+		gc := &gatewayapiv1.GatewayClass{}
+		if err := kclient.Get(t.Context(), types.NamespacedName{Name: operatorcontroller.OpenShiftDefaultGatewayClassName}, gc); err != nil {
+			t.Logf("failed to get GatewayClass: %v", err)
+			return false
+		}
+		return gc.Annotations["ingress.operator.openshift.io/sync"] != ""
+	}, 2*time.Minute, 5*time.Second, "sync annotation should be set on GatewayClass after istiod is available")
 }
 
 // testGatewayAPIManualDeployment verifies that Istio's "manual deployment"
