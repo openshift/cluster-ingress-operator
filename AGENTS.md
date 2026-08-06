@@ -235,6 +235,98 @@ if diff := cmp.Diff(expected, actual); diff != "" {
 | `waitForClusterOperatorConditions()` | Poll ClusterOperator status |
 | `deleteIngressController()` | Clean up with timeout |
 
+### E2E Testing Rules
+
+These rules prevent flaky tests, resource leaks, race conditions, panics, and logic bugs. See [`test/e2e/TESTING.md`](test/e2e/TESTING.md) for detailed patterns and examples.
+
+**Cleanup — always use `t.Cleanup()` + `deleteWithRetryOnError()`:**
+```go
+// CORRECT
+t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), obj, 2*time.Minute) })
+
+// WRONG — defer doesn't run if t.Fatal is called in a subtest
+defer func() { kclient.Delete(context.TODO(), obj) }()
+
+// WRONG — assertDeleted fatals on transient errors
+t.Cleanup(func() { assertDeleted(t, kclient, obj) })
+```
+
+**Cleanup functions must never call `t.Fatalf()`** — use `t.Errorf()` instead. A fatal in cleanup masks the original test failure and prevents other cleanup functions from running.
+
+**Resource updates — always use retry-on-conflict helpers:**
+```go
+// CORRECT — re-fetches the resource before each update attempt
+updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+    ic.Spec.Replicas = pointer.Int32(2)
+})
+
+// WRONG — stale resourceVersion causes conflict errors
+ic.Spec.Replicas = pointer.Int32(2)
+kclient.Update(context.TODO(), ic)
+```
+
+Available retry helpers (defined in `test/e2e/util_test.go`):
+- `updateIngressControllerWithRetryOnConflict()`
+- `updateIngressConfigSpecWithRetryOnConflict()`
+- `updateIngressConfigStatusWithRetryOnConflict()`
+- `updateRouteWithRetryOnConflict()`
+- `updateAndVerifyInfrastructureConfigWithRetry()`
+- `updateInfrastructureConfigStatusWithRetryOnConflict()`
+
+**Error type checks — match the operation:**
+- Delete → ignore `IsNotFound` (resource already gone)
+- Create → ignore `IsAlreadyExists` (resource already created)
+- Never invert these checks; never use `IsAlreadyExists` for Delete or `IsNotFound` for Create
+
+**No unbounded polling:**
+- Never use `wait.PollInfinite` — it hangs the test suite forever if a condition is never met
+- Prefer `wait.PollUntilContextTimeout` over deprecated `wait.PollImmediate` (context-aware, cancellable)
+
+**Shared mutable state:**
+- Shared counters between parallel tests must use `atomic.Int32` (or `sync.Mutex`)
+- Never mutate package-level globals (`dnsConfig`, `infraConfig`) from individual tests — read into local variables instead
+
+**Nil safety:**
+- Guard `infraConfig.Status.PlatformStatus` before accessing `.Type` — it can be nil
+- Never compare `&value == nil` (address-of-value is always non-nil)
+- Validate slice length before indexing
+
+**Function contracts — pick one:**
+- If a helper returns `error`, it must NOT call `t.Fatalf` internally (caller never sees the error)
+- If a helper calls `t.Fatalf`, it should not return `error`
+
+**Resource lifecycle in loops — never `defer` inside a loop:**
+```go
+// WRONG — all resources stay open until function returns
+for _, pod := range pods.Items {
+    logs, _ := getLogStream(pod)
+    defer logs.Close()  // file descriptor leak
+}
+```
+
+**Timeouts — use realistic values for controller condition polling:**
+- Controller conditions: **3+ minutes** minimum (never `10*time.Second`)
+- Resource deletion cleanup: **2 minutes** (`2*time.Minute`)
+- Load balancer readiness: **5–10 minutes**
+- DNS resolution: **10 minutes** (`dnsResolutionTimeout`)
+
+**Error wrapping — use `%w` in `fmt.Errorf`** when the caller may inspect the error with `errors.Is`/`errors.As`:
+```go
+return fmt.Errorf("failed to update ingresscontroller: %w", err)
+```
+
+**Context propagation in nested polls — inner context must derive from outer:**
+- When a polling loop is nested inside another, the inner context must derive from the outer context so cancellation propagates
+- Never use `context.Background()` for an inner poll when an outer context is available
+- Call `cancel()` explicitly after the inner poll completes instead of using `defer` inside poll callbacks (defer accumulates across iterations)
+
+**Test helper conventions:**
+- Every function accepting `*testing.T` that is not a test must call `t.Helper()` at the top
+- Never discard the return value of `wait.PollUntilContextTimeout` — silently dropped errors hide timeout failures
+- Always `Create()` a resource and check the error before registering `t.Cleanup()` for it
+
+**Log accuracy — log messages must match the actual operation.** Misleading logs make flaky test debugging significantly harder.
+
 ## Linting
 
 ```bash
