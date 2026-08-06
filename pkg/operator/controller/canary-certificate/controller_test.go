@@ -1,11 +1,113 @@
 package canarycertificate
 
 import (
+	"context"
 	"testing"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
+
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestCanaryCertificateDependencyEvents(t *testing.T) {
+	config := Config{
+		OperatorNamespace: "openshift-ingress-operator",
+		OperandNamespace:  "openshift-ingress",
+	}
+	defaultIngressControllerName := types.NamespacedName{
+		Namespace: config.OperatorNamespace,
+		Name:      manifests.DefaultIngressControllerName,
+	}
+
+	testCases := []struct {
+		description string
+		object      client.Object
+		expected    types.NamespacedName
+		matches     func(client.Object) bool
+	}{
+		{
+			description: "default ingress controller",
+			object: &operatorv1.IngressController{ObjectMeta: metav1.ObjectMeta{
+				Namespace: defaultIngressControllerName.Namespace,
+				Name:      defaultIngressControllerName.Name,
+			}},
+			expected: defaultIngressControllerName,
+			matches: func(object client.Object) bool {
+				return isDefaultIngressControllerDependency(object, config.OperatorNamespace)
+			},
+		},
+		{
+			description: "canary daemonset",
+			object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{
+				Namespace: operatorcontroller.CanaryDaemonSetName().Namespace,
+				Name:      operatorcontroller.CanaryDaemonSetName().Name,
+			}},
+			expected: operatorcontroller.CanaryDaemonSetName(),
+			matches:  isCanaryDaemonSetDependency,
+		},
+		{
+			description: "canary certificate",
+			object: &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+				Namespace: operatorcontroller.CanaryCertificateName().Namespace,
+				Name:      operatorcontroller.CanaryCertificateName().Name,
+			}},
+			expected: operatorcontroller.CanaryCertificateName(),
+			matches:  isCanaryCertificate,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			if !operatorcontroller.HasNamespacedName(tc.object, tc.expected) {
+				t.Fatalf("expected %s/%s to match", tc.expected.Namespace, tc.expected.Name)
+			}
+			if !tc.matches(tc.object) {
+				t.Fatalf("expected dependency predicate to match %s/%s", tc.expected.Namespace, tc.expected.Name)
+			}
+
+			requests := toCanaryCertificate(context.Background(), tc.object)
+			if len(requests) != 1 || requests[0].NamespacedName != operatorcontroller.CanaryCertificateName() {
+				t.Fatalf("expected one request for %v, got %#v", operatorcontroller.CanaryCertificateName(), requests)
+			}
+		})
+	}
+}
+
+func TestHasNamespacedNameRejectsUnrelatedDependencies(t *testing.T) {
+	operatorNamespace := "openshift-ingress-operator"
+	testCases := []struct {
+		object  client.Object
+		matches func(client.Object) bool
+	}{
+		{
+			object:  &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.CanaryDaemonSetName().Namespace, Name: "unrelated"}},
+			matches: isCanaryDaemonSetDependency,
+		},
+		{
+			object:  &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "unrelated", Name: operatorcontroller.CanaryCertificateName().Name}},
+			matches: isCanaryCertificate,
+		},
+		{
+			object: &operatorv1.IngressController{ObjectMeta: metav1.ObjectMeta{Namespace: operatorNamespace, Name: "unrelated"}},
+			matches: func(object client.Object) bool {
+				return isDefaultIngressControllerDependency(object, operatorNamespace)
+			},
+		},
+	}
+	for _, tc := range testCases {
+		if tc.matches(tc.object) {
+			t.Fatalf("unexpected dependency match for %s/%s", tc.object.GetNamespace(), tc.object.GetName())
+		}
+	}
+}
 
 func Test_canaryCertificateChanged(t *testing.T) {
 	trueVar := true
