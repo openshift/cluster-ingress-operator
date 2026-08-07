@@ -33,7 +33,6 @@ import (
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 	clientcacontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/clientca-configmap"
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
-	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	gatewaylabelercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-labeler"
 	gatewaynetworkpolicycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-networkpolicy"
@@ -273,11 +272,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		TargetNamespace: operatorcontroller.DefaultOperandNamespace,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create client CA configmap controller: %w", err)
-	}
-
-	// Set up the crl controller
-	if _, err := crlcontroller.New(mgr); err != nil {
-		return nil, fmt.Errorf("failed to create crl controller: %v", err)
 	}
 
 	// Set up the DNS controller
