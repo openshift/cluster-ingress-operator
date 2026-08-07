@@ -93,6 +93,22 @@ var (
 		"TLS_AES_256_GCM_SHA384",
 	)
 
+	// fipsApprovedTLSGroups is the ordered list of TLS key exchange groups
+	// approved for use under FIPS 140-3 / NIST SP 800-56Ar3. It includes
+	// NIST P-curves (secp256r1, secp384r1, secp521r1) and their corresponding
+	// ML-KEM post-quantum hybrids (SecP256r1MLKEM768, SecP384r1MLKEM1024,
+	// approved as of Go 1.26). The order is deliberate: classical ECDH groups
+	// first for broad compatibility, then PQ hybrids.
+	// X25519-based groups (X25519, X25519MLKEM768) are excluded — see
+	// nonFIPSGroups.
+	fipsApprovedTLSGroups = []string{
+		string(configv1.TLSGroupSecP256r1),
+		string(configv1.TLSGroupSecP384r1),
+		string(configv1.TLSGroupSecP521r1),
+		string(configv1.TLSGroupSecP256r1MLKEM768),
+		string(configv1.TLSGroupSecP384r1MLKEM1024),
+	}
+
 	// nonFIPSGroups is the set of TLS groups that are NOT approved for use
 	// under FIPS 140-3 / NIST SP 800-56Ar3. X25519 and X25519MLKEM768 rely
 	// on Curve25519 arithmetic which is excluded from the FIPS-approved list
