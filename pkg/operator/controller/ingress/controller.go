@@ -1188,6 +1188,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	DeleteIngressControllerConditionsMetric(ingress)
 	DeleteActiveNLBMetrics(ingress)
 	DeleteNLBHairpinRiskMetric(ingress)
+	DeleteDeploymentAvailableTransitionsMetric(ingress)
 
 	// Delete the RoutesPerShard metric label corresponding to the Ingress Controller.
 	routemetrics.DeleteRouteMetricsControllerRoutesPerShardMetric(ingress.Name)

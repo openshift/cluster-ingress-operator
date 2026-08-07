@@ -37,11 +37,29 @@ var (
 		Help: "Reports whether an IngressController using an internal AWS NLB has no explicit protocol setting and may be affected by hairpin connection failures. 0 is no risk, 1 is at risk.",
 	}, []string{"name"})
 
+	// deploymentAvailableTransitions reports the cumulative number of times
+	// an IngressController's DeploymentAvailable status condition has
+	// changed status (i.e. "flapped" between available and unavailable).
+	//
+	// The Available and Degraded conditions grant DeploymentAvailable a
+	// grace period before reporting an ingresscontroller as unavailable or
+	// degraded (see OCPBUGS-92835). A deployment that flaps quickly enough
+	// that each unavailable period stays within the grace period never
+	// causes Available/Degraded to go False, so the instability would
+	// otherwise be invisible. This counter provides an independent
+	// monitoring signal for that flapping so it can be alerted on even
+	// though it is masked in Available/Degraded.
+	deploymentAvailableTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ingress_controller_deployment_available_transitions_total",
+		Help: "Reports the cumulative number of times the DeploymentAvailable status condition has changed status for an IngressController. A high rate indicates the underlying deployment is flapping between available and unavailable.",
+	}, []string{"name"})
+
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{
 		ingressControllerConditions,
 		activeNLBs,
 		nlbHairpinRisk,
+		deploymentAvailableTransitions,
 	}
 )
 
@@ -100,6 +118,27 @@ func SetIngressControllerNLBMetric(ci *operatorv1.IngressController) {
 
 func DeleteNLBHairpinRiskMetric(ic *operatorv1.IngressController) {
 	nlbHairpinRisk.DeleteLabelValues(ic.Name)
+}
+
+// DeleteDeploymentAvailableTransitionsMetric deletes the
+// ingress_controller_deployment_available_transitions_total metric which
+// belongs to the given ingresscontroller.
+func DeleteDeploymentAvailableTransitionsMetric(ic *operatorv1.IngressController) {
+	deploymentAvailableTransitions.DeleteLabelValues(ic.Name)
+}
+
+// RecordDeploymentAvailableTransition increments the
+// ingress_controller_deployment_available_transitions_total counter for the
+// named ingresscontroller if previous is a known condition (i.e. not the
+// zero value) and its Status differs from current's Status.
+func RecordDeploymentAvailableTransition(icName string, previous, current operatorv1.OperatorCondition) {
+	if len(previous.Status) == 0 {
+		// No prior observation (e.g. first reconcile); nothing to compare.
+		return
+	}
+	if previous.Status != current.Status {
+		deploymentAvailableTransitions.WithLabelValues(icName).Inc()
+	}
 }
 
 func SetNLBHairpinRiskMetric(ic *operatorv1.IngressController) {
