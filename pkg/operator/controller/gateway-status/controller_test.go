@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -976,10 +977,13 @@ func Test_Reconcile(t *testing.T) {
 			}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := testutil.FakeCache{Informers: &informer, Reader: cl}
+			testModeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(false)
+			testModeAccessor.SetCRDsEstablished(true)
 			reconciler := &reconciler{
-				cache:       cache,
-				client:      cl,
-				eventreader: cl,
+				cache:        cache,
+				client:       cl,
+				eventreader:  cl,
+				modeAccessor: testModeAccessor,
 			}
 			res, err := reconciler.Reconcile(ctx, tc.reconcileRequest)
 			if tc.expectError == "" {
@@ -1089,10 +1093,13 @@ func TestReconcileTransition(t *testing.T) {
 	}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	cache := testutil.FakeCache{Informers: &informer, Reader: cl}
+	testModeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(false)
+	testModeAccessor.SetCRDsEstablished(true)
 	reconciler := &reconciler{
-		cache:       cache,
-		client:      cl,
-		eventreader: cl,
+		cache:        cache,
+		client:       cl,
+		eventreader:  cl,
+		modeAccessor: testModeAccessor,
 	}
 
 	reconcileRequest := reqFn("openshift-ingress", "example-gateway")

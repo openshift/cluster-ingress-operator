@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/utils/pointer"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -1615,4 +1616,20 @@ func buildTestPodNetworkPolicy(name types.NamespacedName) *networkingv1.NetworkP
 			Egress:  []networkingv1.NetworkPolicyEgressRule{{}},
 		},
 	}
+}
+
+// crdExists returns a Boolean value indicating whether the named CRD exists.
+func crdExists(t *testing.T, client *apiextensionsclient.Clientset, crdName string) (bool, error) {
+	t.Helper()
+	if client == nil {
+		return false, fmt.Errorf("crd client cannot be null")
+	}
+
+	if _, err := client.ApiextensionsV1().CustomResourceDefinitions().Get(t.Context(), crdName, metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get CRD %s: %w", crdName, err)
+	}
+	return true, nil
 }

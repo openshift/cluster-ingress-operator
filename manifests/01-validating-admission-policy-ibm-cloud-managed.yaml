@@ -8,6 +8,7 @@ metadata:
   annotations:
     capability.openshift.io/name: Ingress
     include.release.openshift.io/ibm-cloud-managed: "true"
+    release.openshift.io/feature-set: Default
 spec:
   matchConstraints:
     # Consider only requests to CRD resources.

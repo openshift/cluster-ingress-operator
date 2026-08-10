@@ -153,6 +153,22 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
 
+	// Re-check AllowDependents immediately before installing, while
+	// holding sailLifecycleMu (shared with UninstallSail). Building opts
+	// above involves several API calls, during which management mode may
+	// have transitioned to Unmanaged; the earlier AllowDependents check
+	// in reconcileWithSailLibrary is too far removed from this call to be
+	// race-free on its own. Holding the same lock as UninstallSail makes
+	// this check-then-act sequence indivisible with respect to a
+	// concurrent uninstall, so a stale Apply can never land after an
+	// Uninstall has completed.
+	r.sailLifecycleMu.Lock()
+	defer r.sailLifecycleMu.Unlock()
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("management mode no longer allows dependents, skipping Istio install")
+		return nil
+	}
+
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
 	// if options or values have changed. Status is checked later via r.sailInstaller.Status()
 	// and mapped to GatewayClass conditions.
