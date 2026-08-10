@@ -15,6 +15,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	routev1client "github.com/openshift/client-go/route/clientset/versioned"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -112,6 +113,11 @@ func TestGatewayAPI(t *testing.T) {
 		t.Fatalf("error checking without olm feature gate enabled status: %v", err)
 	}
 
+	gatewayAPIManagementModeEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
+	if err != nil {
+		t.Fatalf("error checking GatewayAPIManagementMode feature gate enabled status: %v", err)
+	}
+
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
 		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
@@ -143,6 +149,13 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
+	if gatewayAPIManagementModeEnabled {
+		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
+		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
+		t.Run("testGatewayAPIManagementModeCRDCompliance", testGatewayAPIManagementModeCRDCompliance)
+		t.Run("testGatewayAPIManagementModeUnmanaged", testGatewayAPIManagementModeUnmanaged)
+		t.Run("testGatewayAPIManagementModeTakeover", testGatewayAPIManagementModeTakeover)
+	}
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
 	}
