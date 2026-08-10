@@ -140,8 +140,8 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAcce
 	// the Ingress CR is a cluster-scoped operator API resource. Only
 	// register when the management mode gate is enabled because the
 	// Ingress CRD only exists on TechPreview/DevPreview clusters.
-	if modeAccessor.GateEnabled() {
-		ingressToGateways := operatorcontroller.IngressWakeUpMapper(gatewaysCache, &gatewayapiv1.GatewayList{})
+	if modeAccessor != nil && modeAccessor.GateEnabled() {
+		ingressToGateways := operatorcontroller.IngressWakeUpMapper(gatewaysCache, func() client.ObjectList { return &gatewayapiv1.GatewayList{} })
 		if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGateways))); err != nil {
 			return nil, fmt.Errorf("error initializing ingress watcher: %w", err)
 		}
@@ -161,7 +161,7 @@ func normalizeHostname(hostname string) string {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log := logger.WithValues("name", request.Name, "namespace", request.Namespace)
 	log.Info("Reconciling gateway")
-	if !r.modeAccessor.AllowDependents() {
+	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
 		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
 		return reconcile.Result{}, nil
 	}

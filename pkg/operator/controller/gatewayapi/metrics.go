@@ -39,7 +39,7 @@ var (
 	// infoMetricMu protects the last-seen version labels used to
 	// avoid redundant Reset() calls on the info metric in
 	// steady-state reconciles.
-	infoMetricMu             sync.Mutex
+	infoMetricMu              sync.Mutex
 	lastInfoGatewayAPIVersion string
 	lastInfoOSSMVersion       string
 )

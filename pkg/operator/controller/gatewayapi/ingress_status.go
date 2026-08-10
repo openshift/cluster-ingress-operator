@@ -12,6 +12,8 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -43,7 +45,22 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 	}
 	present := presentCond.Status == metav1.ConditionTrue
 	compliant := compliantCond.Status == metav1.ConditionTrue
-	managedCond := computeManagedCondition(snapshot.desiredMode, present, compliant, anyExistingNonCompliant)
+
+	// Check if we were already managing CRDs before this reconcile.
+	// This distinguishes between:
+	// 1. Upgrade (already Managed, version mismatch) -> allow update
+	// 2. Takeover (Unmanaged->Managed, customer modified) -> block takeover
+	//
+	// We read the CURRENT Managed condition from the Ingress status (not
+	// in-memory state) so this works correctly across pod restarts.
+	wasAlreadyManaged := false
+	if snapshot.found && snapshot.ingress != nil {
+		if currentManagedCond := apimeta.FindStatusCondition(snapshot.ingress.Status.Conditions, conditionTypeGatewayAPICRDsManaged); currentManagedCond != nil {
+			wasAlreadyManaged = currentManagedCond.Status == metav1.ConditionTrue
+		}
+	}
+
+	managedCond := computeManagedCondition(snapshot.desiredMode, present, compliant, anyExistingNonCompliant, wasAlreadyManaged)
 	managed := managedCond.Status == metav1.ConditionTrue
 
 	r.config.ModeAccessor.Update(snapshot.desiredMode, managed, present, compliant)
@@ -53,7 +70,7 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 	if !snapshot.found {
 		return nil
 	}
-	return r.updateIngressStatus(ctx, snapshot.ingress, managedCond, presentCond, compliantCond)
+	return r.updateIngressStatus(ctx, snapshot.ingress, []metav1.Condition{managedCond, presentCond, compliantCond})
 }
 
 // computeCRDConditions inspects the live CRDs on the cluster and
@@ -64,15 +81,12 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 // errors are not mistaken for missing CRDs.
 func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition, metav1.Condition, bool, error) {
 	var missingCRDs, annotationMismatches, schemaMismatches []string
-	allPresent := true
-	allCompliant := true
 	anyExistingNonCompliant := false
 
 	for _, desired := range managedCRDs {
 		var current apiextensionsv1.CustomResourceDefinition
 		if err := r.client.Get(ctx, types.NamespacedName{Name: desired.Name}, &current); err != nil {
 			if errors.IsNotFound(err) {
-				allPresent = false
 				missingCRDs = append(missingCRDs, desired.Name)
 				continue
 			}
@@ -82,7 +96,6 @@ func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition
 		expectedVersion := desired.Annotations[bundleVersionAnnotation]
 		actualVersion := current.Annotations[bundleVersionAnnotation]
 		if expectedVersion != actualVersion {
-			allCompliant = false
 			anyExistingNonCompliant = true
 			annotationMismatches = append(annotationMismatches,
 				fmt.Sprintf("%s (expected %s, got %s)", desired.Name, expectedVersion, actualVersion))
@@ -90,15 +103,14 @@ func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition
 		}
 
 		if !crdSpecCompliant(&current, desired) {
-			allCompliant = false
 			anyExistingNonCompliant = true
 			schemaMismatches = append(schemaMismatches, desired.Name)
 		}
 	}
 
-	presentCond := buildPresentCondition(allPresent, missingCRDs)
+	presentCond := buildPresentCondition(missingCRDs)
 
-	if !allPresent {
+	if len(missingCRDs) > 0 {
 		var msg string
 		if anyExistingNonCompliant {
 			var details []string
@@ -120,7 +132,7 @@ func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition
 		}, anyExistingNonCompliant, nil
 	}
 
-	compliantCond := buildCompliantCondition(allCompliant, annotationMismatches, schemaMismatches)
+	compliantCond := buildCompliantCondition(annotationMismatches, schemaMismatches)
 	return presentCond, compliantCond, anyExistingNonCompliant, nil
 }
 
@@ -129,7 +141,9 @@ func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition
 // anyExistingNonCompliant is true when at least one existing managed
 // CRD does not match the expected version/schema, even if the full
 // set of CRDs is not present.
-func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMode, present, compliant, anyExistingNonCompliant bool) metav1.Condition {
+// wasAlreadyManaged indicates whether the operator was managing CRDs
+// in the previous reconcile, used to distinguish upgrades from takeover.
+func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMode, present, compliant, anyExistingNonCompliant, wasAlreadyManaged bool) metav1.Condition {
 	if desiredMode == operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsManaged,
@@ -139,7 +153,14 @@ func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMo
 		}
 	}
 
-	if anyExistingNonCompliant {
+	// Only block takeover when:
+	// 1. CRDs exist with mismatched version/schema, AND
+	// 2. We were NOT already managing them (i.e., Unmanaged->Managed transition)
+	//
+	// If we were already managing the CRDs (wasAlreadyManaged=true), then
+	// a version mismatch is a normal upgrade scenario (v1.0->v1.1) and we
+	// should proceed with updating the CRDs, not block takeover.
+	if anyExistingNonCompliant && !wasAlreadyManaged {
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsManaged,
 			Status:  metav1.ConditionFalse,
@@ -156,8 +177,8 @@ func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMo
 	}
 }
 
-func buildPresentCondition(allPresent bool, missingCRDs []string) metav1.Condition {
-	if allPresent {
+func buildPresentCondition(missingCRDs []string) metav1.Condition {
+	if len(missingCRDs) == 0 {
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsPresent,
 			Status:  metav1.ConditionTrue,
@@ -173,8 +194,8 @@ func buildPresentCondition(allPresent bool, missingCRDs []string) metav1.Conditi
 	}
 }
 
-func buildCompliantCondition(allCompliant bool, annotationMismatches, schemaMismatches []string) metav1.Condition {
-	if allCompliant {
+func buildCompliantCondition(annotationMismatches, schemaMismatches []string) metav1.Condition {
+	if len(annotationMismatches) == 0 && len(schemaMismatches) == 0 {
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsCompliant,
 			Status:  metav1.ConditionTrue,
@@ -198,10 +219,11 @@ func buildCompliantCondition(allCompliant bool, annotationMismatches, schemaMism
 }
 
 // updateIngressStatus writes the given conditions to the Ingress CR's
-// status subresource, updating observedGeneration as well. It skips
-// the write if nothing changed and tolerates Forbidden and NotFound
-// errors for HyperShift.
-func (r *reconciler) updateIngressStatus(ctx context.Context, ingress *operatorv1alpha1.Ingress, conditions ...metav1.Condition) error {
+// status subresource, updating observedGeneration as well. Uses Patch
+// instead of Update to leverage the listType=map merge semantics for
+// conditions, which prevents conflicts when multiple controllers update
+// different condition types concurrently.
+func (r *reconciler) updateIngressStatus(ctx context.Context, ingress *operatorv1alpha1.Ingress, conditions []metav1.Condition) error {
 	updated := ingress.DeepCopy()
 	changed := false
 
@@ -221,12 +243,8 @@ func (r *reconciler) updateIngressStatus(ctx context.Context, ingress *operatorv
 		return nil
 	}
 
-	if err := r.client.Status().Update(ctx, updated); err != nil {
-		if errors.IsForbidden(err) || errors.IsNotFound(err) {
-			log.Info("unable to update Ingress status, may be a HyperShift timing issue", "error", err)
-			return nil
-		}
-		return fmt.Errorf("failed to update Ingress status: %w", err)
+	if err := r.client.Status().Patch(ctx, updated, client.MergeFrom(ingress)); err != nil {
+		return fmt.Errorf("failed to patch Ingress status: %w", err)
 	}
 
 	log.Info("updated Ingress status conditions")

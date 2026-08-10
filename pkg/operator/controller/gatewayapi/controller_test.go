@@ -1068,7 +1068,7 @@ func TestReconcile_ModeSnapshot_PreventsStaleUnmanaged(t *testing.T) {
 	assert.NoError(t, err)
 
 	// The snapshot sees Managed (first Get). Verify the invariant:
-	// Managed snapshot → VAP NOT deleted, status NOT Unmanaged.
+	// Managed snapshot -> VAP NOT deleted, status NOT Unmanaged.
 	assert.Equal(t, 1, flippingClient.calls,
 		"Ingress CR must be read exactly once (snapshot), not twice")
 
@@ -1098,7 +1098,7 @@ func TestReconcile_ModeSnapshot_PreventsStaleUnmanaged(t *testing.T) {
 
 // TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus verifies
 // the complementary case: when the snapshot sees Unmanaged, the VAP is
-// deleted AND the Unmanaged status is written — both from the same
+// deleted AND the Unmanaged status is written - both from the same
 // snapshot, without a second read that could have flipped to Managed.
 func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -1135,7 +1135,7 @@ func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 		Build()
 
 	// Snapshot reads Unmanaged; subsequent hypothetical reads would
-	// see Managed — proving that only the snapshot matters.
+	// see Managed - proving that only the snapshot matters.
 	flippingClient := &modeFlippingClient{
 		Client:    fakeClient,
 		firstMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
@@ -1174,7 +1174,7 @@ func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 	assert.Equal(t, 1, flippingClient.calls,
 		"Ingress CR must be read exactly once (snapshot)")
 
-	// Unmanaged snapshot → VAP must be deleted.
+	// Unmanaged snapshot -> VAP must be deleted.
 	var vapDeleted, vapbDeleted bool
 	for _, obj := range cl.Deleted {
 		switch obj.(type) {

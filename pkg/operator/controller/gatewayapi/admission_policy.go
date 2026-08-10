@@ -162,7 +162,7 @@ func (r *reconciler) ensureValidatingAdmissionPolicyBinding(ctx context.Context)
 // binding. Deletes the policy BEFORE the binding so that if the policy
 // delete fails, the binding still references it and the transition is
 // retried. (A binding referencing a missing policy is inert per the
-// Kubernetes API — it does not enforce deny — so ordering only matters
+// Kubernetes API - it does not enforce deny - so ordering only matters
 // for the retry/fail-closed contract within this function.)
 // Returns nil if both are already absent.
 func (r *reconciler) deleteAdmissionPolicy(ctx context.Context) error {

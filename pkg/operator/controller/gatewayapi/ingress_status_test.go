@@ -28,6 +28,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		present                 bool
 		compliant               bool
 		anyExistingNonCompliant bool
+		wasAlreadyManaged       bool
 		wantStatus              metav1.ConditionStatus
 		wantReason              string
 	}{
@@ -37,6 +38,7 @@ func TestComputeManagedCondition(t *testing.T) {
 			present:                 true,
 			compliant:               true,
 			anyExistingNonCompliant: false,
+			wasAlreadyManaged:       false,
 			wantStatus:              metav1.ConditionTrue,
 			wantReason:              reasonManagedByIngressOperator,
 		},
@@ -46,26 +48,39 @@ func TestComputeManagedCondition(t *testing.T) {
 			present:                 false,
 			compliant:               false,
 			anyExistingNonCompliant: false,
+			wasAlreadyManaged:       false,
 			wantStatus:              metav1.ConditionTrue,
 			wantReason:              reasonManagedByIngressOperator,
 		},
 		{
-			name:                    "managed, present, not compliant (takeover blocked)",
+			name:                    "managed, present, not compliant, NOT already managed (takeover blocked)",
 			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
 			present:                 true,
 			compliant:               false,
 			anyExistingNonCompliant: true,
+			wasAlreadyManaged:       false,
 			wantStatus:              metav1.ConditionFalse,
 			wantReason:              reasonTakeoverBlocked,
 		},
 		{
-			name:                    "managed, partial presence, some non-compliant (takeover blocked)",
+			name:                    "managed, partial presence, some non-compliant, NOT already managed (takeover blocked)",
 			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
 			present:                 false,
 			compliant:               false,
 			anyExistingNonCompliant: true,
+			wasAlreadyManaged:       false,
 			wantStatus:              metav1.ConditionFalse,
 			wantReason:              reasonTakeoverBlocked,
+		},
+		{
+			name:                    "managed, not compliant, but WAS already managed (upgrade scenario)",
+			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
+			present:                 true,
+			compliant:               false,
+			anyExistingNonCompliant: true,
+			wasAlreadyManaged:       true,
+			wantStatus:              metav1.ConditionTrue,
+			wantReason:              reasonManagedByIngressOperator,
 		},
 		{
 			name:                    "unmanaged",
@@ -73,6 +88,7 @@ func TestComputeManagedCondition(t *testing.T) {
 			present:                 true,
 			compliant:               true,
 			anyExistingNonCompliant: false,
+			wasAlreadyManaged:       false,
 			wantStatus:              metav1.ConditionFalse,
 			wantReason:              reasonUnmanaged,
 		},
@@ -82,6 +98,7 @@ func TestComputeManagedCondition(t *testing.T) {
 			present:                 true,
 			compliant:               true,
 			anyExistingNonCompliant: false,
+			wasAlreadyManaged:       false,
 			wantStatus:              metav1.ConditionTrue,
 			wantReason:              reasonManagedByIngressOperator,
 		},
@@ -92,7 +109,7 @@ func TestComputeManagedCondition(t *testing.T) {
 			if mode == "" {
 				mode = operatorv1alpha1.GatewayAPIManagementModeManaged
 			}
-			cond := computeManagedCondition(mode, tc.present, tc.compliant, tc.anyExistingNonCompliant)
+			cond := computeManagedCondition(mode, tc.present, tc.compliant, tc.anyExistingNonCompliant, tc.wasAlreadyManaged)
 			assert.Equal(t, conditionTypeGatewayAPICRDsManaged, cond.Type)
 			assert.Equal(t, tc.wantStatus, cond.Status)
 			assert.Equal(t, tc.wantReason, cond.Reason)
@@ -102,13 +119,13 @@ func TestComputeManagedCondition(t *testing.T) {
 
 func TestBuildPresentCondition(t *testing.T) {
 	t.Run("all present", func(t *testing.T) {
-		cond := buildPresentCondition(true, nil)
+		cond := buildPresentCondition(nil)
 		assert.Equal(t, conditionTypeGatewayAPICRDsPresent, cond.Type)
 		assert.Equal(t, metav1.ConditionTrue, cond.Status)
 		assert.Equal(t, reasonCRDsFound, cond.Reason)
 	})
 	t.Run("some missing", func(t *testing.T) {
-		cond := buildPresentCondition(false, []string{"foo.gateway.networking.k8s.io"})
+		cond := buildPresentCondition([]string{"foo.gateway.networking.k8s.io"})
 		assert.Equal(t, conditionTypeGatewayAPICRDsPresent, cond.Type)
 		assert.Equal(t, metav1.ConditionFalse, cond.Status)
 		assert.Equal(t, reasonCRDsNotFound, cond.Reason)
@@ -118,26 +135,26 @@ func TestBuildPresentCondition(t *testing.T) {
 
 func TestBuildCompliantCondition(t *testing.T) {
 	t.Run("all compliant", func(t *testing.T) {
-		cond := buildCompliantCondition(true, nil, nil)
+		cond := buildCompliantCondition(nil, nil)
 		assert.Equal(t, conditionTypeGatewayAPICRDsCompliant, cond.Type)
 		assert.Equal(t, metav1.ConditionTrue, cond.Status)
 		assert.Equal(t, reasonVersionMatch, cond.Reason)
 	})
 	t.Run("annotation mismatch", func(t *testing.T) {
-		cond := buildCompliantCondition(false, []string{"foo (expected v1.5.1, got v1.4.0)"}, nil)
+		cond := buildCompliantCondition([]string{"foo (expected v1.5.1, got v1.4.0)"}, nil)
 		assert.Equal(t, metav1.ConditionFalse, cond.Status)
 		assert.Equal(t, reasonVersionMismatch, cond.Reason)
 		assert.Contains(t, cond.Message, "bundle-version annotation mismatch")
 		assert.Contains(t, cond.Message, "v1.5.1")
 	})
 	t.Run("schema mismatch", func(t *testing.T) {
-		cond := buildCompliantCondition(false, nil, []string{"bar.gateway.networking.k8s.io"})
+		cond := buildCompliantCondition(nil, []string{"bar.gateway.networking.k8s.io"})
 		assert.Equal(t, metav1.ConditionFalse, cond.Status)
 		assert.Contains(t, cond.Message, "schema differs despite matching annotation")
 		assert.Contains(t, cond.Message, "bar.gateway.networking.k8s.io")
 	})
 	t.Run("both annotation and schema mismatch", func(t *testing.T) {
-		cond := buildCompliantCondition(false,
+		cond := buildCompliantCondition(
 			[]string{"foo (expected v1.5.1, got v1.4.0)"},
 			[]string{"bar.gateway.networking.k8s.io"})
 		assert.Contains(t, cond.Message, "bundle-version annotation mismatch")
@@ -323,7 +340,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			assert.Equal(t, tc.wantAllowDeps, modeAccessor.AllowDependents(), "AllowDependents mismatch")
 
 			if tc.wantStatusUpdate {
-				assert.NotEmpty(t, cl.StatusWriter.Updated, "expected status update")
+				assert.NotEmpty(t, cl.StatusWriter.Patched, "expected status patch")
 
 				var updated operatorv1alpha1.Ingress
 				err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
@@ -354,7 +371,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 					assert.Equal(t, metav1.ConditionFalse, compliantCond.Status)
 				}
 			} else {
-				assert.Empty(t, cl.StatusWriter.Updated, "expected no status update")
+				assert.Empty(t, cl.StatusWriter.Patched, "expected no status patch")
 			}
 		})
 	}
@@ -367,6 +384,9 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 
 	crds := allManagedCRDObjects()
 	firstCRD := crds[0].(*apiextensionsv1.CustomResourceDefinition)
+	if firstCRD.Annotations == nil {
+		firstCRD.Annotations = map[string]string{}
+	}
 	firstCRD.Annotations[bundleVersionAnnotation] = "v0.0.0-wrong"
 
 	ingressObj := &operatorv1alpha1.Ingress{
@@ -439,10 +459,13 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 	operatorv1alpha1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
-	// Only include a subset of managed CRDs — one with wrong bundle-version.
+	// Only include a subset of managed CRDs - one with wrong bundle-version.
 	crds := allManagedCRDObjects()
 	// Keep only the first CRD but make it non-compliant; skip the rest.
 	nonCompliantCRD := crds[0].(*apiextensionsv1.CustomResourceDefinition)
+	if nonCompliantCRD.Annotations == nil {
+		nonCompliantCRD.Annotations = map[string]string{}
+	}
 	nonCompliantCRD.Annotations[bundleVersionAnnotation] = "v0.0.0-foreign"
 
 	ingressObj := &operatorv1alpha1.Ingress{

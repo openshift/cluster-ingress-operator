@@ -29,8 +29,13 @@ type SailUninstaller interface {
 // the cache and converts them to reconcile.Requests. Used for Ingress
 // wake-up watches to enqueue work when transitioning from Unmanaged to
 // Managed mode.
-func IngressWakeUpMapper(cacheReader client.Reader, objList client.ObjectList, listOpts ...client.ListOption) handler.MapFunc {
+//
+// The listFactory parameter is called on each invocation to create a fresh
+// ObjectList, preventing race conditions when multiple watch events fire
+// concurrently.
+func IngressWakeUpMapper(cacheReader client.Reader, listFactory func() client.ObjectList, listOpts ...client.ListOption) handler.MapFunc {
 	return func(ctx context.Context, _ client.Object) []reconcile.Request {
+		objList := listFactory()
 		if err := cacheReader.List(ctx, objList, listOpts...); err != nil {
 			modeLog.Error(err, "Failed to list objects for Ingress wake-up")
 			return nil
@@ -107,7 +112,6 @@ type ModeAccessor struct {
 func NewModeAccessor(gateEnabled bool) *ModeAccessor {
 	return &ModeAccessor{
 		gateEnabled: gateEnabled,
-		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
 	}
 }
 

@@ -123,8 +123,8 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	// the management mode changes. Only register when the management mode
 	// gate is enabled because the Ingress CRD only exists on
 	// TechPreview/DevPreview clusters.
-	if modeAccessor.GateEnabled() {
-		ingressToServices := operatorcontroller.IngressWakeUpMapper(operatorCache, &corev1.ServiceList{}, client.InNamespace(config.OperandNamespace), client.HasLabels{operatorcontroller.ManagedByIstioLabelKey})
+	if modeAccessor != nil && modeAccessor.GateEnabled() {
+		ingressToServices := operatorcontroller.IngressWakeUpMapper(operatorCache, func() client.ObjectList { return &corev1.ServiceList{} }, client.InNamespace(config.OperandNamespace), client.HasLabels{operatorcontroller.ManagedByIstioLabelKey})
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToServices))); err != nil {
 			return nil, err
 		}
@@ -173,7 +173,7 @@ type reconciler struct {
 // dnsrecord.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
-	if !r.modeAccessor.AllowDependents() {
+	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
 		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
 		return reconcile.Result{}, nil
 	}

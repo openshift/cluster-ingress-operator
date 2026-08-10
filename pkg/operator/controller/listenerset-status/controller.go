@@ -76,7 +76,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAcce
 		return nil, err
 	}
 
-	// Watch ListenerSets directly — each ListenerSet reconciles itself.
+	// Watch ListenerSets directly - each ListenerSet reconciles itself.
 	// Only reconcile on create, delete, or parentRef changes.
 	listenerSetPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool { return true },
@@ -95,7 +95,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAcce
 		return nil, fmt.Errorf("failed to watch ListenerSets: %w", err)
 	}
 
-	// Watch Gateways — when a Gateway's class changes or it is deleted,
+	// Watch Gateways - when a Gateway's class changes or it is deleted,
 	// enqueue the ListenerSets that target it via the index.
 	gatewayHasOurController := operatorcontroller.GatewayHasOurController(log, operatorCache, false)
 	gatewayToListenerSets := func(ctx context.Context, o client.Object) []reconcile.Request {
@@ -133,7 +133,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAcce
 		return nil, fmt.Errorf("failed to watch Gateways: %w", err)
 	}
 
-	// Watch GatewayClasses — when our GatewayClass is created or deleted,
+	// Watch GatewayClasses - when our GatewayClass is created or deleted,
 	// enqueue all ListenerSets so they can re-evaluate.
 	isOurGatewayClass := func(o client.Object) bool {
 		gc, ok := o.(*gatewayapiv1.GatewayClass)
@@ -171,8 +171,8 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAcce
 	// controllers can start or stop processing when the management mode
 	// changes. Only register when the management mode gate is enabled
 	// because the Ingress CRD only exists on TechPreview/DevPreview clusters.
-	if modeAccessor.GateEnabled() {
-		ingressToListenerSets := operatorcontroller.IngressWakeUpMapper(operatorCache, &gatewayapiv1.ListenerSetList{})
+	if modeAccessor != nil && modeAccessor.GateEnabled() {
+		ingressToListenerSets := operatorcontroller.IngressWakeUpMapper(operatorCache, func() client.ObjectList { return &gatewayapiv1.ListenerSetList{} })
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToListenerSets))); err != nil {
 			return nil, fmt.Errorf("failed to watch Ingress: %w", err)
 		}
@@ -192,7 +192,7 @@ type reconciler struct {
 // Accepted=False if so.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "listenerset", request.NamespacedName)
-	if !r.modeAccessor.AllowDependents() {
+	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
 		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
@@ -200,7 +200,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	ls := &gatewayapiv1.ListenerSet{}
 	if err := r.cache.Get(ctx, request.NamespacedName, ls); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			// ListenerSet was deleted — clean up metric.
+			// ListenerSet was deleted - clean up metric.
 			listenerSetOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
 			return reconcile.Result{}, nil
 		}

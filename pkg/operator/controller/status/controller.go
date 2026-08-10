@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -428,6 +429,16 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if err := r.client.Status().Update(ctx, co); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 		}
+	}
+
+	// Requeue faster during Gateway API mode transitions to keep
+	// ClusterOperator Progressing/Degraded conditions up-to-date.
+	// This requeue happens AFTER updating status so that the transition
+	// state is reflected in the ClusterOperator conditions.
+	if state.modeTransition.InProgress {
+		log.Info("Gateway API mode transition in progress, will requeue to refresh ClusterOperator status",
+			"target", state.modeTransition.Target)
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	return reconcile.Result{}, nil

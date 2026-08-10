@@ -5,7 +5,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +17,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
-	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -320,6 +317,52 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	ingress := &operatorv1alpha1.Ingress{}
 	ingressName := types.NamespacedName{Name: ingressCRName}
 
+	// Register cleanup BEFORE making any mutations so failures cannot
+	// leave the cluster in Unmanaged mode with modified CRDs.
+	var crdName types.NamespacedName
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	t.Cleanup(func() {
+		// Remove test annotation from CRD if it was added
+		if crdName.Name != "" {
+			t.Log("Cleanup: Removing test annotation from CRD")
+			if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+				t.Logf("Failed to get CRD for annotation cleanup: %v", err)
+			} else if crd.Annotations != nil {
+				delete(crd.Annotations, "test.openshift.io/unmanaged")
+				_ = kclient.Update(context.Background(), crd)
+			}
+		}
+
+		// Restore Managed mode
+		t.Log("Cleanup: Transitioning back to Managed mode")
+		assert.Eventually(t, func() bool {
+			if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+				t.Logf("Failed to get Ingress CR: %v", err)
+				return false
+			}
+
+			ingress.Spec.GatewayAPI.ManagementMode = operatorv1alpha1.GatewayAPIManagementModeManaged
+
+			if err := kclient.Update(context.Background(), ingress); err != nil {
+				t.Logf("Failed to restore Managed mode: %v; retrying...", err)
+				return false
+			}
+			return true
+		}, 30*time.Second, 2*time.Second,
+			"Failed to restore Managed mode in cleanup")
+
+		// Wait for Managed condition to be True
+		assert.Eventually(t, func() bool {
+			if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+				return false
+			}
+			managedCond := condutils.FindStatusCondition(ingress.Status.Conditions, "GatewayAPICRDsManaged")
+			return managedCond != nil && managedCond.Status == metav1.ConditionTrue
+		}, 3*time.Minute, 5*time.Second, "Failed to restore Managed state in cleanup")
+
+		t.Log("Cleanup complete: Restored Managed mode")
+	})
+
 	t.Log("Transitioning to Unmanaged mode")
 	require.Eventually(t, func() bool {
 		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
@@ -416,8 +459,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	// Verify we can modify a Gateway API CRD (no VAP protection)
 	t.Log("Verifying CRDs can be modified without VAP protection")
 	testCRDName := crdNames[0]
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	crdName := types.NamespacedName{Name: testCRDName}
+	crdName = types.NamespacedName{Name: testCRDName}
 
 	require.Eventually(t, func() bool {
 		if err := kclient.Get(context.Background(), crdName, crd); err != nil {
@@ -452,9 +494,55 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	infoQuery := `ingress_controller_gateway_api_info`
 	assertMetricGone(t, prometheusClient, infoQuery,
 		"Expected ingress_controller_gateway_api_info metric to be removed in Unmanaged mode")
+}
 
-	// Transition back to Managed for subsequent tests
+// testGatewayAPIManagementModeTakeover verifies takeover behavior:
+// - In Unmanaged mode with non-compliant CRDs, switching to Managed is blocked
+// - Managed=False with reason "TakeoverBlocked"
+// - Restoring CRD compliance allows takeover
+func testGatewayAPIManagementModeTakeover(t *testing.T) {
+	ingress := &operatorv1alpha1.Ingress{}
+	ingressName := types.NamespacedName{Name: ingressCRName}
+
+	testCRDName := crdNames[0]
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	crdName := types.NamespacedName{Name: testCRDName}
+
+	// Register cleanup BEFORE making any mutations. If test fails after
+	// modifying the CRD but before restoring it, cleanup ensures the CRD
+	// is deleted so CIO can recreate it with the correct bundle-version.
 	t.Cleanup(func() {
+		t.Log("Cleanup: Ensuring CRD is compliant by deleting if non-compliant")
+		if err := kclient.Get(context.Background(), crdName, crd); err == nil {
+			if bundleVer := crd.Annotations[bundleVersionAnnotation]; bundleVer == "v0.0.0-takeover-blocked" {
+				t.Log("Cleanup: Deleting non-compliant CRD so CIO can recreate it")
+				_ = kclient.Delete(context.Background(), crd)
+
+				// Wait for CRD to be recreated with compliant bundle-version
+				t.Log("Cleanup: Waiting for CIO to recreate compliant CRD")
+				assert.Eventually(t, func() bool {
+					if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+						if errors.IsNotFound(err) {
+							t.Logf("CRD not yet recreated")
+						} else {
+							t.Logf("Error getting CRD: %v", err)
+						}
+						return false
+					}
+
+					bundleVersion, found := crd.Annotations[bundleVersionAnnotation]
+					if !found || bundleVersion == "v0.0.0-takeover-blocked" {
+						t.Logf("CRD not yet compliant (bundle-version=%s, found=%v)", bundleVersion, found)
+						return false
+					}
+
+					t.Logf("CRD recreated with compliant bundle-version: %s", bundleVersion)
+					return true
+				}, 3*time.Minute, 5*time.Second, "Failed to wait for compliant CRD in cleanup")
+			}
+		}
+
+		// Restore Managed mode with retry
 		t.Log("Cleanup: Transitioning back to Managed mode")
 		require.Eventually(t, func() bool {
 			if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
@@ -483,15 +571,6 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 
 		t.Log("Cleanup complete: Restored Managed mode")
 	})
-}
-
-// testGatewayAPIManagementModeTakeover verifies takeover behavior:
-// - In Unmanaged mode with non-compliant CRDs, switching to Managed is blocked
-// - Managed=False with reason "TakeoverBlocked"
-// - Restoring CRD compliance allows takeover
-func testGatewayAPIManagementModeTakeover(t *testing.T) {
-	ingress := &operatorv1alpha1.Ingress{}
-	ingressName := types.NamespacedName{Name: ingressCRName}
 
 	// Ensure we're in Unmanaged mode first
 	t.Log("Ensuring Unmanaged mode for takeover test")
@@ -515,10 +594,6 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 		"Failed to ensure Unmanaged mode")
 
 	// Modify a CRD to make it non-compliant
-	testCRDName := crdNames[0]
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	crdName := types.NamespacedName{Name: testCRDName}
-
 	t.Logf("Making CRD %s non-compliant", testCRDName)
 	require.Eventually(t, func() bool {
 		if err := kclient.Get(context.Background(), crdName, crd); err != nil {

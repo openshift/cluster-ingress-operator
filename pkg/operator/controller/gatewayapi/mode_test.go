@@ -50,7 +50,7 @@ func TestModeAccessor_AllowDependents_GateOn(t *testing.T) {
 
 func TestModeAccessor_DesiredMode(t *testing.T) {
 	m := NewModeAccessor(true)
-	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeManaged, m.DesiredMode(), "default mode should be Managed")
+	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementMode(""), m.DesiredMode(), "initial mode should be empty until first Update")
 
 	m.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
 	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged, m.DesiredMode())

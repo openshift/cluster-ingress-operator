@@ -15,7 +15,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	iov1 "github.com/openshift/api/operatoringress/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	routev1client "github.com/openshift/client-go/route/clientset/versioned"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"

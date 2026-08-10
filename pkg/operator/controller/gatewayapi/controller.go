@@ -48,7 +48,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		config:       config,
 		fieldIndexer: mgr.GetFieldIndexer(),
 	}
-	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
+	c, err := controller.New(controllerName, mgr, controller.Options{
+		Reconciler:              reconciler,
+		MaxConcurrentReconciles: 1, // Serialize reconciles to prevent mode-flip races
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +64,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return expectedName == actualName
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.FeatureGate{}, &handler.EnqueueRequestForObject{}, clusterNamePredicate)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch FeatureGate resources: %w", err)
 	}
 
 	toFeatureGate := func(ctx context.Context, _ client.Object) []reconcile.Request {
@@ -74,7 +77,17 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return o.GetName() == "cluster"
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), infraClusterPredicate)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch Infrastructure resources: %w", err)
+	}
+
+	// Watch the Ingress CR so that management mode changes (and status
+	// updates such as Present/Compliant) are observed reactively instead
+	// of only being picked up by the periodic managementModeRequeue poll.
+	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isClusterIngress)); err != nil {
+		return nil, fmt.Errorf("failed to watch Ingress resources: %w", err)
 	}
 
 	isGatewayAPICRD := func(o client.Object) bool {
@@ -85,7 +98,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	// watch for CRDs
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to watch CRDs: %w", err)
 	}
 
 	// Index unmanaged Gateway API CRDs to enable efficient filtering
@@ -155,6 +168,12 @@ type reconciler struct {
 	fieldIndexer       client.FieldIndexer
 	mu                 sync.Mutex
 	controllersStarted bool
+
+	// dependentsBlockedLogged tracks whether we have already logged that
+	// dependent controllers are blocked, so that steady-state reconciles
+	// (e.g. every 30s in Unmanaged mode) don't repeat the same message.
+	// Reset once AllowDependents becomes true again.
+	dependentsBlockedLogged bool
 }
 
 // managementModeEnabled returns true when the GatewayAPIManagementMode
@@ -181,14 +200,14 @@ type ingressModeSnapshot struct {
 // resolveIngressModeSnapshot performs the single authoritative read of
 // the Ingress CR for the gate-ON reconcile path.
 //
-// Forbidden → returns error (fail-closed; no ownership actions taken).
-// NotFound  → returns snapshot with desiredMode=Managed and found=false.
-// Success   → returns snapshot with the spec's mode and the live object.
+// Forbidden -> returns error (fail-closed; no ownership actions taken).
+// NotFound  -> returns snapshot with desiredMode=Managed and found=false.
+// Success   -> returns snapshot with the spec's mode and the live object.
 func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressModeSnapshot, error) {
 	ingress := &operatorv1alpha1.Ingress{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, ingress); err != nil {
 		if errors.IsForbidden(err) {
-			log.Info("Ingress CR access forbidden, treating ownership as unknown — will requeue", "error", err)
+			log.Info("Ingress CR access forbidden, treating ownership as unknown - will requeue", "error", err)
 			return ingressModeSnapshot{}, fmt.Errorf("Ingress CR access forbidden, cannot determine management mode: %w", err)
 		}
 		if errors.IsNotFound(err) {
@@ -341,18 +360,24 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	useOLM := r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled
 	useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 	if !useOLM && !useSailLibrary {
-		if r.managementModeEnabled() {
-			return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
-		}
 		return reconcile.Result{}, nil
 	}
 
 	// When the management mode gate is enabled, dependent controllers
 	// start only when Managed + Present + Compliant are all True.
 	if r.managementModeEnabled() && !r.config.ModeAccessor.AllowDependents() {
-		log.Info("management mode does not allow dependent controllers yet")
+		r.mu.Lock()
+		alreadyLogged := r.dependentsBlockedLogged
+		r.dependentsBlockedLogged = true
+		r.mu.Unlock()
+		if !alreadyLogged {
+			log.Info("management mode does not allow dependent controllers yet")
+		}
 		return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
 	}
+	r.mu.Lock()
+	r.dependentsBlockedLogged = false
+	r.mu.Unlock()
 
 	if established, err := r.allManagedCRDsEstablished(ctx); err != nil {
 		return reconcile.Result{}, err
