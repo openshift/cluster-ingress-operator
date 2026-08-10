@@ -2,7 +2,19 @@ language: en-US
 inheritance: true
 reviews:
   profile: chill
-  high_level_summary: false
+  high_level_summary: true
+  high_level_summary_instructions: |
+    At the end of your summary, if you encountered any non-obvious pattern,
+    constraint, naming convention, or architectural rule that is missing from
+    AGENTS.md or the .agents/ directory, append this exact block:
+
+    <!-- AGENTS_LEARNING
+    file: .agents/<context|architecture|controllers|dns|testing|rules|building>.md
+    learning: <one concise sentence describing what should be added>
+    -->
+
+    Only emit this block when the learning is specific and non-obvious —
+    not for things a Go developer would infer from reading the code.
   review_status: true
   commit_status: true
   collapse_walkthrough: true
@@ -20,17 +32,3 @@ reviews:
   path_filters:
   - "!**/vendor/**"
   - "!vendor/**"
-
-instructions: |
-  While reviewing, if you encounter a pattern, constraint, naming convention,
-  or architectural rule that is non-obvious and not already documented in
-  AGENTS.md or the .agents/ directory, append a section at the end of your
-  review summary in this exact format:
-
-  <!-- AGENTS_LEARNING
-  file: .agents/<context|architecture|controllers|dns|testing|rules|building>.md
-  learning: <one concise sentence describing what should be added>
-  -->
-
-  Only emit this block when the learning is specific and non-obvious —
-  not for things a Go developer would infer from reading the code.
