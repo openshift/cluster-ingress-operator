@@ -86,6 +86,24 @@ rules:
   - "*"
 
 - apiGroups:
+  - operator.openshift.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - operator.openshift.io
+  resources:
+  - ingresses/status
+  verbs:
+  - get
+  - update
+  - patch
+
+- apiGroups:
   - ingress.operator.openshift.io
   resources:
   - dnsrecords
@@ -191,6 +209,36 @@ rules:
   - gateways/status
   verbs:
   - patch
+  - update
+
+# The gatewayapi controller watches ValidatingAdmissionPolicies and their
+# bindings (list/watch, used by the informer) and creates the managed
+# policy/binding. RBAC does not support resourceNames on create/list/watch,
+# so these remain cluster-wide.
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingadmissionpolicies
+  - validatingadmissionpolicybindings
+  verbs:
+  - create
+  - list
+  - watch
+# Reads and mutations of the managed policy/binding are scoped by name to
+# the single CIO-managed ValidatingAdmissionPolicy (and its identically
+# named binding), so the operator cannot get/update/delete any other VAP.
+# Reads are cache-served, so get is never a live API call; it is scoped
+# here for defense in depth.
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingadmissionpolicies
+  - validatingadmissionpolicybindings
+  resourceNames:
+  - openshift-ingress-operator-gatewayapi-crd-admission
+  verbs:
+  - delete
+  - get
   - update
 
 - apiGroups:
