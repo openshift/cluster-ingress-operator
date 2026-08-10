@@ -1,4 +1,5 @@
 language: en-US
+inheritance: true
 reviews:
   profile: chill
   high_level_summary: false
@@ -20,3 +21,16 @@ reviews:
   - "!**/vendor/**"
   - "!vendor/**"
 
+instructions: |
+  While reviewing, if you encounter a pattern, constraint, naming convention,
+  or architectural rule that is non-obvious and not already documented in
+  AGENTS.md or the .agents/ directory, append a section at the end of your
+  review summary in this exact format:
+
+  <!-- AGENTS_LEARNING
+  file: .agents/<context|architecture|controllers|dns|testing|rules|building>.md
+  learning: <one concise sentence describing what should be added>
+  -->
+
+  Only emit this block when the learning is specific and non-obvious —
+  not for things a Go developer would infer from reading the code.
