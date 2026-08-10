@@ -174,9 +174,12 @@ ingress_operator_listenerset_on_managed_gateway{listenerset_name="test-ls",liste
 			informer := informertest.FakeInformers{Scheme: scheme}
 			fakeCache := ctrltestutil.FakeCache{Informers: &informer, Reader: cl}
 
+			testModeAccessor := operatorcontroller.NewModeAccessor(false)
+			testModeAccessor.SetCRDsEstablished(true)
 			r := &reconciler{
-				client: cl,
-				cache:  fakeCache,
+				client:       cl,
+				cache:        fakeCache,
+				modeAccessor: testModeAccessor,
 			}
 
 			_, err := r.Reconcile(context.Background(), request)

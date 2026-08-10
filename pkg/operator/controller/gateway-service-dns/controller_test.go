@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -263,12 +264,15 @@ func Test_Reconcile(t *testing.T) {
 			}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := testutil.FakeCache{Informers: &informer, Reader: cl}
+			testModeAccessor := operatorcontroller.NewModeAccessor(false)
+			testModeAccessor.SetCRDsEstablished(true)
 			reconciler := &reconciler{
 				config: Config{
 					OperandNamespace: "openshift-ingress",
 				},
-				cache:  cache,
-				client: cl,
+				cache:        cache,
+				client:       cl,
+				modeAccessor: testModeAccessor,
 			}
 			res, err := reconciler.Reconcile(context.Background(), tc.reconcileRequest)
 			if tc.expectError == "" {

@@ -14,6 +14,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -62,11 +64,12 @@ func RegisterMetrics() error {
 	return nil
 }
 
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	r := &reconciler{
-		client: mgr.GetClient(),
-		cache:  operatorCache,
+		client:       mgr.GetClient(),
+		cache:        operatorCache,
+		modeAccessor: modeAccessor,
 	}
 	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: r})
 	if err != nil {
@@ -88,7 +91,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.ListenerSet{}, &handler.EnqueueRequestForObject{}, listenerSetPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.ListenerSet{}, &handler.EnqueueRequestForObject{}, listenerSetPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("failed to watch ListenerSets: %w", err)
 	}
 
@@ -126,7 +129,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		DeleteFunc:  func(e event.DeleteEvent) bool { return gatewayHasOurController(e.Object) },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToListenerSets), gatewayPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToListenerSets), gatewayPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("failed to watch Gateways: %w", err)
 	}
 
@@ -159,16 +162,29 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		DeleteFunc:  func(e event.DeleteEvent) bool { return isOurGatewayClass(e.Object) },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(reconcileAllListenerSets), gatewayClassPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(reconcileAllListenerSets), gatewayClassPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("failed to watch GatewayClasses: %w", err)
+	}
+
+	// Watch the Ingress CR for mode changes. Any change to the Ingress
+	// CR triggers re-evaluation of all ListenerSets so that dependent
+	// controllers can start or stop processing when the management mode
+	// changes. Only register when the management mode gate is enabled
+	// because the Ingress CRD only exists on TechPreview/DevPreview clusters.
+	if modeAccessor.GateEnabled() {
+		ingressToListenerSets := operatorcontroller.IngressWakeUpMapper(operatorCache, &gatewayapiv1.ListenerSetList{})
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToListenerSets))); err != nil {
+			return nil, fmt.Errorf("failed to watch Ingress: %w", err)
+		}
 	}
 
 	return c, nil
 }
 
 type reconciler struct {
-	client client.Client
-	cache  cache.Cache
+	client       client.Client
+	cache        cache.Cache
+	modeAccessor *operatorcontroller.ModeAccessor
 }
 
 // Reconcile handles a single ListenerSet. It checks whether the
@@ -176,6 +192,10 @@ type reconciler struct {
 // Accepted=False if so.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "listenerset", request.NamespacedName)
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
+		return reconcile.Result{}, nil
+	}
 
 	ls := &gatewayapiv1.ListenerSet{}
 	if err := r.cache.Get(ctx, request.NamespacedName, ls); err != nil {

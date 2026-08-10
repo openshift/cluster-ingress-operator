@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,14 +47,15 @@ type reconciler struct {
 	// today we could read directly from client.Client because it is constructed
 	// without a Cache (see NewClient), but in case we decide to change the client
 	// to be cached, we want to still be able to read events directly from the API
-	eventreader client.Reader
+	eventreader  client.Reader
+	modeAccessor *operatorcontroller.ModeAccessor
 }
 
 // NewUnmanaged creates and returns a controller that adds watches for changes on
 // Services, DNSRecords and Gateways and when managed, adds the proper status
 // conditions to these Gateways.
 // This is an unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
 	// Create a dedicated cache for this controller to watch resources only in the
 	// "openshift-ingress" namespace. Using the operator's main cache would cause it
 	// to watch Gateways, Services, and DNSRecords in all namespaces, which would
@@ -91,9 +93,10 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	}
 
 	reconciler := &reconciler{
-		cache:       gatewaysCache,
-		client:      mgr.GetClient(),
-		eventreader: mgr.GetAPIReader(),
+		cache:        gatewaysCache,
+		client:       mgr.GetClient(),
+		eventreader:  mgr.GetAPIReader(),
+		modeAccessor: modeAccessor,
 	}
 	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -118,16 +121,30 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		return ok && gwName != ""
 	})
 
-	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, gatewayPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, gatewayPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing gateway watcher: %w", err)
 	}
 
-	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &corev1.Service{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &corev1.Service{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing service watcher: %w", err)
 	}
 
-	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &iov1.DNSRecord{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &iov1.DNSRecord{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing dnsrecord watcher: %w", err)
+	}
+
+	// Watch the Ingress CR for mode changes. Any change to the Ingress
+	// CR triggers re-evaluation of all gateways so that dependent
+	// controllers can start or stop processing when the management mode
+	// changes. Uses the operator's main cache (not gatewaysCache) because
+	// the Ingress CR is a cluster-scoped operator API resource. Only
+	// register when the management mode gate is enabled because the
+	// Ingress CRD only exists on TechPreview/DevPreview clusters.
+	if modeAccessor.GateEnabled() {
+		ingressToGateways := operatorcontroller.IngressWakeUpMapper(gatewaysCache, &gatewayapiv1.GatewayList{})
+		if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGateways))); err != nil {
+			return nil, fmt.Errorf("error initializing ingress watcher: %w", err)
+		}
 	}
 
 	return c, nil
@@ -144,6 +161,10 @@ func normalizeHostname(hostname string) string {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log := logger.WithValues("name", request.Name, "namespace", request.Namespace)
 	log.Info("Reconciling gateway")
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
+		return reconcile.Result{}, nil
+	}
 
 	sourceGateway := &gatewayapiv1.Gateway{}
 	if err := r.cache.Get(ctx, request.NamespacedName, sourceGateway); err != nil {

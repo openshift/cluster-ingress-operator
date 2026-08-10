@@ -234,6 +234,10 @@ type Config struct {
 	OperatorReleaseVersion          string
 	Namespace                       string
 	GatewayAPIOperatorVersion       string
+	// ModeAccessor provides read-only access to the Gateway API
+	// management mode transition state. May be nil when the
+	// management mode feature gate is disabled.
+	ModeAccessor *operatorcontroller.ModeAccessor
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
@@ -413,6 +417,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			r.config.OperatorReleaseVersion,
 			r.config.IngressControllerImage,
 			r.config.CanaryImage,
+			state.modeTransition,
 		),
 		computeOperatorDegradedCondition(state),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
@@ -488,6 +493,9 @@ type operatorState struct {
 	// shouldInstallOSSM reflects whether the ingress operator should install OSSM. Currently, this happens when a
 	// gateway class with Spec.ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName is created.
 	shouldInstallOSSM bool
+	// modeTransition holds the current Gateway API management mode
+	// transition state, populated from the shared ModeAccessor.
+	modeTransition operatorcontroller.TransitionState
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -607,6 +615,10 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 	// the ingress operator should try to install OSSM.
 	state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
 
+	if r.config.ModeAccessor != nil {
+		state.modeTransition = r.config.ModeAccessor.GetTransitionState()
+	}
+
 	return state, nil
 }
 
@@ -663,6 +675,7 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 		computeGatewayAPICRDsDegradedCondition,
 		computeGatewayAPIInstallDegradedCondition,
 		computeOrphanedSubscriptionCondition,
+		computeModeTransitionDegradedCondition,
 	} {
 		degradedCondition = joinConditions(degradedCondition, fn(state))
 	}
@@ -814,6 +827,24 @@ func computeOrphanedSubscriptionCondition(state operatorState) configv1.ClusterO
 	return degradedCondition
 }
 
+// computeModeTransitionDegradedCondition computes the Degraded condition
+// for a Gateway API management mode transition failure. It returns
+// Degraded=True with reason ReconciliationFailed when a required
+// transition operation has failed (e.g., VAP delete, Sail uninstall).
+func computeModeTransitionDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+	if !state.modeTransition.InProgress || state.modeTransition.Error == nil {
+		return degradedCondition
+	}
+	degradedCondition.Status = configv1.ConditionTrue
+	degradedCondition.Reason = "ReconciliationFailed"
+	degradedCondition.Message = fmt.Sprintf(
+		"Failed to transition Gateway API management mode to %s: %v",
+		state.modeTransition.Target, state.modeTransition.Error,
+	)
+	return degradedCondition
+}
+
 // computeOperatorUpgradeableCondition computes the operator's Upgradeable
 // status condition.
 func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
@@ -892,7 +923,7 @@ func computeOperatorEvaluationConditionsDetectedCondition(ingresses []operatorv1
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string, modeTransition operatorcontroller.TransitionState) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -900,6 +931,13 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 	progressing := false
 
 	var messages []string
+
+	// Check for an in-progress Gateway API management mode transition.
+	if modeTransition.InProgress && modeTransition.Error == nil {
+		msg := fmt.Sprintf("Transitioning Gateway API management mode to %s", modeTransition.Target)
+		messages = append(messages, msg)
+		progressing = true
+	}
 
 	for _, ic := range ingresscontrollers {
 		for _, c := range ic.Status.Conditions {

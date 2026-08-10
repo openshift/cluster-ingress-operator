@@ -3,8 +3,11 @@ package gateway_labeler
 import (
 	"context"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -32,7 +35,7 @@ var log = logf.Logger.WithName(controllerName)
 // The "istio.io/rev" label MUST be present on gateways in order for an
 // Istio control-plane deployed via the OSSM Operator to consider that
 // resource managed.
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
 	// Create a new cache for gateways so it can watch all namespaces.
 	// (Using the operator cache for gateways in all namespaces would cause
 	// it to cache other resources in all namespaces.)
@@ -46,9 +49,10 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	mgr.Add(gatewaysCache)
 
 	reconciler := &reconciler{
-		cache:    gatewaysCache,
-		client:   mgr.GetClient(),
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		cache:        gatewaysCache,
+		client:       mgr.GetClient(),
+		recorder:     mgr.GetEventRecorderFor(controllerName),
+		modeAccessor: modeAccessor,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -146,7 +150,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		},
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(gatewayClassToGateways), gatewayClassPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.GatewayClass{}, handler.EnqueueRequestsFromMapFunc(gatewayClassToGateways), gatewayClassPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
 
@@ -164,8 +168,20 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		},
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
-	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, gatewayPredicate)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, gatewayPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
+	}
+
+	// Watch the Ingress CR for mode changes. Any change to the Ingress
+	// CR triggers re-evaluation of all gateways so that dependent
+	// controllers can start or stop processing when the management mode
+	// changes. Only register when the management mode gate is enabled
+	// because the Ingress CRD only exists on TechPreview/DevPreview clusters.
+	if modeAccessor.GateEnabled() {
+		ingressToGateways := operatorcontroller.IngressWakeUpMapper(reconciler.cache, &gatewayapiv1.GatewayList{})
+		if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGateways))); err != nil {
+			return nil, err
+		}
 	}
 
 	return c, nil
@@ -173,15 +189,20 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 
 // reconciler reconciles gateways, adding the istio.io/rev label.
 type reconciler struct {
-	cache    cache.Cache
-	client   client.Client
-	recorder record.EventRecorder
+	cache        cache.Cache
+	client       client.Client
+	recorder     record.EventRecorder
+	modeAccessor *operatorcontroller.ModeAccessor
 }
 
 // Reconcile expects request to refer to a gateway and adds the istio.io/rev
 // label to it.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling gateway", "request", request)
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
+		return reconcile.Result{}, nil
+	}
 
 	var gateway gatewayapiv1.Gateway
 	if err := r.cache.Get(ctx, request.NamespacedName, &gateway); err != nil {

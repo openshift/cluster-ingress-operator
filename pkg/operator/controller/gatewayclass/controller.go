@@ -9,6 +9,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -113,22 +114,30 @@ var gatewayClassController controller.Controller
 
 // NewUnmanaged creates and returns a controller that watches gatewayclasses and
 // installs and configures Istio.  This is an unmanaged controller, which means
-// that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+// that the manager does not start it. It also returns a SailUninstaller that
+// the gatewayapi controller can use to trigger Sail uninstall on mode transitions.
+func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, operatorcontroller.SailUninstaller, error) {
 	operatorCache := mgr.GetCache()
 
 	reconciler := &reconciler{
-		config:   config,
-		client:   mgr.GetClient(),
-		cache:    operatorCache,
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		config:       config,
+		client:       mgr.GetClient(),
+		cache:        operatorCache,
+		recorder:     mgr.GetEventRecorderFor(controllerName),
+		modeAccessor: modeAccessor,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
 	c, err := controller.NewUnmanaged(controllerName, options)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	// dependentPred filters out watch events when the management mode
+	// does not allow dependent controllers to act. This prevents the
+	// gatewayclass controller from reacting to operational resource
+	// changes while in Unmanaged mode.
+	dependentPred := modeAccessor.DependentPredicate()
+
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
 		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
@@ -136,8 +145,8 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	notIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() != "istio"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurGatewayClass, notIstioGatewayClass)); err != nil {
-		return nil, err
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurGatewayClass, notIstioGatewayClass, dependentPred)); err != nil {
+		return nil, nil, err
 	}
 
 	isOurInstallPlan := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -167,16 +176,16 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return false
 		}
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
-		return nil, err
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd, dependentPred)); err != nil {
+		return nil, nil, err
 	}
 
 	// Watch for Proxy configuration to set the right options on Istio resource
 	isClusterProxy := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "cluster"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Proxy{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterProxy)); err != nil {
-		return nil, err
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Proxy{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterProxy, dependentPred)); err != nil {
+		return nil, nil, err
 	}
 
 	if !config.GatewayAPIWithoutOLMEnabled {
@@ -184,11 +193,11 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
 		})
 		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
-			reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
-			return nil, err
+			reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription, dependentPred)); err != nil {
+			return nil, nil, err
 		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, isInstallPlanReadyForApproval)); err != nil {
-			return nil, err
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, isInstallPlanReadyForApproval, dependentPred)); err != nil {
+			return nil, nil, err
 		}
 	} else {
 		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
@@ -198,11 +207,11 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			install.WithCRDOwnershipLabel(operatorcontroller.IngressOperatorOwnedAnnotation, "true"),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
+			return nil, nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
 		}
 		notifyCh, err := installer.Start(config.Context)
 		if err != nil {
-			return nil, fmt.Errorf("failed to start sail-operator installation library: %w", err)
+			return nil, nil, fmt.Errorf("failed to start sail-operator installation library: %w", err)
 		}
 		reconciler.sailInstaller = installer
 
@@ -231,18 +240,18 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 				return sub.Spec != nil && strings.HasPrefix(sub.Spec.Package, "servicemeshoperator")
 			})
 
-			if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, reconciler.enqueueRequestForCRDOwnershipChange(), isServiceMeshSubscription)); err != nil {
-				return nil, err
+			if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, reconciler.enqueueRequestForCRDOwnershipChange(), isServiceMeshSubscription, dependentPred)); err != nil {
+				return nil, nil, err
 			}
-			if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForCRDOwnershipChange(), isOurInstallPlan)); err != nil {
-				return nil, err
+			if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForCRDOwnershipChange(), isOurInstallPlan, dependentPred)); err != nil {
+				return nil, nil, err
 			}
 		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForCRDOwnershipChange(), isIstioCRD)); err != nil {
-			return nil, err
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForCRDOwnershipChange(), isIstioCRD, dependentPred)); err != nil {
+			return nil, nil, err
 		}
 		if err := c.Watch(&SailLibrarySource[client.Object]{NotifyCh: notifyCh, RequestsFunc: reconciler.requestsForAllManagedGatewayClasses}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Watch the istiod deployment so that when it becomes available,
@@ -251,23 +260,23 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		isIstiodDeployment := predicate.NewPredicateFuncs(func(o client.Object) bool {
 			return o.GetNamespace() == config.OperandNamespace && o.GetName() == "istiod-"+operatorcontroller.IstioName("").Name
 		})
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.Deployment{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodDeployment)); err != nil {
-			return nil, fmt.Errorf("failed to watch istiod deployment: %w", err)
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.Deployment{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodDeployment, dependentPred)); err != nil {
+			return nil, nil, fmt.Errorf("failed to watch istiod deployment: %w", err)
 		}
 	}
 
 	// Watch the cluster infrastructure config in case the infrastructure
 	// topology changes.
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
-		return nil, err
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass(), dependentPred)); err != nil {
+		return nil, nil, err
 	}
 
 	// Watch the cluster TLSProfile config for changes
 	isClusterAPIServerConfig := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "cluster"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.APIServer{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterAPIServerConfig)); err != nil {
-		return nil, err
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.APIServer{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterAPIServerConfig, dependentPred)); err != nil {
+		return nil, nil, err
 	}
 
 	// Watch the istiod network policy.
@@ -275,12 +284,26 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		istiodNetworkPolicyName := operatorcontroller.IstiodNetworkPolicyName()
 		return o.GetNamespace() == istiodNetworkPolicyName.Namespace && o.GetName() == istiodNetworkPolicyName.Name
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodNetworkPolicy)); err != nil {
-		return nil, err
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodNetworkPolicy, dependentPred)); err != nil {
+		return nil, nil, err
+	}
+
+	// Watch Ingress CR for mode changes (wake-up watch).
+	// When the management mode transitions from Unmanaged to Managed,
+	// this triggers re-reconciliation of all managed GatewayClasses.
+	// Only register when the management mode gate is enabled because
+	// the Ingress CRD only exists on TechPreview/DevPreview clusters.
+	if modeAccessor.GateEnabled() {
+		ingressToGatewayClasses := func(ctx context.Context, _ client.Object) []reconcile.Request {
+			return reconciler.requestsForAllManagedGatewayClasses(ctx, nil)
+		}
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGatewayClasses))); err != nil {
+			return nil, nil, fmt.Errorf("failed to watch Ingress for wake-up: %w", err)
+		}
 	}
 
 	gatewayClassController = c
-	return c, nil
+	return c, reconciler, nil
 }
 
 // Config holds all the configuration that must be provided when creating the
@@ -328,6 +351,11 @@ type reconciler struct {
 
 	// sailInstaller manages Istio control plane lifecycle (install, upgrade, uninstall) via the sail library.
 	sailInstaller SailLibraryInstaller
+
+	// modeAccessor provides thread-safe access to the resolved Gateway API
+	// management mode. When AllowDependents returns false, the reconciler
+	// skips Sail/OLM installation to prevent resource creation in Unmanaged mode.
+	modeAccessor *operatorcontroller.ModeAccessor
 }
 
 // enqueueRequestForCRDOwnershipChange handles events that may affect CRD ownership.
@@ -485,6 +513,14 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 		return reconcile.Result{}, nil // Removing the finalizer should kick a new reconciliation
 	}
 
+	// Skip OLM installation when the management mode does not allow
+	// dependents. The downgrade (Sail -> OLM) cleanup above still runs
+	// so that finalizer removal proceeds even in Unmanaged mode.
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependents, skipping OLM installation", "gatewayclass", gatewayclass.Name)
+		return reconcile.Result{}, nil
+	}
+
 	ossmCatalog := r.config.GatewayAPIOperatorCatalog
 	if v, ok := gatewayclass.Annotations[subscriptionCatalogOverrideAnnotationKey]; ok {
 		ossmCatalog = v
@@ -565,6 +601,14 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 
 	if !gatewayClass.DeletionTimestamp.IsZero() {
 		return r.ensureGatewayClassDeleted(ctx, gatewayClass)
+	}
+
+	// Skip Sail installation when the management mode does not allow
+	// dependents. Deletion handling above still runs so that finalizer
+	// cleanup proceeds even in Unmanaged mode.
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependents, skipping Sail installation", "gatewayclass", gatewayClass.Name)
+		return reconcile.Result{}, nil
 	}
 
 	updatedGatewayClass := gatewayClass.DeepCopy()
@@ -744,6 +788,16 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 		}
 	}
 	return reconcile.Result{}, nil
+}
+
+// UninstallSail removes the CIO-managed Istio instance. Called by the
+// gatewayapi controller when transitioning to Unmanaged mode.
+func (r *reconciler) UninstallSail(ctx context.Context) error {
+	// OLM path: sailInstaller is nil, nothing to uninstall
+	if r.sailInstaller == nil {
+		return nil
+	}
+	return r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name)
 }
 
 // SailLibrarySource bridges a Sail Library channel to a MapFunc logic.

@@ -3,6 +3,8 @@ package gatewaynetworkpolicy
 import (
 	"context"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -28,12 +30,13 @@ const (
 
 var log = logf.Logger.WithName(controllerName)
 
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client:       mgr.GetClient(),
 		cache:        operatorCache,
 		fieldIndexer: mgr.GetFieldIndexer(),
+		modeAccessor: modeAccessor,
 	}
 	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -45,12 +48,25 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	})
 
 	// watch gateways in ingress operand namespace
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, isOperandNamespace)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, isOperandNamespace, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
 	// watch network policies in ingress operand namespace
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForOwningGateway(), isOperandNamespace)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForOwningGateway(), isOperandNamespace, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
+	}
+
+	// Watch the Ingress CR for mode changes. Any change to the Ingress
+	// CR triggers re-evaluation of all gateways in the operand namespace
+	// so that dependent controllers can start or stop processing when
+	// the management mode changes. Only register when the management mode
+	// gate is enabled because the Ingress CRD only exists on
+	// TechPreview/DevPreview clusters.
+	if modeAccessor.GateEnabled() {
+		ingressToGateways := operatorcontroller.IngressWakeUpMapper(operatorCache, &gatewayapiv1.GatewayList{}, client.InNamespace(operatorcontroller.DefaultOperandNamespace))
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGateways))); err != nil {
+			return nil, err
+		}
 	}
 
 	return c, nil
@@ -77,10 +93,15 @@ type reconciler struct {
 	cache        cache.Cache
 	recorder     record.EventRecorder
 	fieldIndexer client.FieldIndexer
+	modeAccessor *operatorcontroller.ModeAccessor
 }
 
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling gateway", "request", request)
+	if !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
+		return reconcile.Result{}, nil
+	}
 
 	gateway := gatewayapiv1.Gateway{}
 	if err := r.cache.Get(ctx, request.NamespacedName, &gateway); err != nil {

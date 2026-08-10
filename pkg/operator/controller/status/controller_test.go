@@ -2,6 +2,7 @@ package status
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -10,6 +11,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -161,7 +163,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
 			}
 
-			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2, operatorcontroller.TransitionState{})
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 			}
@@ -1143,6 +1145,147 @@ func Test_compareVersionNums(t *testing.T) {
 				}
 				if result != tc.expectedResult {
 					t.Fatalf("actual result %d differs from expected result %d", result, tc.expectedResult)
+				}
+			}
+		})
+	}
+}
+
+func Test_computeModeTransitionDegradedCondition(t *testing.T) {
+	testCases := []struct {
+		description    string
+		modeTransition operatorcontroller.TransitionState
+		expectStatus   configv1.ConditionStatus
+		expectReason   string
+		expectMessage  string
+	}{
+		{
+			description:    "no transition in progress",
+			modeTransition: operatorcontroller.TransitionState{},
+			expectStatus:   "",
+		},
+		{
+			description: "transition in progress without error",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			},
+			expectStatus: "",
+		},
+		{
+			description: "transition to Unmanaged failed",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+				Error:      fmt.Errorf("cannot complete transition to Unmanaged, Sail uninstall failed: connection refused"),
+			},
+			expectStatus:  configv1.ConditionTrue,
+			expectReason:  "ReconciliationFailed",
+			expectMessage: "Failed to transition Gateway API management mode to Unmanaged: cannot complete transition to Unmanaged, Sail uninstall failed: connection refused",
+		},
+		{
+			description: "transition to Managed failed",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeManaged,
+				Error:      fmt.Errorf("failed to create ValidatingAdmissionPolicy: forbidden"),
+			},
+			expectStatus:  configv1.ConditionTrue,
+			expectReason:  "ReconciliationFailed",
+			expectMessage: "Failed to transition Gateway API management mode to Managed: failed to create ValidatingAdmissionPolicy: forbidden",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			state := operatorState{
+				modeTransition: tc.modeTransition,
+			}
+			actual := computeModeTransitionDegradedCondition(state)
+			if actual.Status != tc.expectStatus {
+				t.Errorf("expected status %q, got %q", tc.expectStatus, actual.Status)
+			}
+			if tc.expectReason != "" && actual.Reason != tc.expectReason {
+				t.Errorf("expected reason %q, got %q", tc.expectReason, actual.Reason)
+			}
+			if tc.expectMessage != "" && actual.Message != tc.expectMessage {
+				t.Errorf("expected message %q, got %q", tc.expectMessage, actual.Message)
+			}
+		})
+	}
+}
+
+func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
+	testCases := []struct {
+		description       string
+		modeTransition    operatorcontroller.TransitionState
+		expectProgressing configv1.ConditionStatus
+		expectInMessage   string
+	}{
+		{
+			description:       "no mode transition",
+			modeTransition:    operatorcontroller.TransitionState{},
+			expectProgressing: configv1.ConditionFalse,
+		},
+		{
+			description: "mode transition in progress to Unmanaged",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			},
+			expectProgressing: configv1.ConditionTrue,
+			expectInMessage:   "Transitioning Gateway API management mode to Unmanaged",
+		},
+		{
+			description: "mode transition in progress to Managed",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeManaged,
+			},
+			expectProgressing: configv1.ConditionTrue,
+			expectInMessage:   "Transitioning Gateway API management mode to Managed",
+		},
+		{
+			description: "mode transition with error does not set progressing",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+				Error:      fmt.Errorf("some error"),
+			},
+			expectProgressing: configv1.ConditionFalse,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ingresscontrollers := []operatorv1.IngressController{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "default"},
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{
+							{
+								Type:   operatorv1.OperatorStatusTypeAvailable,
+								Status: operatorv1.ConditionTrue,
+							},
+						},
+					},
+				},
+			}
+			versions := []configv1.OperandVersion{
+				{Name: OperatorVersionName, Version: "v1"},
+				{Name: IngressControllerVersionName, Version: "ic-v1"},
+				{Name: CanaryImageVersionName, Version: "c-v1"},
+			}
+			actual := computeOperatorProgressingCondition(
+				ingresscontrollers, true,
+				versions, versions,
+				"v1", "ic-v1", "c-v1",
+				tc.modeTransition,
+			)
+			if actual.Status != tc.expectProgressing {
+				t.Errorf("expected status %q, got %q", tc.expectProgressing, actual.Status)
+			}
+			if tc.expectInMessage != "" {
+				if !strings.Contains(actual.Message, tc.expectInMessage) {
+					t.Errorf("expected message to contain %q, got %q", tc.expectInMessage, actual.Message)
 				}
 			}
 		})

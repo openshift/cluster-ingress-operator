@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -69,6 +70,13 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}}
 	}
 
+	infraClusterPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), infraClusterPredicate)); err != nil {
+		return nil, err
+	}
+
 	isGatewayAPICRD := func(o client.Object) bool {
 		crd, ok := o.(*apiextensionsv1.CustomResourceDefinition)
 		return ok && crd.Spec.Group == gatewayapiv1.GroupName
@@ -100,6 +108,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	return c, nil
 }
 
+// SailUninstaller is a type alias for the shared SailUninstaller interface
+// defined in the operatorcontroller package.
+type SailUninstaller = operatorcontroller.SailUninstaller
+
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
@@ -112,6 +124,20 @@ type Config struct {
 	// GatewayAPIWithoutOLMEnabled indicates whether the GatewayAPIWithoutOLM
 	// feature gate is enabled, allowing Sail Library-based installation.
 	GatewayAPIWithoutOLMEnabled bool
+
+	// ModeAccessor is the shared mode accessor that this controller
+	// updates after computing CRD management conditions. May be nil
+	// when the management mode gate is disabled.
+	ModeAccessor *ModeAccessor
+
+	// OSSMVersion is the OpenShift Service Mesh version shipped by
+	// CIO. Used as a label on the gateway_api_info metric.
+	OSSMVersion string
+
+	// SailUninstaller is called to uninstall the CIO-managed Istio
+	// instance when transitioning to Unmanaged mode. May be nil when
+	// the Sail Library is not in use.
+	SailUninstaller SailUninstaller
 
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
@@ -131,19 +157,175 @@ type reconciler struct {
 	controllersStarted bool
 }
 
+// managementModeEnabled returns true when the GatewayAPIManagementMode
+// gate is enabled. It single-sources the flag through ModeAccessor.
+func (r *reconciler) managementModeEnabled() bool {
+	return r.config.ModeAccessor != nil && r.config.ModeAccessor.GateEnabled()
+}
+
+// ingressModeSnapshot captures the desired management mode from a
+// single Ingress CR read. All gate-ON decisions within one reconcile
+// pass use this snapshot to prevent TOCTOU divergence between VAP
+// transition and status/mode-accessor updates.
+type ingressModeSnapshot struct {
+	// desiredMode is the resolved desired management mode.
+	desiredMode operatorv1alpha1.GatewayAPIManagementMode
+	// ingress is the Ingress CR object (nil when NotFound).
+	ingress *operatorv1alpha1.Ingress
+	// found indicates whether the Ingress CR was found on the API
+	// server. When false, mode defaults to Managed and status writes
+	// are skipped.
+	found bool
+}
+
+// resolveIngressModeSnapshot performs the single authoritative read of
+// the Ingress CR for the gate-ON reconcile path.
+//
+// Forbidden → returns error (fail-closed; no ownership actions taken).
+// NotFound  → returns snapshot with desiredMode=Managed and found=false.
+// Success   → returns snapshot with the spec's mode and the live object.
+func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressModeSnapshot, error) {
+	ingress := &operatorv1alpha1.Ingress{}
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, ingress); err != nil {
+		if errors.IsForbidden(err) {
+			log.Info("Ingress CR access forbidden, treating ownership as unknown — will requeue", "error", err)
+			return ingressModeSnapshot{}, fmt.Errorf("Ingress CR access forbidden, cannot determine management mode: %w", err)
+		}
+		if errors.IsNotFound(err) {
+			log.Info("Ingress CR not found, defaulting to Managed mode")
+			return ingressModeSnapshot{
+				desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+				ingress:     nil,
+				found:       false,
+			}, nil
+		}
+		return ingressModeSnapshot{}, fmt.Errorf("failed to get Ingress CR: %w", err)
+	}
+
+	desiredMode := ingress.Spec.GatewayAPI.ManagementMode
+	if desiredMode == "" {
+		desiredMode = operatorv1alpha1.GatewayAPIManagementModeManaged
+	}
+	return ingressModeSnapshot{
+		desiredMode: desiredMode,
+		ingress:     ingress,
+		found:       true,
+	}, nil
+}
+
 // Reconcile expects request to refer to a FeatureGate and creates or
 // reconciles the Gateway API CRDs.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
-		return reconcile.Result{}, err
+	// managementModeRequeue is the periodic requeue interval used when
+	// the management mode gate is ON. Because the Ingress CR is read
+	// via direct Get (no informer), we requeue periodically so that
+	// mode changes are eventually observed.
+	const managementModeRequeue = 30 * time.Second
+
+	if r.managementModeEnabled() {
+		// Read the Ingress CR exactly once for the entire gate-ON
+		// path so that VAP transition, status, and ShouldManageCRDs
+		// decisions all observe the same mode snapshot.
+		snapshot, err := r.resolveIngressModeSnapshot(ctx)
+		if err != nil {
+			// Clear any stale transition state from a prior reconcile
+			// so that the status controller does not report a stuck
+			// Progressing=True condition.
+			r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{})
+			return reconcile.Result{}, err
+		}
+
+		// Only signal a mode transition when the desired mode
+		// actually differs from the last successfully applied mode.
+		// Without this guard, every periodic requeue (30s) would set
+		// InProgress=true, causing ClusterOperator Progressing=True
+		// flaps that block upgrades and fire alerts.
+		lastApplied := r.config.ModeAccessor.GetLastAppliedMode()
+		modeChanged := lastApplied == nil || *lastApplied != snapshot.desiredMode
+		if modeChanged {
+			r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     snapshot.desiredMode,
+			})
+		}
+
+		// Phase 3: delete VAP+binding BEFORE computing Unmanaged
+		// status, so the Managed=False/Unmanaged condition is only
+		// written after the admission policy is removed.
+		// Only run transition operations (Sail uninstall, VAP delete)
+		// when the mode actually changed. In steady-state Unmanaged,
+		// these operations already completed on a prior reconcile and
+		// repeating them every 30s wastes resources.
+		if modeChanged {
+			if err := r.reconcileAdmissionPolicyTransition(ctx, snapshot); err != nil {
+				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+					InProgress: true,
+					Target:     snapshot.desiredMode,
+					Error:      err,
+				})
+				return reconcile.Result{}, err
+			}
+		}
+
+		// Phase 2: resolve desired mode BEFORE mutating CRDs/RBAC so
+		// that Unmanaged or TakeoverBlocked states skip ensure.
+		if err := r.reconcileIngressStatus(ctx, snapshot); err != nil {
+			r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     snapshot.desiredMode,
+				Error:      err,
+			})
+			return reconcile.Result{}, err
+		}
+
+		// Only create/update CRDs and their aggregated RBAC when the
+		// resolved mode is Managed (not Unmanaged, not TakeoverBlocked).
+		if r.config.ModeAccessor.ShouldManageCRDs() {
+			if err := r.ensureAdmissionPolicy(ctx); err != nil {
+				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+					InProgress: true,
+					Target:     snapshot.desiredMode,
+					Error:      err,
+				})
+				return reconcile.Result{}, err
+			}
+			if err := r.ensureGatewayAPICRDs(ctx); err != nil {
+				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+					InProgress: true,
+					Target:     snapshot.desiredMode,
+					Error:      err,
+				})
+				return reconcile.Result{}, err
+			}
+			if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
+				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+					InProgress: true,
+					Target:     snapshot.desiredMode,
+					Error:      err,
+				})
+				return reconcile.Result{}, err
+			}
+		}
+
+		// All transition operations completed successfully.
+		// Record the applied mode so subsequent steady-state reconciles
+		// skip setting InProgress, then clear the transition state.
+		r.config.ModeAccessor.SetLastAppliedMode(snapshot.desiredMode)
+		r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{})
+	} else {
+		// Gate OFF: preserve legacy always-ensure behavior.
+		if err := r.ensureGatewayAPICRDs(ctx); err != nil {
+			return reconcile.Result{}, err
+		}
+		if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
-	if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
-		return reconcile.Result{}, err
-	}
-
+	// Always observe unmanaged CRDs for ClusterOperator extension
+	// status, regardless of management mode.
 	if crdNames, err := r.listUnmanagedGatewayAPICRDs(ctx); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list unmanaged gateway CRDs: %w", err)
 	} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
@@ -159,7 +341,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	useOLM := r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled
 	useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 	if !useOLM && !useSailLibrary {
+		if r.managementModeEnabled() {
+			return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
+		}
 		return reconcile.Result{}, nil
+	}
+
+	// When the management mode gate is enabled, dependent controllers
+	// start only when Managed + Present + Compliant are all True.
+	if r.managementModeEnabled() && !r.config.ModeAccessor.AllowDependents() {
+		log.Info("management mode does not allow dependent controllers yet")
+		return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
 	}
 
 	if established, err := r.allManagedCRDsEstablished(ctx); err != nil {
@@ -168,11 +360,20 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	// Update the mode accessor for the legacy (gate-off) path so
+	// that AllowDependents reflects CRD establishment.
+	if r.config.ModeAccessor != nil && !r.config.ModeAccessor.GateEnabled() {
+		r.config.ModeAccessor.SetCRDsEstablished(true)
+	}
+
 	if err := r.ensureDependentControllers(ctx); err != nil {
 		log.Error(err, "failed to ensure dependent controllers, will retry")
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
+	if r.managementModeEnabled() {
+		return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
+	}
 	return reconcile.Result{}, nil
 }
 

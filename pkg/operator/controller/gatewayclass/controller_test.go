@@ -955,6 +955,10 @@ func Test_Reconcile(t *testing.T) {
 			}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+			// Create a ModeAccessor with gate disabled and CRDs established
+			// so that AllowDependents returns true for tests.
+			testModeAccessor := operatorcontroller.NewModeAccessor(false)
+			testModeAccessor.SetCRDsEstablished(true)
 			reconciler := &reconciler{
 				client: cl,
 				cache:  cache,
@@ -966,6 +970,7 @@ func Test_Reconcile(t *testing.T) {
 					GatewayAPIOperatorVersion: "servicemeshoperator3.v3.0.1",
 					IstioVersion:              "v1.24.4",
 				},
+				modeAccessor: testModeAccessor,
 			}
 			if tc.fakeSailInstaller != nil {
 				reconciler.config.GatewayAPIWithoutOLMEnabled = true

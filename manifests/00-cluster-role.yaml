@@ -86,6 +86,24 @@ rules:
   - "*"
 
 - apiGroups:
+  - operator.openshift.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - operator.openshift.io
+  resources:
+  - ingresses/status
+  verbs:
+  - get
+  - update
+  - patch
+
+- apiGroups:
   - ingress.operator.openshift.io
   resources:
   - dnsrecords
@@ -190,6 +208,18 @@ rules:
   resources:
   - gateways/status
   verbs:
+  - patch
+  - update
+
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingadmissionpolicies
+  - validatingadmissionpolicybindings
+  verbs:
+  - create
+  - delete
+  - get
   - patch
   - update
 
