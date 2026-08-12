@@ -53,6 +53,15 @@ func TestCanaryCertificateDependencyEvents(t *testing.T) {
 			expected: operatorcontroller.CanaryDaemonSetName(),
 			matches:  isCanaryDaemonSetDependency,
 		},
+		{
+			description: "canary certificate",
+			object: &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+				Namespace: operatorcontroller.CanaryCertificateName().Namespace,
+				Name:      operatorcontroller.CanaryCertificateName().Name,
+			}},
+			expected: operatorcontroller.CanaryCertificateName(),
+			matches:  isCanaryCertificate,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -81,6 +90,10 @@ func TestCanaryCertificateDependencyPredicatesRejectUnrelatedObjects(t *testing.
 		{
 			object:  &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.CanaryDaemonSetName().Namespace, Name: "unrelated"}},
 			matches: isCanaryDaemonSetDependency,
+		},
+		{
+			object:  &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "unrelated", Name: operatorcontroller.CanaryCertificateName().Name}},
+			matches: isCanaryCertificate,
 		},
 		{
 			object: &operatorv1.IngressController{ObjectMeta: metav1.ObjectMeta{Namespace: operatorNamespace, Name: "unrelated"}},

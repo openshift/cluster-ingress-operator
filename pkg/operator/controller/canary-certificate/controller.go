@@ -69,9 +69,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 	// Watch for updates on the canary's certificate.
-	isCanaryCert := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == operatorcontroller.CanaryCertificateName().Name && o.GetNamespace() == operatorcontroller.CanaryCertificateName().Namespace
-	})
+	isCanaryCert := predicate.NewPredicateFuncs(isCanaryCertificate)
 	// Also watch for updates on the default ingress controller's certificate.
 	// Because the default ingress controller's certificate name can be set at
 	// runtime, a Get() needs to be done to determine the correct certificate.
@@ -132,6 +130,10 @@ func toCanaryCertificate(_ context.Context, _ client.Object) []reconcile.Request
 // and name.
 func hasNamespacedName(o client.Object, name types.NamespacedName) bool {
 	return o.GetNamespace() == name.Namespace && o.GetName() == name.Name
+}
+
+func isCanaryCertificate(o client.Object) bool {
+	return hasNamespacedName(o, operatorcontroller.CanaryCertificateName())
 }
 
 func isDefaultIngressControllerDependency(o client.Object, operatorNamespace string) bool {
