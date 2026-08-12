@@ -84,7 +84,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}
 		defaultIC := &operatorv1.IngressController{}
 		if err := reconciler.client.Get(context.Background(), defaultICName, defaultIC); err != nil {
-			log.Error(err, "Failed to get default IngressController")
+			if !errors.IsNotFound(err) {
+				log.Error(err, "Failed to get default IngressController", "namespace", defaultICName.Namespace, "name", defaultICName.Name)
+			}
 			return false
 		}
 
