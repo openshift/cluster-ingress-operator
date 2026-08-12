@@ -54,8 +54,9 @@ type reconciler struct {
 // New creates the canary certificate controller
 //
 // The canary certificate controller mirrors the default ingress controller's
-// certificate into the canary's namespace. It watches the canary's certificate
-// and the default ingress controller's certificate.
+// certificate into the canary's namespace. It watches the canary's certificate,
+// the default ingress controller's certificate, and the other resources that
+// reconciliation depends on.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
@@ -95,13 +96,53 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	})
 	// Regardless of which certificate changed, this controller only has one
 	// reconcile target: the canary certificate's secret.
-	enqueueRequestForCanaryCertificate := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, a client.Object) []reconcile.Request {
-		return []reconcile.Request{{NamespacedName: operatorcontroller.CanaryCertificateName()}}
-	})
+	enqueueRequestForCanaryCertificate := handler.EnqueueRequestsFromMapFunc(toCanaryCertificate)
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Secret{}, enqueueRequestForCanaryCertificate, predicate.Or(isCanaryCert, isDefaultIngressCert))); err != nil {
 		return nil, err
 	}
+
+	// The certificate Secret can be observed before the default IngressController
+	// exists. Watch the IngressController so that dependency creation order cannot
+	// permanently discard that Secret event. Generation filtering avoids
+	// reconciling on status-only updates.
+	isDefaultIngressController := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return isDefaultIngressControllerDependency(o, config.OperatorNamespace)
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, enqueueRequestForCanaryCertificate, predicate.And(isDefaultIngressController, predicate.GenerationChangedPredicate{}))); err != nil {
+		return nil, err
+	}
+
+	// The canary DaemonSet supplies the certificate's controller owner reference.
+	// Its creation or replacement must also retry reconciliation independently of
+	// controller-runtime's rate-limited error retry.
+	isCanaryDaemonSet := predicate.NewPredicateFuncs(isCanaryDaemonSetDependency)
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.DaemonSet{}, enqueueRequestForCanaryCertificate, predicate.And(isCanaryDaemonSet, predicate.GenerationChangedPredicate{}))); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// toCanaryCertificate maps any relevant dependency event to the controller's
+// single reconciliation target.
+func toCanaryCertificate(_ context.Context, _ client.Object) []reconcile.Request {
+	return []reconcile.Request{{NamespacedName: operatorcontroller.CanaryCertificateName()}}
+}
+
+// hasNamespacedName returns true if the given object has the given namespace
+// and name.
+func hasNamespacedName(o client.Object, name types.NamespacedName) bool {
+	return o.GetNamespace() == name.Namespace && o.GetName() == name.Name
+}
+
+func isDefaultIngressControllerDependency(o client.Object, operatorNamespace string) bool {
+	return hasNamespacedName(o, types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      manifests.DefaultIngressControllerName,
+	})
+}
+
+func isCanaryDaemonSetDependency(o client.Object) bool {
+	return hasNamespacedName(o, operatorcontroller.CanaryDaemonSetName())
 }
 
 // Reconcile ensures the canary's certificate mirrors the default ingress
