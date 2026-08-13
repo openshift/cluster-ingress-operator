@@ -38,7 +38,11 @@ cluster-build:
 generate: manifests
 
 .PHONY: update
-update: crd
+update: crd sail-rbac
+
+.PHONY: sail-rbac
+sail-rbac:
+	hack/update-sail-rbac.sh
 
 # Generate CRDs from vendored and internal API specs.
 .PHONY: crd
@@ -93,6 +97,7 @@ verify: generate
 	hack/verify-profile-manifests.sh
 	hack/verify-deps.sh
 	hack/verify-e2e-test-all-presence.sh
+	hack/verify-sail-rbac.sh
 
 .PHONY: uninstall
 uninstall:
