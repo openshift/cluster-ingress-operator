@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	netutils "k8s.io/utils/net"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -605,7 +606,18 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		if lb != nil && len(lb.AllowedSourceRanges) > 0 {
 			cidrs := make([]string, len(lb.AllowedSourceRanges))
 			for i, cidr := range lb.AllowedSourceRanges {
-				cidrs[i] = string(cidr)
+				_, ipNet, err := netutils.ParseCIDRSloppy(string(cidr)) // check if CIDR is valid
+				if err != nil {
+					log.Error(err, "invalid CIDR", "cidr", string(cidr))
+					cidrs[i] = string(cidr)
+				} else {
+					cidrs[i] = ipNet.String() //Normalizing the Inputted CIDR
+					if string(cidr) != ipNet.String() {
+						log.Info("normalizing malformed CIDR", "original", string(cidr), "normalized", ipNet.String())
+					}
+
+				}
+
 			}
 			service.Spec.LoadBalancerSourceRanges = cidrs
 		}
