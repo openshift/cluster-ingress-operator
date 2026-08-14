@@ -1784,11 +1784,32 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 			expectChanged:                    true,
 		},
 		{
+			name:                             "non-canonical CIDR is idempotent (no reconcile churn)",
+			allowedSourceRanges:              []operatorv1.CIDR{"3dee:ef5::/12"},
+			currentLoadBalancerSourceRanges:  []string{"3de0::/12"}, // already normalized from a prior reconcile
+			expectedLoadBalancerSourceRanges: []string{"3de0::/12"},
+			expectChanged:                    false,
+		},
+		{
 			name:                             "test leading zero malformed CIDR",
 			allowedSourceRanges:              []operatorv1.CIDR{"011.3.1.0/16"},
 			currentLoadBalancerSourceRanges:  []string{"3de0::/12"},
 			expectedLoadBalancerSourceRanges: []string{"11.3.0.0/16"},
 			expectChanged:                    true,
+		},
+		{
+			name:                             "change to a regular CIDR",
+			allowedSourceRanges:              []operatorv1.CIDR{"10.0.0.0/8"},
+			currentLoadBalancerSourceRanges:  []string{"3de0::/12"},
+			expectedLoadBalancerSourceRanges: []string{"10.0.0.0/8"},
+			expectChanged:                    true,
+		},
+		{
+			name:                             "canonical CIDR passes through unchanged",
+			allowedSourceRanges:              []operatorv1.CIDR{"10.0.0.0/8"},
+			currentLoadBalancerSourceRanges:  []string{"10.0.0.0/8"},
+			expectedLoadBalancerSourceRanges: []string{"10.0.0.0/8"},
+			expectChanged:                    false,
 		},
 		{
 			name:                             "loadBalancerSourceRanges is different from allowedSourceRanges and annotation is not set",
