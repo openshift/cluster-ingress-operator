@@ -1777,6 +1777,20 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 			expectChanged:                    false,
 		},
 		{
+			name:                             "test malformed CIDRs",
+			allowedSourceRanges:              []operatorv1.CIDR{"3dee:ef5::/12"},
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"3de0::/12"},
+			expectChanged:                    true,
+		},
+		{
+			name:                             "test leading zero malformed CIDR",
+			allowedSourceRanges:              []operatorv1.CIDR{"011.3.1.0/16"},
+			currentLoadBalancerSourceRanges:  []string{"3de0::/12"},
+			expectedLoadBalancerSourceRanges: []string{"11.3.0.0/16"},
+			expectChanged:                    true,
+		},
+		{
 			name:                             "loadBalancerSourceRanges is different from allowedSourceRanges and annotation is not set",
 			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
 			currentLoadBalancerSourceRanges:  []string{"foo"},
