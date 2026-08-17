@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -18,6 +19,8 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -69,6 +72,70 @@ func (i *fakeSailInstaller) Status() install.Status {
 }
 
 func (i *fakeSailInstaller) Enqueue() {}
+
+// TestEnsureIstio_UninstallSail_ConcurrentSafety is a regression test for
+// a race between ensureIstio's Apply() call (driven by the gatewayclass
+// controller's own watches) and UninstallSail's Uninstall() call (driven
+// by the gatewayapi controller when transitioning to Unmanaged). These
+// run on independent goroutines with no synchronization other than
+// sailLifecycleMu.
+//
+// With AllowDependents()==false (steady-state Unmanaged), ensureIstio
+// must never call Apply(), no matter how it interleaves with concurrent
+// UninstallSail calls. fakeSailInstaller has no internal synchronization
+// of its own, so if sailLifecycleMu were missing or incorrectly scoped,
+// concurrent access to its fields would also be caught by `go test -race`.
+func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, configv1.Install(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+
+	installer := &fakeSailInstaller{}
+	modeAccessor := operatorcontroller.NewModeAccessor(true)
+	// managed=false => AllowDependents() is false, simulating
+	// steady-state Unmanaged.
+	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
+
+	r := &reconciler{
+		client:        fakeClient,
+		cache:         fakeCache,
+		sailInstaller: installer,
+		modeAccessor:  modeAccessor,
+		config:        Config{OperandNamespace: "test-ns"},
+	}
+
+	const iterations = 100
+	errs := make(chan error, iterations*2)
+	var wg sync.WaitGroup
+	wg.Add(iterations * 2)
+	for i := 0; i < iterations; i++ {
+		go func() {
+			defer wg.Done()
+			if err := r.ensureIstio(context.Background(), "v1.0", nil, &configv1.Infrastructure{}); err != nil {
+				errs <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := r.UninstallSail(context.Background()); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err, "ensureIstio/UninstallSail must not error in this fixture")
+	}
+	assert.False(t, installer.status.Installed,
+		"Apply must never install while AllowDependents is false, even under concurrent access")
+	assert.True(t, installer.uninstallCalled, "UninstallSail should have been called")
+}
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 	crd := func(name string, labels map[string]string) *apiextensionsv1.CustomResourceDefinition {

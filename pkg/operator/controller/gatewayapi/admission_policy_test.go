@@ -1140,10 +1140,17 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 type fakeSailUninstaller struct {
 	called bool
 	err    error
+	// onUninstall, if set, is invoked synchronously before UninstallSail
+	// returns, letting tests observe state (e.g. ModeAccessor) exactly
+	// at the moment the uninstall happens.
+	onUninstall func()
 }
 
 func (f *fakeSailUninstaller) UninstallSail(_ context.Context) error {
 	f.called = true
+	if f.onUninstall != nil {
+		f.onUninstall()
+	}
 	return f.err
 }
 

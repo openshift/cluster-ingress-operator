@@ -175,6 +175,18 @@ func (m *ModeAccessor) Update(desired operatorv1alpha1.GatewayAPIManagementMode,
 	m.compliant = compliant
 }
 
+// BlockDependents immediately sets managed=false so that AllowDependents
+// returns false right away, ahead of the full Update() call later in the
+// same reconcile that computes present/compliant. Used when transitioning
+// to Unmanaged to close the window between beginning Sail uninstall and a
+// concurrently in-flight gatewayclass reconcile that may still observe
+// AllowDependents()==true.
+func (m *ModeAccessor) BlockDependents() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.managed = false
+}
+
 // SetTransitionState is called by the gatewayapi reconciler to signal
 // mode transition progress. The status controller reads this to
 // compute ClusterOperator Progressing and Degraded conditions.

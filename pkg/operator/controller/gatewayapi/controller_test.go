@@ -580,8 +580,8 @@ func TestReconcile_Unmanaged_SkipsCRDAndRBAC(t *testing.T) {
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
 	res, err := r.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
-	assert.Equal(t, reconcile.Result{RequeueAfter: 30 * time.Second}, res,
-		"Unmanaged gate-ON path must requeue after 30s")
+	assert.Equal(t, reconcile.Result{}, res,
+		"Unmanaged gate-ON path must not requeue; watches on Ingress CR/CRDs/VAP/ClusterRoles trigger the next reconcile")
 
 	assert.False(t, modeAccessor.ShouldManageCRDs(), "Unmanaged mode must not manage CRDs")
 	assert.Empty(t, cl.Added, "no CRDs or ClusterRoles should be created when Unmanaged")
@@ -659,8 +659,8 @@ func TestReconcile_TakeoverBlocked_SkipsCRDAndRBAC(t *testing.T) {
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
 	res, err := r.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
-	assert.Equal(t, reconcile.Result{RequeueAfter: 30 * time.Second}, res,
-		"TakeoverBlocked gate-ON path must requeue after 30s")
+	assert.Equal(t, reconcile.Result{}, res,
+		"TakeoverBlocked gate-ON path must not requeue; watches on Ingress CR/CRDs/VAP/ClusterRoles trigger the next reconcile")
 
 	assert.False(t, modeAccessor.ShouldManageCRDs(), "TakeoverBlocked must not manage CRDs")
 	assert.Empty(t, cl.Added, "no CRDs should be created when TakeoverBlocked")
@@ -893,8 +893,8 @@ func TestReconcile_ManagedAndAbsent_InstallsCRDs(t *testing.T) {
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
 	res, err := r.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
-	assert.Equal(t, reconcile.Result{RequeueAfter: 30 * time.Second}, res,
-		"gate-ON Managed happy path must requeue after 30s")
+	assert.Equal(t, reconcile.Result{}, res,
+		"gate-ON Managed happy path must not requeue; the CRD watch triggers the next reconcile once CRDs become present/compliant")
 
 	assert.True(t, modeAccessor.ShouldManageCRDs(), "Managed + absent must allow CRD management")
 	var crdCount, rbacCount int
@@ -1485,7 +1485,19 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 		})).
 		Build()
 
-	uninstaller := &fakeSailUninstaller{}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+	modeAccessor := NewModeAccessor(true)
+
+	var allowDependentsAtUninstallTime bool
+	uninstaller := &fakeSailUninstaller{
+		onUninstall: func() {
+			// Capture AllowDependents() exactly when UninstallSail is
+			// invoked, to verify BlockDependents flipped the gate
+			// before this call, not after.
+			allowDependentsAtUninstallTime = modeAccessor.AllowDependents()
+		},
+	}
 	cl := &testutil.FakeClientRecorder{
 		Client:  fakeClient,
 		T:       t,
@@ -1497,9 +1509,6 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 		},
 	}
 
-	informer := informertest.FakeInformers{Scheme: scheme}
-	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -1518,6 +1527,9 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
 	assert.True(t, uninstaller.called, "UninstallSail must be called on first Unmanaged reconcile")
+	assert.False(t, allowDependentsAtUninstallTime,
+		"BlockDependents must flip AllowDependents to false before UninstallSail is called, "+
+			"closing the race window against a concurrently in-flight gatewayclass reconcile")
 	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged, *modeAccessor.GetLastAppliedMode())
 
 	// Reset the uninstaller tracking for the second reconcile.

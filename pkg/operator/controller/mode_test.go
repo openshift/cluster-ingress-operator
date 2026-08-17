@@ -48,6 +48,51 @@ func TestModeAccessor_LastAppliedMode(t *testing.T) {
 	})
 }
 
+func TestModeAccessor_BlockDependents(t *testing.T) {
+	t.Run("immediately makes AllowDependents false", func(t *testing.T) {
+		m := NewModeAccessor(true)
+		m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+		require.True(t, m.AllowDependents(),
+			"precondition: AllowDependents must be true after a fully Managed Update")
+
+		m.BlockDependents()
+
+		assert.False(t, m.AllowDependents(),
+			"AllowDependents must be false immediately after BlockDependents")
+	})
+
+	t.Run("does not touch present or compliant", func(t *testing.T) {
+		m := NewModeAccessor(true)
+		m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+
+		m.BlockDependents()
+
+		m.mu.RLock()
+		present, compliant := m.present, m.compliant
+		m.mu.RUnlock()
+		assert.True(t, present, "present must be unaffected by BlockDependents")
+		assert.True(t, compliant, "compliant must be unaffected by BlockDependents")
+
+		// Restoring managed=true should make AllowDependents true again,
+		// confirming present/compliant were never actually cleared.
+		m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+		assert.True(t, m.AllowDependents(),
+			"present/compliant must be unaffected by BlockDependents")
+	})
+
+	t.Run("no-op on gate-off accessor", func(t *testing.T) {
+		m := NewModeAccessor(false)
+		m.SetCRDsEstablished(true)
+		require.True(t, m.AllowDependents(),
+			"precondition: gate-off AllowDependents tracks crdsEstablished only")
+
+		m.BlockDependents()
+
+		assert.True(t, m.AllowDependents(),
+			"BlockDependents must not affect the gate-off (legacy) path, which ignores managed")
+	})
+}
+
 func TestIngressWakeUpMapper_ConcurrentSafety(t *testing.T) {
 	// Regression test: verifies that concurrent invocations of the
 	// MapFunc returned by IngressWakeUpMapper do not race on the
@@ -71,10 +116,12 @@ func TestIngressWakeUpMapper_ConcurrentSafety(t *testing.T) {
 
 	mapper := IngressWakeUpMapper(fakeClient, func() client.ObjectList { return &corev1.PodList{} })
 
+	expectedNames := map[string]bool{"pod1": true, "pod2": true, "pod3": true}
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	const concurrency = 10
-	var nilCount int
+	var incompleteCount int
 	wg.Add(concurrency)
 
 	for i := 0; i < concurrency; i++ {
@@ -82,9 +129,22 @@ func TestIngressWakeUpMapper_ConcurrentSafety(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				result := mapper(context.Background(), nil)
-				if result == nil {
+				complete := len(result) == len(expectedNames)
+				if complete {
+					seen := map[string]bool{}
+					for _, req := range result {
+						seen[req.Name] = true
+					}
+					for name := range expectedNames {
+						if !seen[name] {
+							complete = false
+							break
+						}
+					}
+				}
+				if !complete {
 					mu.Lock()
-					nilCount++
+					incompleteCount++
 					mu.Unlock()
 					return
 				}
@@ -95,5 +155,5 @@ func TestIngressWakeUpMapper_ConcurrentSafety(t *testing.T) {
 	wg.Wait()
 
 	// Assert from main goroutine after all workers complete
-	require.Equal(t, 0, nilCount, "mapper returned nil %d times", nilCount)
+	require.Equal(t, 0, incompleteCount, "mapper returned an incomplete/nil result %d times", incompleteCount)
 }

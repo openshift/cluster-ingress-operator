@@ -15,9 +15,12 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -81,8 +84,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	// Watch the Ingress CR so that management mode changes (and status
-	// updates such as Present/Compliant) are observed reactively instead
-	// of only being picked up by the periodic managementModeRequeue poll.
+	// updates such as Present/Compliant) are observed reactively.
 	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "cluster"
 	})
@@ -99,6 +101,37 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// watch for CRDs
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
 		return nil, fmt.Errorf("failed to watch CRDs: %w", err)
+	}
+
+	// Watch the ValidatingAdmissionPolicy, its binding, and the
+	// aggregated ClusterRoles so that external drift on these
+	// unmanaged-elsewhere resources is corrected reactively instead of
+	// relying on a periodic poll. Together with the Ingress CR and CRD
+	// watches above, every resource this controller ensures is now
+	// watched, so no blind periodic requeue is needed.
+	isGatewayAPIVAP := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == baseAdmissionPolicy.Name
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &admissionregistrationv1.ValidatingAdmissionPolicy{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isGatewayAPIVAP)); err != nil {
+		return nil, fmt.Errorf("failed to watch ValidatingAdmissionPolicy: %w", err)
+	}
+
+	isGatewayAPIVAPBinding := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == desiredAdmissionPolicyBinding.Name
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isGatewayAPIVAPBinding)); err != nil {
+		return nil, fmt.Errorf("failed to watch ValidatingAdmissionPolicyBinding: %w", err)
+	}
+
+	managedClusterRoleNames := sets.New[string]()
+	for _, cr := range managedClusterRoles {
+		managedClusterRoleNames.Insert(cr.Name)
+	}
+	isGatewayAPIClusterRole := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return managedClusterRoleNames.Has(o.GetName())
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &rbacv1.ClusterRole{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isGatewayAPIClusterRole)); err != nil {
+		return nil, fmt.Errorf("failed to watch ClusterRoles: %w", err)
 	}
 
 	// Index unmanaged Gateway API CRDs to enable efficient filtering
@@ -237,12 +270,6 @@ func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressMod
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	// managementModeRequeue is the periodic requeue interval used when
-	// the management mode gate is ON. Because the Ingress CR is read
-	// via direct Get (no informer), we requeue periodically so that
-	// mode changes are eventually observed.
-	const managementModeRequeue = 30 * time.Second
-
 	if r.managementModeEnabled() {
 		// Read the Ingress CR exactly once for the entire gate-ON
 		// path so that VAP transition, status, and ShouldManageCRDs
@@ -268,6 +295,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				InProgress: true,
 				Target:     snapshot.desiredMode,
 			})
+
+			if snapshot.desiredMode == operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
+				// Close the race window as early as possible: block
+				// dependents before Sail uninstall/VAP delete even
+				// start, rather than waiting for the full Update()
+				// call in reconcileIngressStatus below. See
+				// ModeAccessor.BlockDependents for details.
+				r.config.ModeAccessor.BlockDependents()
+			}
 		}
 
 		// Phase 3: delete VAP+binding BEFORE computing Unmanaged
@@ -373,7 +409,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if !alreadyLogged {
 			log.Info("management mode does not allow dependent controllers yet")
 		}
-		return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
+		// No requeue: the Ingress CR, Gateway API CRD, VAP/binding, and
+		// ClusterRole watches all map back to this reconciler, so a
+		// change to any of them (e.g. mode flipping back to Managed, or
+		// CRDs becoming compliant) will trigger a fresh reconcile.
+		return reconcile.Result{}, nil
 	}
 	r.mu.Lock()
 	r.dependentsBlockedLogged = false
@@ -396,9 +436,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	if r.managementModeEnabled() {
-		return reconcile.Result{RequeueAfter: managementModeRequeue}, nil
-	}
 	return reconcile.Result{}, nil
 }
 

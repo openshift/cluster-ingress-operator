@@ -352,6 +352,13 @@ type reconciler struct {
 	// sailInstaller manages Istio control plane lifecycle (install, upgrade, uninstall) via the sail library.
 	sailInstaller SailLibraryInstaller
 
+	// sailLifecycleMu serializes "check AllowDependents, then act" between
+	// UninstallSail and ensureIstio's Apply call, so a concurrent Uninstall
+	// cannot race with an in-flight Apply that read AllowDependents()
+	// before the mode transitioned. Whichever critical section runs last
+	// observes the true, up-to-date mode state.
+	sailLifecycleMu sync.Mutex
+
 	// modeAccessor provides thread-safe access to the resolved Gateway API
 	// management mode. When AllowDependents returns false, the reconciler
 	// skips Sail/OLM installation to prevent resource creation in Unmanaged mode.
@@ -792,7 +799,15 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 
 // UninstallSail removes the CIO-managed Istio instance. Called by the
 // gatewayapi controller when transitioning to Unmanaged mode.
+//
+// Acquires sailLifecycleMu, shared with ensureIstio's Apply call, so that
+// a concurrently in-flight gatewayclass reconcile that read
+// AllowDependents()==true before this transition cannot land an Apply()
+// after this Uninstall() completes.
 func (r *reconciler) UninstallSail(ctx context.Context) error {
+	r.sailLifecycleMu.Lock()
+	defer r.sailLifecycleMu.Unlock()
+
 	// OLM path: sailInstaller is nil, nothing to uninstall
 	if r.sailInstaller == nil {
 		return nil
