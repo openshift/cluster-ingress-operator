@@ -2664,7 +2664,7 @@ func Test_deploymentConfigChanged(t *testing.T) {
 									StartupProbe: &corev1.Probe{
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
-												Path: "/healthz/ready",
+												Path: "/healthz",
 												Port: intstr.IntOrString{
 													IntVal: int32(1936),
 												},
