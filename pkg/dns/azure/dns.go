@@ -55,9 +55,8 @@ type Config struct {
 }
 
 type provider struct {
-	config       Config
-	client       client.DNSClient
-	clientConfig client.Config
+	config Config
+	client client.DNSClient
 }
 
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
