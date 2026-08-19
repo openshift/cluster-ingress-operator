@@ -2015,6 +2015,38 @@ func TestDeploymentHash(t *testing.T) {
 			expectDeploymentHashChanged: true,
 			expectTemplateHashChanged:   true,
 		},
+		{
+			description: "if volume mounts are changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
+					Name:      "shared",
+					MountPath: "/tmp/shared",
+				}}
+			},
+			expectDeploymentHashChanged: true,
+			expectTemplateHashChanged:   true,
+		},
+		{
+			description: "if projected volume downwardAPI fieldRef.apiVersion is defaulted to v1",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Volumes[0].Projected.Sources[1].DownwardAPI.Items[0].FieldRef.APIVersion = "v1"
+			},
+		},
+		{
+			description: "if projected volume defaultMode is defaulted to 420",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Volumes[0].Projected.DefaultMode = ptr.To[int32](420)
+			},
+		},
+		{
+			description: "if projected volume serviceAccountToken expirationSeconds is defaulted to 3600",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Volumes[0].Projected.Sources[0].ServiceAccountToken = &corev1.ServiceAccountTokenProjection{
+					ExpirationSeconds: ptr.To[int64](3600),
+					Path:              "token",
+				}
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -2036,6 +2068,34 @@ func TestDeploymentHash(t *testing.T) {
 										{ContainerPort: 80},
 										{ContainerPort: 443},
 										{ContainerPort: 1936},
+									},
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: routerServiceAccountVolumeName,
+									VolumeSource: corev1.VolumeSource{
+										Projected: &corev1.ProjectedVolumeSource{
+											Sources: []corev1.VolumeProjection{
+												{
+													ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+														Path: "token",
+													},
+												},
+												{
+													DownwardAPI: &corev1.DownwardAPIProjection{
+														Items: []corev1.DownwardAPIVolumeFile{
+															{
+																Path: "namespace",
+																FieldRef: &corev1.ObjectFieldSelector{
+																	FieldPath: "metadata.namespace",
+																},
+															},
+														},
+													},
+												},
+											},
+										},
 									},
 								},
 							},
@@ -2065,8 +2125,10 @@ func Test_deploymentConfigChanged(t *testing.T) {
 	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 	testCases := []struct {
 		description string
-		mutate      func(*appsv1.Deployment)
+		mutateCurr  func(*appsv1.Deployment) // current, coming from live deployment
+		mutate      func(*appsv1.Deployment) // expected, coming from desired deployment
 		expect      bool
+		assert      func(*testing.T, *appsv1.Deployment)
 	}{
 		{
 			description: "if nothing changes",
@@ -2272,9 +2334,58 @@ func Test_deploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if the init container resources is changed",
+			description: "if the container args is changed",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.InitContainers[0].Resources = corev1.ResourceRequirements{
+				deployment.Spec.Template.Spec.Containers[0].Args = []string{"--version"}
+			},
+			expect: false,
+		},
+		{
+			description: "if the container command is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].Command = []string{"bash", "-c", "sleep 1"}
+			},
+			expect: false,
+		},
+		{
+			description: "if the init container args is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[0].Args = []string{"--version"}
+			},
+			expect: true,
+		},
+		{
+			description: "if the init container command is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[0].Command = []string{"bash", "-c", "sleep 1"}
+			},
+			expect: true,
+		},
+		{
+			description: "if the init container restart policy is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[0].RestartPolicy = ptr.To(corev1.ContainerRestartPolicyNever)
+			},
+			expect: true,
+		},
+		{
+			description: "if the init container image is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[0].Image = "openshift/init:latest"
+			},
+			expect: true,
+		},
+		{
+			description: "if the sidecar container image is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[1].Image = "openshift/haproxy-v28:latest"
+			},
+			expect: true,
+		},
+		{
+			description: "if the sidecar container resources is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[1].Resources = corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse("200m"),
 						corev1.ResourceMemory: resource.MustParse("512Mi"),
@@ -2284,11 +2395,60 @@ func Test_deploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if the sidecar container image is changed",
-			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.InitContainers[0].Image = "openshift/haproxy-v28:latest"
+			description: "if the current init container slice is missing from an upgrade",
+			mutateCurr: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers = nil
 			},
 			expect: true,
+			assert: func(t *testing.T, deployment *appsv1.Deployment) {
+				assert.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
+			},
+		},
+		{
+			description: "if the current init container slice is missing a container",
+			mutateCurr: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers = deployment.Spec.Template.Spec.InitContainers[:1]
+			},
+			expect: true,
+			assert: func(t *testing.T, deployment *appsv1.Deployment) {
+				assert.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
+			},
+		},
+		{
+			description: "if the current init container slice has a 3rd container",
+			mutateCurr: func(deployment *appsv1.Deployment) {
+				container := corev1.Container{}
+				deployment.Spec.Template.Spec.InitContainers = append(deployment.Spec.Template.Spec.InitContainers, container)
+			},
+			expect: true,
+			assert: func(t *testing.T, deployment *appsv1.Deployment) {
+				assert.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
+			},
+		},
+		{
+			description: "if the init container k8s-defaulted fields are preserved during an update",
+			mutateCurr: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[0].TerminationMessagePath = "/dev/termination-log"
+				deployment.Spec.Template.Spec.InitContainers[0].TerminationMessagePolicy = corev1.TerminationMessageReadFile
+			},
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.InitContainers[0].Image = "openshift/init:latest"
+			},
+			expect: true,
+			assert: func(t *testing.T, deployment *appsv1.Deployment) {
+				assert.Equal(t, "/dev/termination-log", deployment.Spec.Template.Spec.InitContainers[0].TerminationMessagePath)
+				assert.Equal(t, corev1.TerminationMessageReadFile, deployment.Spec.Template.Spec.InitContainers[0].TerminationMessagePolicy)
+				assert.Equal(t, "openshift/init:latest", deployment.Spec.Template.Spec.InitContainers[0].Image)
+			},
+		},
+		{
+			description: "if the init container k8s-defaulted fields are preserved",
+			mutateCurr: func(deployment *appsv1.Deployment) {
+				// Simulate what k8s injects on save
+				deployment.Spec.Template.Spec.InitContainers[0].TerminationMessagePath = "/dev/termination-log"
+				deployment.Spec.Template.Spec.InitContainers[0].TerminationMessagePolicy = corev1.TerminationMessageReadFile
+			},
+			expect: false, // k8s-defaulted fields are not operator-managed, no change expected
 		},
 		{
 			description: "if the volumes change ordering",
@@ -2702,6 +2862,9 @@ func Test_deploymentConfigChanged(t *testing.T) {
 							},
 							InitContainers: []corev1.Container{
 								{
+									Image: "openshift/origin-cluster-ingress-operator-init:v4.0",
+								},
+								{
 									Image: "openshift/haproxy-v28:v4.0",
 									Resources: corev1.ResourceRequirements{
 										Requests: corev1.ResourceList{
@@ -2797,17 +2960,27 @@ func Test_deploymentConfigChanged(t *testing.T) {
 					Replicas: &nineteen,
 				},
 			}
+			current := original.DeepCopy()
 			mutated := original.DeepCopy()
-			tc.mutate(mutated)
-			if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
+			if tc.mutateCurr != nil {
+				tc.mutateCurr(current)
+			}
+			if tc.mutate != nil {
+				tc.mutate(mutated)
+			}
+			changed, updated := deploymentConfigChanged(current, mutated)
+			if changed != tc.expect {
 				t.Errorf("expect deploymentConfigChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
-				if updatedChanged, _ := deploymentConfigChanged(&original, updated); !updatedChanged {
+				if updatedChanged, _ := deploymentConfigChanged(current, updated); !updatedChanged {
 					t.Error("deploymentConfigChanged reported changes but did not make any update")
 				}
 				if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
 					t.Error("deploymentConfigChanged does not behave as a fixed point function")
 				}
+			}
+			if tc.assert != nil {
+				tc.assert(t, updated)
 			}
 		})
 	}
