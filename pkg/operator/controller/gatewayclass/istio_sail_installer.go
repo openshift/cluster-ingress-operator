@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
@@ -29,6 +31,8 @@ import (
 const (
 	// subscriptionPrefix is the OLM label prefix indicating subscription ownership.
 	subscriptionPrefix = "operators.coreos.com/"
+
+	wafOtelCollectorAnnotation = "internal.do-not-use.openshift.io/waf-otel-collector"
 )
 
 // overwriteOLMManagedCRDFunc is used as a predicate function by the Sail Library to determine
@@ -276,6 +280,71 @@ func openshiftValues(enableInferenceExtension bool, operandNamespace string, gat
 	} else {
 		val.GatewayClasses = gwClassConfig
 	}
+
+	// (rikatz): This is related to WAF implementation for observability. Once Gateway API
+	// supports TelemetryPolicy + Logging, we can drop this implementation and migrate to
+	// a pure Gateway API approach, that creates a provider per Gateway directly on Istio
+	// outputs
+	// While that, we need a way to signal to sail-installer/Istio that a provider must be
+	// created to ship WAF logs, and this provider is created via this internal annotation
+	for _, gc := range gatewayclasses {
+		if wafOtelval, ok := gc.Annotations[wafOtelCollectorAnnotation]; ok && gc.Name == controller.OpenShiftDefaultGatewayClassName {
+			wafCollectorHost, port, err := net.SplitHostPort(wafOtelval)
+			if err != nil {
+				log.Error(err, "invalid value for WAF collector host:port, skipping", "gatewayclass", gc, "value", wafOtelval)
+				break
+			}
+			if wafCollectorHost == "" {
+				log.Error(err, "WAF collector value does not contain a host, skipping", "gatewayclass", gc, "value", wafOtelval)
+				break
+			}
+			wafCollectorPort, err := strconv.Atoi(port)
+			if err != nil || wafCollectorPort < 1 || wafCollectorPort > 65535 {
+				log.Error(err, "invalid value for WAF collector port, skipping", "gatewayclass", gc, "value", wafOtelval)
+				break
+			}
+
+			if len(val.MeshConfig.ExtensionProviders) == 0 {
+				val.MeshConfig.ExtensionProviders = make([]*sailv1.MeshConfigExtensionProvider, 0)
+			}
+			val.MeshConfig.ExtensionProviders = append(val.MeshConfig.ExtensionProviders, &sailv1.MeshConfigExtensionProvider{
+
+				Name: new("waf-log-collector"),
+				EnvoyOtelAls: &sailv1.MeshConfigExtensionProviderEnvoyOpenTelemetryLogProvider{
+					Service: new(wafCollectorHost),
+					Port:    new(uint32(wafCollectorPort)),
+					// Define later if we really need it, or if OTEL can do parsing on its side
+					LogFormat: &sailv1.MeshConfigExtensionProviderEnvoyOpenTelemetryLogProviderLogFormat{
+						Labels: map[string]string{
+							"start_time":     "%START_TIME%",
+							"namespace":      "%ENVIRONMENT(POD_NAMESPACE)%",
+							"gateway":        "%ENVIRONMENT(ISTIO_META_WORKLOAD_NAME)%",
+							"pod_name":       "%ENVIRONMENT(POD_NAME)%",
+							"method":         "%REQ(:METHOD)%",
+							"path":           "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
+							"response_code":  "%RESPONSE_CODE%",
+							"response_flags": "%RESPONSE_FLAGS%",
+							"route_name":     "%ROUTE_NAME%",
+							"authority":      "%REQ(:AUTHORITY)%",
+							"duration":       "%DURATION%",
+							"client_ip":      "%REQ(X-FORWARDED-FOR)%",
+							"request_id":     "%REQ(X-REQUEST-ID)%",
+							"sni_hostname":   "%REQUESTED_SERVER_NAME%",
+							"waf_event":      "%FILTER_STATE(wasm.io.coraza.waf.event:PLAIN)%",
+							"rule_id":        "%FILTER_STATE(wasm.io.coraza.waf.rule_id:PLAIN)%",
+							"action":         "%FILTER_STATE(wasm.io.coraza.waf.action:PLAIN)%",
+							"phase":          "%FILTER_STATE(wasm.io.coraza.waf.phase:PLAIN)%",
+							"waf_status":     "%FILTER_STATE(wasm.io.coraza.waf.status:PLAIN)%",
+							"severity":       "%FILTER_STATE(wasm.io.coraza.waf.severity:PLAIN)%",
+							"category":       "%FILTER_STATE(wasm.io.coraza.waf.category:PLAIN)%",
+						},
+					},
+				},
+			})
+			break
+		}
+	}
+
 	return val, nil
 }
 
