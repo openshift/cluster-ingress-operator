@@ -46,6 +46,16 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 	present := presentCond.Status == metav1.ConditionTrue
 	compliant := compliantCond.Status == metav1.ConditionTrue
 
+	// Unrecognized CRDs in the gateway.networking.k8s.io group (e.g. from
+	// a Gateway API version bump this operator doesn't know about yet)
+	// must also block takeover: we cannot safely determine compatibility
+	// with an API surface we don't manage.
+	unknownCRDs, err := r.listUnmanagedGatewayAPICRDs(ctx)
+	if err != nil {
+		return err
+	}
+	blocksTakeover := anyExistingNonCompliant || len(unknownCRDs) > 0
+
 	// Check if we were already managing CRDs before this reconcile.
 	// This distinguishes between:
 	// 1. Upgrade (already Managed, version mismatch) -> allow update
@@ -60,7 +70,7 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 		}
 	}
 
-	managedCond := computeManagedCondition(snapshot.desiredMode, present, compliant, anyExistingNonCompliant, wasAlreadyManaged)
+	managedCond := computeManagedCondition(snapshot.desiredMode, present, compliant, blocksTakeover, wasAlreadyManaged)
 	managed := managedCond.Status == metav1.ConditionTrue
 
 	r.config.ModeAccessor.Update(snapshot.desiredMode, managed, present, compliant)

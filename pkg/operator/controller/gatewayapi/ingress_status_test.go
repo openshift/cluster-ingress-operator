@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -295,6 +296,9 @@ func TestReconcileIngressStatus(t *testing.T) {
 				WithScheme(scheme).
 				WithRuntimeObjects(objs...).
 				WithStatusSubresource(statusSubresources...).
+				WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+					return []string{}
+				})).
 				Build()
 			cl := &testutil.FakeClientRecorder{
 				Client:  fakeClient,
@@ -306,9 +310,12 @@ func TestReconcileIngressStatus(t *testing.T) {
 					StatusWriter: fakeClient.Status(),
 				},
 			}
+			informer := informertest.FakeInformers{Scheme: scheme}
+			fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 			modeAccessor := NewModeAccessor(true)
 			r := &reconciler{
 				client: cl,
+				cache:  fakeCache,
 				config: Config{
 					ModeAccessor: modeAccessor,
 				},
@@ -377,6 +384,96 @@ func TestReconcileIngressStatus(t *testing.T) {
 	}
 }
 
+// TestReconcileIngressStatus_UnknownGatewayAPICRD verifies that an
+// unrecognized CRD in the gateway.networking.k8s.io group (e.g. from a
+// Gateway API version bump this operator doesn't know about) blocks
+// takeover, even though all managed CRDs are themselves present and
+// compliant.
+func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
+	scheme := runtime.NewScheme()
+	operatorv1alpha1.Install(scheme)
+	apiextensionsv1.AddToScheme(scheme)
+
+	unknownCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalids.gateway.networking.k8s.io"},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "gateway.networking.k8s.io",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Plural: "invalids",
+				Kind:   "Invalid",
+			},
+		},
+	}
+
+	ingressObj := &operatorv1alpha1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec: operatorv1alpha1.IngressSpec{
+			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+			},
+		},
+	}
+
+	var objs []runtime.Object
+	objs = append(objs, allManagedCRDObjects()...)
+	objs = append(objs, unknownCRD, ingressObj)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(objs...).
+		WithStatusSubresource(ingressObj.DeepCopy()).
+		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+			crd, ok := o.(*apiextensionsv1.CustomResourceDefinition)
+			if !ok || crd.Spec.Group != "gateway.networking.k8s.io" {
+				return []string{}
+			}
+			if _, found := managedCRDMap[crd.Name]; found {
+				return []string{}
+			}
+			return []string{unmanagedGatewayAPICRDIndexFieldValue}
+		})).
+		Build()
+	cl := &testutil.FakeClientRecorder{
+		Client:  fakeClient,
+		T:       t,
+		Added:   []client.Object{},
+		Updated: []client.Object{},
+		Deleted: []client.Object{},
+		StatusWriter: &testutil.FakeStatusWriter{
+			StatusWriter: fakeClient.Status(),
+		},
+	}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+	modeAccessor := NewModeAccessor(true)
+	r := &reconciler{
+		client: cl,
+		cache:  fakeCache,
+		config: Config{
+			ModeAccessor: modeAccessor,
+		},
+	}
+
+	snapshot := ingressModeSnapshot{
+		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		ingress:     ingressObj,
+		found:       true,
+	}
+	err := r.reconcileIngressStatus(context.Background(), snapshot)
+	require.NoError(t, err)
+
+	assert.False(t, modeAccessor.AllowDependents(), "must not allow dependents while an unknown CRD is present")
+
+	var updated operatorv1alpha1.Ingress
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
+	require.NoError(t, err)
+
+	managedCond := findCondition(updated.Status.Conditions, conditionTypeGatewayAPICRDsManaged)
+	require.NotNil(t, managedCond)
+	assert.Equal(t, metav1.ConditionFalse, managedCond.Status)
+	assert.Equal(t, reasonTakeoverBlocked, managedCond.Reason)
+}
+
 func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	operatorv1alpha1.Install(scheme)
@@ -406,6 +503,9 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
 		WithStatusSubresource(ingressObj.DeepCopy()).
+		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+			return []string{}
+		})).
 		Build()
 	cl := &testutil.FakeClientRecorder{
 		Client:  fakeClient,
@@ -417,9 +517,12 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 			StatusWriter: fakeClient.Status(),
 		},
 	}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 	modeAccessor := NewModeAccessor(true)
 	r := &reconciler{
 		client: cl,
+		cache:  fakeCache,
 		config: Config{
 			ModeAccessor: modeAccessor,
 		},
@@ -485,6 +588,9 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
 		WithStatusSubresource(ingressObj.DeepCopy()).
+		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+			return []string{}
+		})).
 		Build()
 	cl := &testutil.FakeClientRecorder{
 		Client:  fakeClient,
@@ -496,9 +602,12 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 			StatusWriter: fakeClient.Status(),
 		},
 	}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 	modeAccessor := NewModeAccessor(true)
 	r := &reconciler{
 		client: cl,
+		cache:  fakeCache,
 		config: Config{
 			ModeAccessor: modeAccessor,
 		},
@@ -576,6 +685,9 @@ func TestReconcileIngressStatus_ObservedGeneration(t *testing.T) {
 		WithScheme(scheme).
 		WithRuntimeObjects(objs...).
 		WithStatusSubresource(ingressObj.DeepCopy()).
+		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+			return []string{}
+		})).
 		Build()
 	cl := &testutil.FakeClientRecorder{
 		Client:  fakeClient,
@@ -587,9 +699,12 @@ func TestReconcileIngressStatus_ObservedGeneration(t *testing.T) {
 			StatusWriter: fakeClient.Status(),
 		},
 	}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 	modeAccessor := NewModeAccessor(true)
 	r := &reconciler{
 		client: cl,
+		cache:  fakeCache,
 		config: Config{
 			ModeAccessor: modeAccessor,
 		},
