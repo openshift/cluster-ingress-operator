@@ -83,13 +83,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, fmt.Errorf("failed to watch Infrastructure resources: %w", err)
 	}
 
-	// Watch the Ingress CR so that management mode changes (and status
-	// updates such as Present/Compliant) are observed reactively.
-	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == "cluster"
-	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isClusterIngress)); err != nil {
-		return nil, fmt.Errorf("failed to watch Ingress resources: %w", err)
+	if err := registerIngressWatch(c, operatorCache, config, toFeatureGate); err != nil {
+		return nil, err
 	}
 
 	isGatewayAPICRD := func(o client.Object) bool {
@@ -152,6 +147,35 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	return c, nil
+}
+
+// registerIngressWatch watches the Ingress CR so that management mode
+// changes (and status updates such as Present/Compliant) are observed
+// reactively. It only registers the watch when the management mode gate
+// is enabled, because the Ingress CRD only exists on TechPreview/DevPreview
+// clusters and is not installed at all on HyperShift Default clusters.
+//
+// This must stay gated: c.Watch defers informer creation until the
+// manager starts, at which point controller-runtime resolves the CRD's
+// GVK via the RESTMapper. If the CRD does not exist, that resolution
+// fails with a NoKindMatchError, the cache never syncs, and after the
+// sync timeout controller-runtime fatals the whole manager -- taking
+// every controller down, not just this one's Gateway API support.
+//
+// Extracted from New() so the gating decision can be exercised directly
+// in unit tests without needing a real or fake API server/RESTMapper to
+// reproduce the failure this guards against.
+func registerIngressWatch(c controller.Controller, operatorCache cache.Cache, config Config, toFeatureGate handler.MapFunc) error {
+	if config.ModeAccessor == nil || !config.ModeAccessor.GateEnabled() {
+		return nil
+	}
+	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isClusterIngress)); err != nil {
+		return fmt.Errorf("failed to watch Ingress resources: %w", err)
+	}
+	return nil
 }
 
 // SailUninstaller is a type alias for the shared SailUninstaller interface

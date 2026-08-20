@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
@@ -515,6 +516,53 @@ func TestManagementModeEnabled(t *testing.T) {
 	t.Run("gate enabled", func(t *testing.T) {
 		r := &reconciler{config: Config{ModeAccessor: NewModeAccessor(true)}}
 		assert.True(t, r.managementModeEnabled())
+	})
+}
+
+// fakeWatchController is a minimal controller.Controller that only
+// implements Watch, recording how many times it was called. Used to
+// verify registerIngressWatch's gating decision without needing a real
+// or fake API server/RESTMapper to reproduce the manager-crash failure
+// mode that gating guards against.
+type fakeWatchController struct {
+	controller.Controller
+	watchCalls int
+}
+
+func (f *fakeWatchController) Watch(_ source.TypedSource[reconcile.Request]) error {
+	f.watchCalls++
+	return nil
+}
+
+// TestRegisterIngressWatch verifies that the gatewayapi controller only
+// watches the v1alpha1 Ingress CR when the management mode gate is
+// enabled. This CRD only exists on TechPreview/DevPreview clusters and
+// is absent entirely on HyperShift Default clusters; watching it
+// unconditionally previously caused controller-runtime to fail resolving
+// the CRD's GVK at manager startup, which crashed the whole manager
+// after the cache-sync timeout (not just Gateway API support).
+func TestRegisterIngressWatch(t *testing.T) {
+	toFeatureGate := func(ctx context.Context, _ client.Object) []reconcile.Request { return nil }
+
+	t.Run("nil ModeAccessor does not watch", func(t *testing.T) {
+		fc := &fakeWatchController{}
+		err := registerIngressWatch(fc, nil, Config{ModeAccessor: nil}, toFeatureGate)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, fc.watchCalls, "must not watch Ingress when ModeAccessor is nil")
+	})
+
+	t.Run("gate disabled does not watch", func(t *testing.T) {
+		fc := &fakeWatchController{}
+		err := registerIngressWatch(fc, nil, Config{ModeAccessor: NewModeAccessor(false)}, toFeatureGate)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, fc.watchCalls, "must not watch Ingress when the gate is disabled")
+	})
+
+	t.Run("gate enabled watches", func(t *testing.T) {
+		fc := &fakeWatchController{}
+		err := registerIngressWatch(fc, nil, Config{ModeAccessor: NewModeAccessor(true)}, toFeatureGate)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, fc.watchCalls, "must watch Ingress when the gate is enabled")
 	})
 }
 
