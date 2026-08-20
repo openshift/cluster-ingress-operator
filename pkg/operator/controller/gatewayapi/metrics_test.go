@@ -175,6 +175,9 @@ func TestUpdateManagementModeMetrics_VersionUpgradeClearsStaleLabels(t *testing.
 func TestUpdateModeTransitionFailedMetric(t *testing.T) {
 	// Start from a clean slate.
 	gatewayAPIModeTransitionFailedMetric.Reset()
+	modeTransitionFailedMetricMu.Lock()
+	lastFailingTarget = ""
+	modeTransitionFailedMetricMu.Unlock()
 
 	updateModeTransitionFailedMetric(operatorcontroller.TransitionState{})
 	assert.Equal(t, 0, collectGaugeVecCount(gatewayAPIModeTransitionFailedMetric),
@@ -212,6 +215,29 @@ func TestUpdateModeTransitionFailedMetric(t *testing.T) {
 	updateModeTransitionFailedMetric(operatorcontroller.TransitionState{})
 	assert.Equal(t, 0, collectGaugeVecCount(gatewayAPIModeTransitionFailedMetric),
 		"metric should be absent once the transition succeeds")
+}
+
+// TestUpdateModeTransitionFailedMetric_RepeatedFailureNoGap verifies that
+// repeating the same failing target across retries never calls a blanket
+// Reset(): the series must remain continuously present (never zero
+// collected series), since that would be observable as a false "not
+// failing" reading by a concurrent Prometheus scrape.
+func TestUpdateModeTransitionFailedMetric_RepeatedFailureNoGap(t *testing.T) {
+	gatewayAPIModeTransitionFailedMetric.Reset()
+	modeTransitionFailedMetricMu.Lock()
+	lastFailingTarget = ""
+	modeTransitionFailedMetricMu.Unlock()
+
+	for i := 0; i < 5; i++ {
+		updateModeTransitionFailedMetric(operatorcontroller.TransitionState{
+			InProgress: true,
+			Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			Error:      fmt.Errorf("retry %d failed", i),
+		})
+		assert.Equal(t, 1, collectGaugeVecCount(gatewayAPIModeTransitionFailedMetric),
+			"series must remain present across repeated failures of the same target")
+		assert.Equal(t, float64(1), gaugeValue(t, gatewayAPIModeTransitionFailedMetric.WithLabelValues("Unmanaged")))
+	}
 }
 
 func TestParseOSSMVersion(t *testing.T) {

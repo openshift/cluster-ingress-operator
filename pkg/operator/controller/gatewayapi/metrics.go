@@ -36,7 +36,7 @@ var (
 	// gatewayAPIModeTransitionFailedMetric reports 1 for the target mode a
 	// transition is currently failing to reach; it is labeled by the
 	// target mode so scrapes can tell which direction is stuck. The
-	// metric is removed entirely (Reset) once the transition completes
+	// metric is removed entirely once the transition completes
 	// successfully, so a failure never lingers as a stale time series.
 	gatewayAPIModeTransitionFailedMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ingress_controller_gateway_api_mode_transition_failed",
@@ -55,6 +55,15 @@ var (
 	infoMetricMu              sync.Mutex
 	lastInfoGatewayAPIVersion string
 	lastInfoOSSMVersion       string
+
+	// modeTransitionFailedMetricMu protects lastFailingTarget, used to
+	// avoid a blanket Reset() on every reconcile. A full Reset() briefly
+	// empties the entire metric family, which a concurrent Prometheus
+	// scrape could observe as "no failure" even though one is ongoing;
+	// deleting only the specific stale label combination avoids that gap
+	// on the common repeated-failure path.
+	modeTransitionFailedMetricMu sync.Mutex
+	lastFailingTarget            string
 )
 
 // RegisterMetrics registers the Gateway API management mode and info
@@ -119,11 +128,27 @@ func updateManagementModeMetrics(managedCond, compliantCond metav1.Condition, ga
 // transition failure. It is called every time the gatewayapi controller
 // records a TransitionState so the metric never drifts from the
 // Progressing condition computed by the status controller.
+//
+// Only the stale label combination is deleted (rather than calling
+// Reset() on every call), so a failure that repeats across retries -
+// the common case, since this runs on every failing reconcile - never
+// causes the metric family to go briefly empty.
 func updateModeTransitionFailedMetric(state operatorcontroller.TransitionState) {
-	gatewayAPIModeTransitionFailedMetric.Reset()
+	failingTarget := ""
 	if state.InProgress && state.Error != nil {
-		gatewayAPIModeTransitionFailedMetric.WithLabelValues(string(state.Target)).Set(1)
+		failingTarget = string(state.Target)
 	}
+
+	modeTransitionFailedMetricMu.Lock()
+	defer modeTransitionFailedMetricMu.Unlock()
+
+	if lastFailingTarget != "" && lastFailingTarget != failingTarget {
+		gatewayAPIModeTransitionFailedMetric.DeleteLabelValues(lastFailingTarget)
+	}
+	if failingTarget != "" {
+		gatewayAPIModeTransitionFailedMetric.WithLabelValues(failingTarget).Set(1)
+	}
+	lastFailingTarget = failingTarget
 }
 
 // embeddedGatewayAPIVersion returns the bundle-version annotation from
