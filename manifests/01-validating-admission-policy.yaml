@@ -14,6 +14,10 @@ spec:
       apiVersions: ["v1"]
       operations:  ["CREATE","UPDATE","DELETE"]
       resources:   ["customresourcedefinitions"]
+      scope: “*”
+    matchPolicy: Equivalent
+    namespaceSelector: {}
+    objectSelector: {}
   matchConditions:
     # Consider only request to Gateway API CRDs.
     - name: "check-only-gateway-api-crds"
