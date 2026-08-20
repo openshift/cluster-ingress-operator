@@ -23,11 +23,15 @@ spec:
         - name: init-router
           # image is set at runtime.
           imagePullPolicy: IfNotPresent
+          securityContext:
+            readOnlyRootFilesystem: true
           terminationMessagePolicy: FallbackToLogsOnError
           command: ["/bin/bash", "-c", "cp -R -p /var/lib/haproxy/* /mnt/config/"]
           volumeMounts:
           - mountPath: /mnt/config
             name: haproxy-config
+          - mountPath: /tmp
+            name: tmp
         - name: haproxy
           # image is set at runtime.
           imagePullPolicy: IfNotPresent
@@ -158,6 +162,9 @@ spec:
             path: service-ca.crt
           name: service-ca-bundle
           optional: false
+      # Provides a writable /tmp directory since readOnlyRootFilesystem is enabled.
+      - name: tmp
+        emptyDir: {}
       - name: kube-api-access
         projected:
           defaultMode: 0400

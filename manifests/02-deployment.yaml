@@ -48,6 +48,7 @@ spec:
         - name: ingress-operator
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           terminationMessagePolicy: FallbackToLogsOnError
@@ -128,6 +129,8 @@ spec:
           - name: metrics-tls
             mountPath: /etc/tls/metrics
             readOnly: true
+          - name: tmp
+            mountPath: /tmp
       volumes:
       - name: metrics-tls
         secret:
@@ -146,3 +149,6 @@ spec:
           - serviceAccountToken:
               path: token
               audience: openshift
+      # Provides a writable /tmp directory since readOnlyRootFilesystem is enabled.
+      - name: tmp
+        emptyDir: {}
