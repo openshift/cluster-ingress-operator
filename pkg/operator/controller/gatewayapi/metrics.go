@@ -9,6 +9,8 @@ import (
 	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 )
 
 var (
@@ -31,9 +33,20 @@ var (
 		Help: "Reports Gateway API and OSSM version info. Only present when managed and compliant.",
 	}, []string{"gateway_api_version", "ossm_version"})
 
+	// gatewayAPIModeTransitionFailedMetric reports 1 for the target mode a
+	// transition is currently failing to reach; it is labeled by the
+	// target mode so scrapes can tell which direction is stuck. The
+	// metric is removed entirely (Reset) once the transition completes
+	// successfully, so a failure never lingers as a stale time series.
+	gatewayAPIModeTransitionFailedMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ingress_controller_gateway_api_mode_transition_failed",
+		Help: "Reports 1 for the target Gateway API management mode a transition is currently failing to reach. Removed once the transition succeeds.",
+	}, []string{"target"})
+
 	gatewayAPIMetricsList = []prometheus.Collector{
 		gatewayAPIManagementModeMetric,
 		gatewayAPIInfoMetric,
+		gatewayAPIModeTransitionFailedMetric,
 	}
 
 	// infoMetricMu protects the last-seen version labels used to
@@ -99,6 +112,17 @@ func updateManagementModeMetrics(managedCond, compliantCond metav1.Condition, ga
 		lastInfoGatewayAPIVersion = ""
 		lastInfoOSSMVersion = ""
 		infoMetricMu.Unlock()
+	}
+}
+
+// updateModeTransitionFailedMetric reports a Gateway API management mode
+// transition failure. It is called every time the gatewayapi controller
+// records a TransitionState so the metric never drifts from the
+// Progressing condition computed by the status controller.
+func updateModeTransitionFailedMetric(state operatorcontroller.TransitionState) {
+	gatewayAPIModeTransitionFailedMetric.Reset()
+	if state.InProgress && state.Error != nil {
+		gatewayAPIModeTransitionFailedMetric.WithLabelValues(string(state.Target)).Set(1)
 	}
 }
 

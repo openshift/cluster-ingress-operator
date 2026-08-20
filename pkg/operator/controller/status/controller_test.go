@@ -1151,69 +1151,6 @@ func Test_compareVersionNums(t *testing.T) {
 	}
 }
 
-func Test_computeModeTransitionDegradedCondition(t *testing.T) {
-	testCases := []struct {
-		description    string
-		modeTransition operatorcontroller.TransitionState
-		expectStatus   configv1.ConditionStatus
-		expectReason   string
-		expectMessage  string
-	}{
-		{
-			description:    "no transition in progress",
-			modeTransition: operatorcontroller.TransitionState{},
-			expectStatus:   "",
-		},
-		{
-			description: "transition in progress without error",
-			modeTransition: operatorcontroller.TransitionState{
-				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
-			},
-			expectStatus: "",
-		},
-		{
-			description: "transition to Unmanaged failed",
-			modeTransition: operatorcontroller.TransitionState{
-				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
-				Error:      fmt.Errorf("cannot complete transition to Unmanaged, Sail uninstall failed: connection refused"),
-			},
-			expectStatus:  configv1.ConditionTrue,
-			expectReason:  "ReconciliationFailed",
-			expectMessage: "Failed to transition Gateway API management mode to Unmanaged: cannot complete transition to Unmanaged, Sail uninstall failed: connection refused",
-		},
-		{
-			description: "transition to Managed failed",
-			modeTransition: operatorcontroller.TransitionState{
-				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeManaged,
-				Error:      fmt.Errorf("failed to create ValidatingAdmissionPolicy: forbidden"),
-			},
-			expectStatus:  configv1.ConditionTrue,
-			expectReason:  "ReconciliationFailed",
-			expectMessage: "Failed to transition Gateway API management mode to Managed: failed to create ValidatingAdmissionPolicy: forbidden",
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			state := operatorState{
-				modeTransition: tc.modeTransition,
-			}
-			actual := computeModeTransitionDegradedCondition(state)
-			if actual.Status != tc.expectStatus {
-				t.Errorf("expected status %q, got %q", tc.expectStatus, actual.Status)
-			}
-			if tc.expectReason != "" && actual.Reason != tc.expectReason {
-				t.Errorf("expected reason %q, got %q", tc.expectReason, actual.Reason)
-			}
-			if tc.expectMessage != "" && actual.Message != tc.expectMessage {
-				t.Errorf("expected message %q, got %q", tc.expectMessage, actual.Message)
-			}
-		})
-	}
-}
-
 func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
 	testCases := []struct {
 		description       string
@@ -1245,13 +1182,14 @@ func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
 			expectInMessage:   "Transitioning Gateway API management mode to Managed",
 		},
 		{
-			description: "mode transition with error does not set progressing",
+			description: "mode transition with error still reports progressing",
 			modeTransition: operatorcontroller.TransitionState{
 				InProgress: true,
 				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
 				Error:      fmt.Errorf("some error"),
 			},
-			expectProgressing: configv1.ConditionFalse,
+			expectProgressing: configv1.ConditionTrue,
+			expectInMessage:   "Failed to transition Gateway API management mode to Unmanaged, retrying: some error",
 		},
 	}
 	for _, tc := range testCases {

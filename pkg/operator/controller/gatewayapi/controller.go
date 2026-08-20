@@ -265,6 +265,14 @@ func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressMod
 	}, nil
 }
 
+// setTransitionState records mode transition progress on the shared
+// ModeAccessor and mirrors it into the mode-transition-failed metric, so
+// the two are never allowed to drift out of sync.
+func (r *reconciler) setTransitionState(state operatorcontroller.TransitionState) {
+	r.config.ModeAccessor.SetTransitionState(state)
+	updateModeTransitionFailedMetric(state)
+}
+
 // Reconcile expects request to refer to a FeatureGate and creates or
 // reconciles the Gateway API CRDs.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
@@ -279,7 +287,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			// Clear any stale transition state from a prior reconcile
 			// so that the status controller does not report a stuck
 			// Progressing=True condition.
-			r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{})
+			r.setTransitionState(operatorcontroller.TransitionState{})
 			return reconcile.Result{}, err
 		}
 
@@ -291,7 +299,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		lastApplied := r.config.ModeAccessor.GetLastAppliedMode()
 		modeChanged := lastApplied == nil || *lastApplied != snapshot.desiredMode
 		if modeChanged {
-			r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+			r.setTransitionState(operatorcontroller.TransitionState{
 				InProgress: true,
 				Target:     snapshot.desiredMode,
 			})
@@ -315,7 +323,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// repeating them every 30s wastes resources.
 		if modeChanged {
 			if err := r.reconcileAdmissionPolicyTransition(ctx, snapshot); err != nil {
-				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+				r.setTransitionState(operatorcontroller.TransitionState{
 					InProgress: true,
 					Target:     snapshot.desiredMode,
 					Error:      err,
@@ -327,7 +335,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// Phase 2: resolve desired mode BEFORE mutating CRDs/RBAC so
 		// that Unmanaged or TakeoverBlocked states skip ensure.
 		if err := r.reconcileIngressStatus(ctx, snapshot); err != nil {
-			r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+			r.setTransitionState(operatorcontroller.TransitionState{
 				InProgress: true,
 				Target:     snapshot.desiredMode,
 				Error:      err,
@@ -339,7 +347,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// resolved mode is Managed (not Unmanaged, not TakeoverBlocked).
 		if r.config.ModeAccessor.ShouldManageCRDs() {
 			if err := r.ensureAdmissionPolicy(ctx); err != nil {
-				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+				r.setTransitionState(operatorcontroller.TransitionState{
 					InProgress: true,
 					Target:     snapshot.desiredMode,
 					Error:      err,
@@ -347,7 +355,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				return reconcile.Result{}, err
 			}
 			if err := r.ensureGatewayAPICRDs(ctx); err != nil {
-				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+				r.setTransitionState(operatorcontroller.TransitionState{
 					InProgress: true,
 					Target:     snapshot.desiredMode,
 					Error:      err,
@@ -355,7 +363,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				return reconcile.Result{}, err
 			}
 			if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
-				r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{
+				r.setTransitionState(operatorcontroller.TransitionState{
 					InProgress: true,
 					Target:     snapshot.desiredMode,
 					Error:      err,
@@ -368,7 +376,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// Record the applied mode so subsequent steady-state reconciles
 		// skip setting InProgress, then clear the transition state.
 		r.config.ModeAccessor.SetLastAppliedMode(snapshot.desiredMode)
-		r.config.ModeAccessor.SetTransitionState(operatorcontroller.TransitionState{})
+		r.setTransitionState(operatorcontroller.TransitionState{})
 	} else {
 		// Gate OFF: preserve legacy always-ensure behavior.
 		if err := r.ensureGatewayAPICRDs(ctx); err != nil {

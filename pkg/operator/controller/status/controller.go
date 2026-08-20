@@ -686,7 +686,6 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 		computeGatewayAPICRDsDegradedCondition,
 		computeGatewayAPIInstallDegradedCondition,
 		computeOrphanedSubscriptionCondition,
-		computeModeTransitionDegradedCondition,
 	} {
 		degradedCondition = joinConditions(degradedCondition, fn(state))
 	}
@@ -838,24 +837,6 @@ func computeOrphanedSubscriptionCondition(state operatorState) configv1.ClusterO
 	return degradedCondition
 }
 
-// computeModeTransitionDegradedCondition computes the Degraded condition
-// for a Gateway API management mode transition failure. It returns
-// Degraded=True with reason ReconciliationFailed when a required
-// transition operation has failed (e.g., VAP delete, Sail uninstall).
-func computeModeTransitionDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
-	degradedCondition := configv1.ClusterOperatorStatusCondition{}
-	if !state.modeTransition.InProgress || state.modeTransition.Error == nil {
-		return degradedCondition
-	}
-	degradedCondition.Status = configv1.ConditionTrue
-	degradedCondition.Reason = "ReconciliationFailed"
-	degradedCondition.Message = fmt.Sprintf(
-		"Failed to transition Gateway API management mode to %s: %v",
-		state.modeTransition.Target, state.modeTransition.Error,
-	)
-	return degradedCondition
-}
-
 // computeOperatorUpgradeableCondition computes the operator's Upgradeable
 // status condition.
 func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
@@ -943,9 +924,16 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 
 	var messages []string
 
-	// Check for an in-progress Gateway API management mode transition.
-	if modeTransition.InProgress && modeTransition.Error == nil {
+	// Check for an in-progress Gateway API management mode transition. A
+	// failed transition operation (e.g., VAP delete, Sail uninstall) keeps
+	// reporting Progressing rather than Degraded, since it is retried on
+	// subsequent reconciles; see ingress_controller_gateway_api_mode_transition_failed
+	// for the durable failure signal.
+	if modeTransition.InProgress {
 		msg := fmt.Sprintf("Transitioning Gateway API management mode to %s", modeTransition.Target)
+		if modeTransition.Error != nil {
+			msg = fmt.Sprintf("Failed to transition Gateway API management mode to %s, retrying: %v", modeTransition.Target, modeTransition.Error)
+		}
 		messages = append(messages, msg)
 		progressing = true
 	}
