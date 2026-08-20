@@ -565,6 +565,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 	}
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
@@ -578,6 +579,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		switch volume.Name {
 		case "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -713,6 +715,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		"error-pages",
 		"rsyslog-config",
 		"rsyslog-socket",
@@ -725,6 +728,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		case "error-pages", "rsyslog-config", "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
 		case "rsyslog-socket":
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -944,6 +948,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 	}
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
@@ -957,6 +962,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		switch volume.Name {
 		case "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -1159,6 +1165,7 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		"client-ca",
 	}
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
@@ -1171,6 +1178,7 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		case "client-ca":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
 			assert.Equal(t, "router-client-ca-default", volume.VolumeSource.ConfigMap.LocalObjectReference.Name)
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}

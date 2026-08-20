@@ -48,6 +48,7 @@ spec:
         - name: ingress-operator
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           terminationMessagePolicy: FallbackToLogsOnError
@@ -102,6 +103,8 @@ spec:
           - name: bound-sa-token
             mountPath: /var/run/secrets/openshift/serviceaccount
             readOnly: true
+          - name: tmp
+            mountPath: /tmp
         - name: kube-rbac-proxy
           securityContext:
             allowPrivilegeEscalation: false
@@ -145,3 +148,6 @@ spec:
           - serviceAccountToken:
               path: token
               audience: openshift
+      # Provides a writable /tmp directory since readOnlyRootFilesystem is enabled.
+      - name: tmp
+        emptyDir: {}
