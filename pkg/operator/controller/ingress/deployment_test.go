@@ -88,36 +88,52 @@ func checkDeploymentHasContainer(t *testing.T, containers []corev1.Container, na
 	}
 }
 
-func getHAProxyContainer(t *testing.T, deployment *appsv1.Deployment) *corev1.Container {
+func getNamedInitContainer(t *testing.T, deployment *appsv1.Deployment, name string) *corev1.Container {
 	t.Helper()
 
 	for i := range deployment.Spec.Template.Spec.InitContainers {
 		container := &deployment.Spec.Template.Spec.InitContainers[i]
-		if container.Name == routerHAProxyContainerName {
+		if container.Name == name {
 			return container
 		}
 	}
 
-	require.FailNow(t, "haproxy container not found")
+	require.FailNow(t, fmt.Sprintf("%s container not found", name))
 	return nil
 }
 
-func checkHAProxyContainerSecurityContext(t *testing.T, deployment *appsv1.Deployment) {
+func checkContainerSecurityContexts(t *testing.T, deployment *appsv1.Deployment) {
 	t.Helper()
-	container := getHAProxyContainer(t, deployment)
-	require.NotNil(t, container.SecurityContext, "containers[haproxy].securityContext")
 
-	if allowPrivEsc := container.SecurityContext.AllowPrivilegeEscalation; allowPrivEsc == nil || !*allowPrivEsc {
+	// Check the router container has readOnlyRootFilesystem.
+	routerContainer := &deployment.Spec.Template.Spec.Containers[0]
+	require.Equal(t, routerContainerName, routerContainer.Name, "expected first container to be %q", routerContainerName)
+	require.NotNil(t, routerContainer.SecurityContext, "containers[%s].securityContext", routerContainerName)
+	if readOnlyFS := routerContainer.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || !*readOnlyFS {
+		t.Errorf("%s container does not have securityContext.readOnlyRootFilesystem: true", routerContainerName)
+	}
+
+	// Check the init-router container has readOnlyRootFilesystem.
+	initContainer := getNamedInitContainer(t, deployment, routerInitContainerName)
+	require.NotNil(t, initContainer.SecurityContext, "initContainers[%s].securityContext", routerInitContainerName)
+	if readOnlyFS := initContainer.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || !*readOnlyFS {
+		t.Errorf("%s container does not have securityContext.readOnlyRootFilesystem: true", routerInitContainerName)
+	}
+
+	// Check the haproxy container has allowPrivilegeEscalation and readOnlyRootFilesystem.
+	haproxyContainer := getNamedInitContainer(t, deployment, routerHAProxyContainerName)
+	require.NotNil(t, haproxyContainer.SecurityContext, "initContainers[%s].securityContext", routerHAProxyContainerName)
+	if allowPrivEsc := haproxyContainer.SecurityContext.AllowPrivilegeEscalation; allowPrivEsc == nil || !*allowPrivEsc {
 		t.Errorf("%s container does not have securityContext.allowPrivilegeEscalation: true", routerHAProxyContainerName)
 	}
-	if readOnlyFS := container.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || !*readOnlyFS {
+	if readOnlyFS := haproxyContainer.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || !*readOnlyFS {
 		t.Errorf("%s container does not have securityContext.readOnlyRootFilesystem: true", routerHAProxyContainerName)
 	}
 }
 
 func checkHAProxyContainerSocketRef(t *testing.T, deployment *appsv1.Deployment) {
 	t.Helper()
-	container := getHAProxyContainer(t, deployment)
+	container := getNamedInitContainer(t, deployment, routerHAProxyContainerName)
 
 	require.Equal(t, container.Args, []string{"-W", "-db", "-S", routerHAProxyAdminSocket + ",mode,600", "-f", "/var/lib/haproxy/conf/haproxy.config"}, "containers[haproxy].Args")
 
@@ -575,7 +591,7 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
 
-	checkHAProxyContainerSecurityContext(t, deployment)
+	checkContainerSecurityContexts(t, deployment)
 	checkHAProxyContainerSocketRef(t, deployment)
 	checkDeploymentHash(t, deployment)
 
@@ -782,6 +798,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		routerServiceAccountVolumeName,
 		routerHAProxyConfigVolume,
 	}
@@ -813,12 +830,13 @@ func TestDesiredRouterDeploymentSpecTemplateSidecar(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		routerServiceAccountVolumeName, // available in the pod but not mounted in the container
 		routerHAProxyConfigVolume,
 	}
 	hasDesiredRouterDeploymentSpecTemplate(t, ic, deployment, expectedVolumes)
 
-	haproxyContainer := getHAProxyContainer(t, deployment)
+	haproxyContainer := getNamedInitContainer(t, deployment, routerHAProxyContainerName)
 
 	// restartPolicy == Always configures an init container as a sidecar
 	require.Equal(t, haproxyContainer.RestartPolicy, ptr.To(corev1.ContainerRestartPolicyAlways))
@@ -857,6 +875,7 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 		case routerServiceAccountVolumeName:
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -896,7 +915,7 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 
 	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
-	haproxyContainer := getHAProxyContainer(t, deployment)
+	haproxyContainer := getNamedInitContainer(t, deployment, routerHAProxyContainerName)
 	checkProbes(t, haproxyContainer, false)
 
 	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.Containers, operatorv1.ContainerLoggingSidecarContainerName, false)
@@ -1101,7 +1120,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 
 	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
-	haproxyContainer := getHAProxyContainer(t, deployment)
+	haproxyContainer := getNamedInitContainer(t, deployment, routerHAProxyContainerName)
 	checkProbes(t, haproxyContainer, false)
 
 	expectedVolumes := []string{
@@ -1109,6 +1128,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		"error-pages",
 		"rsyslog-config",
 		"rsyslog-socket",
@@ -1126,6 +1146,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
 		case "rsyslog-socket":
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -1336,7 +1357,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 
 	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], true)
 
-	haproxyContainer := getHAProxyContainer(t, deployment)
+	haproxyContainer := getNamedInitContainer(t, deployment, routerHAProxyContainerName)
 	checkProbes(t, haproxyContainer, false)
 
 	expectedVolumeSecretPairs := map[string]string{
@@ -1349,6 +1370,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		routerServiceAccountVolumeName,
 		routerHAProxyConfigVolume,
 	}
@@ -1367,6 +1389,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		case routerServiceAccountVolumeName:
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -1569,6 +1592,7 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		"tmp",
 		"client-ca",
 		routerServiceAccountVolumeName,
 		routerHAProxyConfigVolume,
@@ -1586,6 +1610,7 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		case routerServiceAccountVolumeName:
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
+		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
