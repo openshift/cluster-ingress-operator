@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
@@ -238,6 +239,34 @@ func TestUpdateModeTransitionFailedMetric_RepeatedFailureNoGap(t *testing.T) {
 			"series must remain present across repeated failures of the same target")
 		assert.Equal(t, float64(1), gaugeValue(t, gatewayAPIModeTransitionFailedMetric.WithLabelValues("Unmanaged")))
 	}
+}
+
+func TestUpdateUnmanagedCRDsMetric(t *testing.T) {
+	gatewayAPIUnmanagedCRDsMetric.Reset()
+	unmanagedCRDsMetricMu.Lock()
+	lastUnmanagedCRDNames = sets.New[string]()
+	unmanagedCRDsMetricMu.Unlock()
+
+	updateUnmanagedCRDsMetric(nil)
+	assert.Equal(t, 0, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric),
+		"metric should be absent when there are no unmanaged CRDs")
+
+	updateUnmanagedCRDsMetric([]string{"invalids.gateway.networking.k8s.io"})
+	assert.Equal(t, float64(1), gaugeValue(t, gatewayAPIUnmanagedCRDsMetric.WithLabelValues("invalids.gateway.networking.k8s.io")))
+	assert.Equal(t, 1, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric))
+
+	// A second unmanaged CRD appears; both series must be present.
+	updateUnmanagedCRDsMetric([]string{"invalids.gateway.networking.k8s.io", "other.gateway.networking.k8s.io"})
+	assert.Equal(t, 2, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric))
+
+	// The first one is resolved: only the remaining one must be present.
+	updateUnmanagedCRDsMetric([]string{"other.gateway.networking.k8s.io"})
+	assert.Equal(t, 1, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric))
+	assert.Equal(t, float64(1), gaugeValue(t, gatewayAPIUnmanagedCRDsMetric.WithLabelValues("other.gateway.networking.k8s.io")))
+
+	// All resolved: the metric must be empty again.
+	updateUnmanagedCRDsMetric(nil)
+	assert.Equal(t, 0, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric))
 }
 
 func TestParseOSSMVersion(t *testing.T) {

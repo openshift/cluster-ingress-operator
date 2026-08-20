@@ -9,6 +9,7 @@ import (
 	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 )
@@ -43,10 +44,23 @@ var (
 		Help: "Reports 1 for the target Gateway API management mode a transition is currently failing to reach. Removed once the transition succeeds.",
 	}, []string{"target"})
 
+	// gatewayAPIUnmanagedCRDsMetric reports 1 for each Gateway API-group
+	// CRD found on the cluster that CIO does not manage (e.g., a
+	// third-party or unexpected CRD sharing the gateway.networking.k8s.io
+	// group). This is an observational signal only -- it must never be
+	// used to set ClusterOperator Degraded, since a real Degraded
+	// transition on "ingress" is a hard, unconditional CI failure with no
+	// grace period. See the "GatewayAPIUnmanagedCRDsFound" alert instead.
+	gatewayAPIUnmanagedCRDsMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ingress_controller_gateway_api_unmanaged_crds",
+		Help: "Reports 1 for each Gateway API-group CRD present on the cluster that the Cluster Ingress Operator does not manage.",
+	}, []string{"name"})
+
 	gatewayAPIMetricsList = []prometheus.Collector{
 		gatewayAPIManagementModeMetric,
 		gatewayAPIInfoMetric,
 		gatewayAPIModeTransitionFailedMetric,
+		gatewayAPIUnmanagedCRDsMetric,
 	}
 
 	// infoMetricMu protects the last-seen version labels used to
@@ -64,6 +78,13 @@ var (
 	// on the common repeated-failure path.
 	modeTransitionFailedMetricMu sync.Mutex
 	lastFailingTarget            string
+
+	// unmanagedCRDsMetricMu protects lastUnmanagedCRDNames, used the same
+	// way as lastFailingTarget above: only the CRD names that actually
+	// dropped out of the set are deleted, so a steady-state list of
+	// unmanaged CRDs is never briefly empty to a concurrent scrape.
+	unmanagedCRDsMetricMu sync.Mutex
+	lastUnmanagedCRDNames = sets.New[string]()
 )
 
 // RegisterMetrics registers the Gateway API management mode and info
@@ -149,6 +170,29 @@ func updateModeTransitionFailedMetric(state operatorcontroller.TransitionState) 
 		gatewayAPIModeTransitionFailedMetric.WithLabelValues(failingTarget).Set(1)
 	}
 	lastFailingTarget = failingTarget
+}
+
+// updateUnmanagedCRDsMetric reports the set of Gateway API-group CRDs that
+// CIO does not manage. It is called every reconcile with the current list
+// so the metric always matches the ClusterOperator extension status
+// (state.unmanagedGatewayAPICRDNames).
+//
+// Only CRD names that dropped out of the set are deleted (rather than
+// calling Reset() on every call), so a steady-state list of unmanaged
+// CRDs never goes briefly empty to a concurrent Prometheus scrape.
+func updateUnmanagedCRDsMetric(names []string) {
+	current := sets.New(names...)
+
+	unmanagedCRDsMetricMu.Lock()
+	defer unmanagedCRDsMetricMu.Unlock()
+
+	for name := range lastUnmanagedCRDNames.Difference(current) {
+		gatewayAPIUnmanagedCRDsMetric.DeleteLabelValues(name)
+	}
+	for name := range current {
+		gatewayAPIUnmanagedCRDsMetric.WithLabelValues(name).Set(1)
+	}
+	lastUnmanagedCRDNames = current
 }
 
 // embeddedGatewayAPIVersion returns the bundle-version annotation from

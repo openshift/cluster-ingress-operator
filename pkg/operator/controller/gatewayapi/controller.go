@@ -393,6 +393,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to list unmanaged gateway CRDs: %w", err)
 	} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
+	} else {
+		updateUnmanagedCRDsMetric(crdNames)
 	}
 
 	// The subscriptions resource only exists if the
