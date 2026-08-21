@@ -2,6 +2,7 @@ package private
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	common "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm"
 	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/private/client"
 
 	"github.com/stretchr/testify/assert"
@@ -541,4 +543,134 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_listAllResourceRecords(t *testing.T) {
+	t.Run("single page", func(t *testing.T) {
+		dnsService, err := dnsclient.NewFake()
+		if err != nil {
+			t.Fatalf("failed to create fakeClient: %v", err)
+		}
+		provider := &Provider{
+			dnsService: dnsService,
+			config:     common.Config{InstanceID: "test-instance"},
+		}
+		totalCount := int64(3)
+		dnsService.ListAllDnsRecordsInputOutput = dnsclient.ListAllDnsRecordsInputOutput{
+			OutputError:    nil,
+			OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+			OutputResult: &dnssvcsv1.ListResourceRecords{
+				TotalCount: &totalCount,
+				ResourceRecords: []dnssvcsv1.ResourceRecord{
+					{ID: pointer.String("rec-1"), Name: pointer.String("a.example.com"), Type: pointer.String("A")},
+					{ID: pointer.String("rec-2"), Name: pointer.String("b.example.com"), Type: pointer.String("A")},
+					{ID: pointer.String("rec-3"), Name: pointer.String("c.example.com"), Type: pointer.String("A")},
+				},
+			},
+		}
+		records, err := provider.listAllResourceRecords("test-zone")
+		assert.NoError(t, err)
+		assert.Len(t, records, 3)
+	})
+
+	t.Run("multiple pages", func(t *testing.T) {
+		dnsService, err := dnsclient.NewFake()
+		if err != nil {
+			t.Fatalf("failed to create fakeClient: %v", err)
+		}
+		provider := &Provider{
+			dnsService: dnsService,
+			config:     common.Config{InstanceID: "test-instance"},
+		}
+		totalCount := int64(5)
+		nextHref := "https://api.dns-svcs.example.com/v1/instances/test-instance/dnszones/test-zone/resource_records?offset=3&limit=200"
+		// Configure two pages: page 1 has 3 records with a Next
+		// pointer, page 2 has 2 records with no Next (last page).
+		dnsService.ListResourceRecordsPages = []dnsclient.ListAllDnsRecordsInputOutput{
+			{
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnssvcsv1.ListResourceRecords{
+					TotalCount: &totalCount,
+					Next:       &dnssvcsv1.NextHref{Href: &nextHref},
+					ResourceRecords: []dnssvcsv1.ResourceRecord{
+						{ID: pointer.String("rec-1"), Name: pointer.String("a.example.com"), Type: pointer.String("A")},
+						{ID: pointer.String("rec-2"), Name: pointer.String("b.example.com"), Type: pointer.String("A")},
+						{ID: pointer.String("rec-3"), Name: pointer.String("c.example.com"), Type: pointer.String("A")},
+					},
+				},
+			},
+			{
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnssvcsv1.ListResourceRecords{
+					TotalCount: &totalCount,
+					ResourceRecords: []dnssvcsv1.ResourceRecord{
+						{ID: pointer.String("rec-4"), Name: pointer.String("d.example.com"), Type: pointer.String("A")},
+						{ID: pointer.String("rec-5"), Name: pointer.String("e.example.com"), Type: pointer.String("A")},
+					},
+				},
+			},
+		}
+
+		records, err := provider.listAllResourceRecords("test-zone")
+		assert.NoError(t, err)
+		assert.Len(t, records, 5, "expected all records from both pages")
+		assert.Equal(t, "rec-1", *records[0].ID)
+		assert.Equal(t, "rec-5", *records[4].ID)
+	})
+
+	t.Run("non-advancing offset returns error", func(t *testing.T) {
+		dnsService, err := dnsclient.NewFake()
+		if err != nil {
+			t.Fatalf("failed to create fakeClient: %v", err)
+		}
+		provider := &Provider{
+			dnsService: dnsService,
+			config:     common.Config{InstanceID: "test-instance"},
+		}
+		totalCount := int64(2)
+		// Return a page whose Next offset does not advance
+		// (same offset=0). The loop must return an error
+		// instead of silently returning partial records.
+		staleHref := "https://api.dns-svcs.example.com/v1/instances/test-instance/dnszones/test-zone/resource_records?offset=0&limit=200"
+		dnsService.ListResourceRecordsPages = []dnsclient.ListAllDnsRecordsInputOutput{
+			{
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnssvcsv1.ListResourceRecords{
+					TotalCount: &totalCount,
+					Next:       &dnssvcsv1.NextHref{Href: &staleHref},
+					ResourceRecords: []dnssvcsv1.ResourceRecord{
+						{ID: pointer.String("rec-1"), Name: pointer.String("a.example.com"), Type: pointer.String("A")},
+						{ID: pointer.String("rec-2"), Name: pointer.String("b.example.com"), Type: pointer.String("A")},
+					},
+				},
+			},
+		}
+		_, err = provider.listAllResourceRecords("test-zone")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "pagination offset did not advance")
+	})
+
+	t.Run("404 returns collected records", func(t *testing.T) {
+		dnsService, err := dnsclient.NewFake()
+		if err != nil {
+			t.Fatalf("failed to create fakeClient: %v", err)
+		}
+		provider := &Provider{
+			dnsService: dnsService,
+			config:     common.Config{InstanceID: "test-instance"},
+		}
+		// Return a 404 with a nil result on the first page.
+		// The function should return an empty slice, not an error.
+		dnsService.ListResourceRecordsPages = []dnsclient.ListAllDnsRecordsInputOutput{
+			{
+				OutputError:    fmt.Errorf("not found"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusNotFound},
+				OutputResult:   nil,
+			},
+		}
+		records, err := provider.listAllResourceRecords("test-zone")
+		assert.NoError(t, err)
+		assert.Empty(t, records,
+			"404 should return empty records, not an error")
+	})
 }
