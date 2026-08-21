@@ -700,6 +700,9 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	if record.Spec.RecordType != iov1.CNAMERecordType {
 		return fmt.Errorf("unsupported record type %s", record.Spec.RecordType)
 	}
+	if len(record.Spec.Targets) == 0 {
+		return fmt.Errorf("no targets specified for DNS record %s", record.Spec.DNSName)
+	}
 	// TODO: handle >0 targets
 	domain, target := record.Spec.DNSName, record.Spec.Targets[0]
 	if len(domain) == 0 {
