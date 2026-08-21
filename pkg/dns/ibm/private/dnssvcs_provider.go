@@ -85,23 +85,17 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return fmt.Errorf("delete: invalid dns input data: %w", err)
 	}
 
-	listOpt := p.dnsService.NewListResourceRecordsOptions(p.config.InstanceID, zone.ID)
 	// DNS records may have an ending "." character in the DNS name.  For
 	// example, the ingress operator's ingress controller adds a trailing
 	// "." when it creates a wildcard DNS record.
 	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
 
-	result, response, err := p.dnsService.ListResourceRecords(listOpt)
+	allRecords, err := p.listAllResourceRecords(zone.ID)
 	if err != nil {
-		if response == nil || response.StatusCode != http.StatusNotFound {
-			return fmt.Errorf("delete: failed to list the dns record: %w", err)
-		}
-	}
-	if result == nil {
-		return fmt.Errorf("delete: ListResourceRecords returned nil as result")
+		return fmt.Errorf("delete: %w", err)
 	}
 
-	for _, resourceRecord := range result.ResourceRecords {
+	for _, resourceRecord := range allRecords {
 		var resourceRecordTarget string
 		if resourceRecord.ID == nil {
 			return fmt.Errorf("delete: record id is nil")
@@ -184,7 +178,6 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 		return fmt.Errorf("createOrUpdateDNSRecord: invalid dns input data: %w", err)
 	}
 
-	listOpt := p.dnsService.NewListResourceRecordsOptions(p.config.InstanceID, zone.ID)
 	// DNS records may have an ending "." character in the DNS name.  For
 	// example, the ingress operator's ingress controller adds a trailing
 	// "." when it creates a wildcard DNS record.
@@ -198,21 +191,14 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 		return fmt.Errorf("createOrUpdateDNSRecord: only one target is supported, but found %d: targets=%v", len(record.Spec.Targets), record.Spec.Targets)
 	}
 
-	listResult, response, err := p.dnsService.ListResourceRecords(listOpt)
+	allRecords, err := p.listAllResourceRecords(zone.ID)
 	if err != nil {
-		// Avoid continuing with an invalid list response, as we can't determine
-		// whether to create or update the DNS record, which may lead to further issues.
-		if response == nil || response.StatusCode != http.StatusNotFound {
-			return fmt.Errorf("createOrUpdateDNSRecord: failed to list the dns record: %w", err)
-		}
-	}
-	if listResult == nil {
-		return fmt.Errorf("createOrUpdateDNSRecord: ListResourceRecords returned nil as result")
+		return fmt.Errorf("createOrUpdateDNSRecord: %w", err)
 	}
 
 	target := record.Spec.Targets[0]
 	updated := false
-	for _, resourceRecord := range listResult.ResourceRecords {
+	for _, resourceRecord := range allRecords {
 		if *resourceRecord.Name == dnsName {
 			if resourceRecord.ID == nil {
 				return fmt.Errorf("createOrUpdateDNSRecord: record id is nil")
@@ -280,4 +266,43 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 		log.Info("created DNS record", "record", record.Spec, "zone", zone, "target", target)
 	}
 	return nil
+}
+
+// listAllResourceRecords retrieves all resource records across all
+// pages for the given zone. The IBM Cloud DNS Services API returns
+// paginated results; this helper follows the Offset/Limit pattern
+// until all records have been fetched.
+func (p *Provider) listAllResourceRecords(zoneID string) ([]dnssvcsv1.ResourceRecord, error) {
+	var allRecords []dnssvcsv1.ResourceRecord
+	var offset int64
+	const pageSize int64 = 200
+
+	for {
+		listOpt := p.dnsService.NewListResourceRecordsOptions(p.config.InstanceID, zoneID)
+		listOpt.SetOffset(offset)
+		listOpt.SetLimit(pageSize)
+
+		result, response, err := p.dnsService.ListResourceRecords(listOpt)
+		if err != nil {
+			if response == nil || response.StatusCode != http.StatusNotFound {
+				return nil, fmt.Errorf("failed to list the dns record: %w", err)
+			}
+		}
+		if result == nil {
+			return nil, fmt.Errorf("ListResourceRecords returned nil as result")
+		}
+
+		allRecords = append(allRecords, result.ResourceRecords...)
+
+		nextOffset, err := result.GetNextOffset()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get next offset for zone %s: %w", zoneID, err)
+		}
+		if nextOffset == nil {
+			break
+		}
+		offset = *nextOffset
+	}
+
+	return allRecords, nil
 }
