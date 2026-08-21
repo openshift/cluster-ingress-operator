@@ -89,11 +89,11 @@ func Test_ingressControllersForClusterOperator(t *testing.T) {
 			before := ic.DeepCopy()
 			view := ingressControllersForClusterOperator(controllers, tc.topology, tc.nodes)
 			require.Empty(t, cmp.Diff(*before, controllers[0]), "must not change cached IngressController conditions")
-			available := computeOperatorAvailableCondition(view)
+			available := computeOperatorAvailableCondition(view, tc.topology == configv1.ExternalTopologyMode)
 			require.Equal(t, tc.available, available.Status)
 			r := &reconciler{config: Config{OperatorReleaseVersion: "5.1", IngressControllerImage: "router:new", CanaryImage: "canary:new"}}
 			oldVersions := []configv1.OperandVersion{{Name: OperatorVersionName, Version: "5.0"}, {Name: IngressControllerVersionName, Version: "router:old"}, {Name: CanaryImageVersionName, Version: "canary:old"}}
-			allAvailable := checkAllIngressesAvailable(view)
+			allAvailable := checkAllIngressesAvailable(view, tc.topology == configv1.ExternalTopologyMode)
 			versions := r.computeOperatorStatusVersions(oldVersions, allAvailable)
 			progressing := computeOperatorProgressingCondition(view, allAvailable, oldVersions, versions, "5.1", "router:new", "canary:new", operatorcontroller.TransitionState{})
 			require.Equal(t, tc.progressing, progressing.Status)
@@ -117,7 +117,7 @@ func Test_zeroWorkerStartupDoesNotMaskCustomRouter(t *testing.T) {
 	require.Equal(t, operatorv1.ConditionTrue, view[0].Status.Conditions[0].Status)
 	require.Equal(t, operatorv1.ConditionFalse, view[1].Status.Conditions[0].Status)
 	require.Equal(t, operatorv1.ConditionTrue, view[1].Status.Conditions[1].Status)
-	require.False(t, checkAllIngressesAvailable(view))
+	require.False(t, checkAllIngressesAvailable(view, true))
 	progressing := computeOperatorProgressingCondition(view, false, nil, nil, "", "", "", operatorcontroller.TransitionState{})
 	require.Equal(t, configv1.ConditionTrue, progressing.Status)
 	require.Contains(t, progressing.Message, "e2e-dcm")
