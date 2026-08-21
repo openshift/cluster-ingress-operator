@@ -9,7 +9,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/go-autorest/autorest/azure"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 )
 
 // userAgent is the User-Agent identifier for the Cluster Ingress Operator.
@@ -74,16 +74,16 @@ type dnsClient struct {
 func New(config Config) (DNSClient, error) {
 	credential, err := getAzureCredentials(config)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get azure credentials")
+		return nil, pkgerrors.Wrap(err, "failed to get azure credentials")
 	}
 	rsc, err := newRecordSetClient(config, credential)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create recordSetClient")
+		return nil, pkgerrors.Wrap(err, "failed to create recordSetClient")
 	}
 
 	prsc, err := newPrivateRecordSetClient(config, credential)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create privateRecordSetClient")
+		return nil, pkgerrors.Wrap(err, "failed to create privateRecordSetClient")
 	}
 
 	return &dnsClient{recordSetClient: rsc, privateRecordSetClient: prsc}, nil
@@ -96,7 +96,7 @@ func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata m
 	case "Microsoft.Network/dnszones":
 		return c.recordSetClient.Put(ctx, zone, arec, metadata)
 	default:
-		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
+		return pkgerrors.Errorf("unsupported Zone provider %s", zone.Provider)
 	}
 }
 
@@ -107,7 +107,7 @@ func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 	case "Microsoft.Network/dnszones":
 		return c.recordSetClient.Delete(ctx, zone, arec)
 	default:
-		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
+		return pkgerrors.Errorf("unsupported Zone provider %s", zone.Provider)
 	}
 }
 
@@ -143,7 +143,7 @@ func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, meta
 	}
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, rs, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+		return pkgerrors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
 }
@@ -151,7 +151,7 @@ func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, meta
 func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+		return pkgerrors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
 }
@@ -189,7 +189,7 @@ func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecor
 
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, rs, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+		return pkgerrors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
 }
@@ -197,7 +197,7 @@ func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecor
 func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+		return pkgerrors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
 }
