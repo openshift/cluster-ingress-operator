@@ -109,9 +109,9 @@ func (p *Provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 
 	call := p.dnsService.Changes.Create(project, zoneID, change)
 	_, err = call.Do()
-	// Since we don't yet handle updates, assume that existing records are correct.
 	if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusConflict {
-		return nil
+		// The record already exists; update it to the desired state.
+		return p.Replace(record, zone)
 	}
 	return err
 }
