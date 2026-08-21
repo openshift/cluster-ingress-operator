@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	configv1 "github.com/openshift/api/config/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 )
 
 func Test_zoneMatchesTags(t *testing.T) {
@@ -349,4 +350,20 @@ func Test_NewProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_change_EmptyTargets(t *testing.T) {
+	record := &iov1.DNSRecord{
+		Spec: iov1.DNSRecordSpec{
+			RecordType: iov1.CNAMERecordType,
+			DNSName:    "test.example.com",
+			Targets:    []string{},
+		},
+	}
+	p := &Provider{
+		config: Config{Region: "us-east-1"},
+	}
+	err := p.change(record, configv1.DNSZone{ID: "zone"}, upsertAction)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no targets specified")
 }
