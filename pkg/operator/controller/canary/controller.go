@@ -41,6 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -530,27 +531,31 @@ func (r *reconciler) setCanaryDoesNotExistStatusCondition() error {
 // setCanaryStatusCondition applies the given condition to the default ingress controller.
 // The assumption here is that cond is a condition that does not overlap with any of the status
 // conditions set by the ingress controller in pkg/operator/controller/ingress/status.go.
+// A merge patch is used instead of a full Update to avoid overwriting concurrent
+// status changes made by other controllers (e.g. the ingress reconciler).
 func (r *reconciler) setCanaryStatusCondition(cond operatorv1.OperatorCondition) error {
-	ic := &operatorv1.IngressController{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      manifests.DefaultIngressControllerName,
-			Namespace: r.config.Namespace,
-		},
-	}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic); err != nil {
-		return fmt.Errorf("failed to get ingress controller %s: %v", ic.Name, err)
-	}
-
-	updated := ic.DeepCopy()
-	updated.Status.Conditions = ingresscontroller.MergeConditions(updated.Status.Conditions, cond)
-
-	if !ingresscontroller.IngressStatusesEqual(updated.Status, ic.Status) {
-		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-			return fmt.Errorf("failed to update ingresscontroller %s status: %v", ic.Name, err)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ic := &operatorv1.IngressController{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      manifests.DefaultIngressControllerName,
+				Namespace: r.config.Namespace,
+			},
 		}
-	}
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic); err != nil {
+			return fmt.Errorf("failed to get ingress controller %s: %w", ic.Name, err)
+		}
 
-	return nil
+		updated := ic.DeepCopy()
+		updated.Status.Conditions = ingresscontroller.MergeConditions(updated.Status.Conditions, cond)
+
+		if !ingresscontroller.IngressStatusesEqual(updated.Status, ic.Status) {
+			if err := r.client.Status().Patch(context.TODO(), updated, client.MergeFrom(ic)); err != nil {
+				return fmt.Errorf("failed to patch ingresscontroller %s status: %w", ic.Name, err)
+			}
+		}
+
+		return nil
+	})
 }
 
 // Switch the current RoutePort that the route points to.
