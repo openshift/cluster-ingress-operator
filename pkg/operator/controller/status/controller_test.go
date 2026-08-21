@@ -443,6 +443,82 @@ func Test_operatorStatusesEqual(t *testing.T) {
 				},
 			},
 		},
+		{
+			description: "related objects same name different group should not be equal",
+			expected:    false,
+			a: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "apps",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+				},
+			},
+			b: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "extensions",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+				},
+			},
+		},
+		{
+			description: "related objects same name different namespace should not be equal",
+			expected:    false,
+			a: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Resource:  "services",
+						Namespace: "openshift-ingress",
+						Name:      "router-default",
+					},
+				},
+			},
+			b: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Resource:  "services",
+						Namespace: "openshift-ingress-operator",
+						Name:      "router-default",
+					},
+				},
+			},
+		},
+		{
+			description: "related objects same name different order should be equal",
+			expected:    true,
+			a: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "apps",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+					{
+						Group:    "operator.openshift.io",
+						Resource: "ingresscontrollers",
+						Name:     "router-default",
+					},
+				},
+			},
+			b: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "operator.openshift.io",
+						Resource: "ingresscontrollers",
+						Name:     "router-default",
+					},
+					{
+						Group:    "apps",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {

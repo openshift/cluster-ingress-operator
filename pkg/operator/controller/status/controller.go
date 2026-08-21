@@ -1088,7 +1088,18 @@ func operatorStatusesEqual(a, b configv1.ClusterOperatorStatus) bool {
 
 	relatedCmpOpts := []cmp.Option{
 		cmpopts.EquateEmpty(),
-		cmpopts.SortSlices(func(a, b configv1.ObjectReference) bool { return a.Name < b.Name }),
+		cmpopts.SortSlices(func(a, b configv1.ObjectReference) bool {
+			if a.Group != b.Group {
+				return a.Group < b.Group
+			}
+			if a.Resource != b.Resource {
+				return a.Resource < b.Resource
+			}
+			if a.Namespace != b.Namespace {
+				return a.Namespace < b.Namespace
+			}
+			return a.Name < b.Name
+		}),
 	}
 	if !cmp.Equal(a.RelatedObjects, b.RelatedObjects, relatedCmpOpts...) {
 		return false
