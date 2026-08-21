@@ -1,11 +1,18 @@
 package canary
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -15,6 +22,52 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
+
+func Test_ensureCanaryServiceUpgradesOwnerKind(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		kind     string
+		uid      types.UID
+		wantKind string
+		updates  int
+	}{
+		{name: "upgrade", kind: "daemonset", uid: "owner", wantKind: "DaemonSet", updates: 1},
+		{name: "current", kind: "DaemonSet", uid: "owner", wantKind: "DaemonSet"},
+		{name: "different owner", kind: "daemonset", uid: "other", wantKind: "daemonset"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			owner := metav1.OwnerReference{APIVersion: "apps/v1", Kind: "DaemonSet", Name: "canary", UID: "owner"}
+			current := desiredCanaryService(owner)
+			current.TypeMeta = metav1.TypeMeta{}
+			current.OwnerReferences[0].Kind = testCase.kind
+			current.OwnerReferences[0].UID = testCase.uid
+			other := metav1.OwnerReference{APIVersion: "v1", Kind: "ConfigMap", Name: "other", UID: "unrelated"}
+			current.OwnerReferences = append(current.OwnerReferences, other)
+			current.Labels["example.com/label"] = "keep"
+			current.Annotations = map[string]string{"example.com/annotation": "keep"}
+			current.Finalizers = []string{"example.com/finalizer"}
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+			updates := 0
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).WithInterceptorFuncs(interceptor.Funcs{
+				Update: func(ctx context.Context, underlying client.WithWatch, object client.Object, options ...client.UpdateOption) error {
+					updates++
+					return underlying.Update(ctx, object, options...)
+				},
+			}).Build()
+			reconciler := &reconciler{client: fakeClient}
+			found, updated, err := reconciler.ensureCanaryService(t.Context(), owner)
+			require.NoError(t, err)
+			require.True(t, found)
+			expected := current.DeepCopy()
+			expected.OwnerReferences[0].Kind = testCase.wantKind
+			assert.Empty(t, cmp.Diff(expected, updated, cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion")))
+			_, _, err = reconciler.ensureCanaryService(t.Context(), owner)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.updates, updates)
+		})
+	}
+}
 
 func Test_desiredCanaryService(t *testing.T) {
 	daemonsetRef := metav1.OwnerReference{
