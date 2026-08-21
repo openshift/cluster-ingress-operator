@@ -14,7 +14,7 @@ spec:
       apiVersions: ["v1"]
       operations:  ["CREATE","UPDATE","DELETE"]
       resources:   ["customresourcedefinitions"]
-      scope: “*”
+      scope: "*"
     matchPolicy: Equivalent
     namespaceSelector: {}
     objectSelector: {}
