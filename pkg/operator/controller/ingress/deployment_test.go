@@ -848,7 +848,7 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+			assertVolumeHasDefaultMode(t, int32(0600), volume.Secret.DefaultMode, volume.Name)
 			continue
 		}
 		switch volume.Name {
@@ -1119,7 +1119,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		switch volume.Name {
 		case "default-certificate", "metrics-certs", "stats-auth":
-			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+			assertVolumeHasDefaultMode(t, int32(0600), volume.Secret.DefaultMode, volume.Name)
 		case "error-pages", "rsyslog-config", "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
 		case routerServiceAccountVolumeName:
@@ -1358,7 +1358,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+			assertVolumeHasDefaultMode(t, int32(0600), volume.Secret.DefaultMode, volume.Name)
 			continue
 		}
 		switch volume.Name {
@@ -1577,7 +1577,7 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		switch volume.Name {
 		case "default-certificate", "metrics-certs", "stats-auth":
-			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+			assertVolumeHasDefaultMode(t, int32(0600), volume.Secret.DefaultMode, volume.Name)
 		case "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
 		case "client-ca":
@@ -2114,7 +2114,7 @@ func Test_deploymentConfigChanged(t *testing.T) {
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = nil
 			},
-			expect: false,
+			expect: true,
 		},
 		{
 			description: "if .spec.template.spec.nodeSelector changes",
@@ -2555,7 +2555,7 @@ func Test_deploymentConfigChanged(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			nineteen := int32(19)
-			fourTwenty := int32(420) // = 0644 octal.
+			threeEightyFour := int32(384) // = 0600 octal.
 			original := appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "router-original",
@@ -2591,7 +2591,7 @@ func Test_deploymentConfigChanged(t *testing.T) {
 									VolumeSource: corev1.VolumeSource{
 										Secret: &corev1.SecretVolumeSource{
 											SecretName:  "secrets-volume",
-											DefaultMode: &fourTwenty,
+											DefaultMode: &threeEightyFour,
 										},
 									},
 								},

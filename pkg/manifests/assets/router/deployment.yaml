@@ -146,7 +146,7 @@ spec:
       volumes:
       - name: default-certificate
         secret:
-          defaultMode: 420
+          defaultMode: 384
           # SecretName is set at run-time.
       - name: haproxy-config
         emptyDir: {}

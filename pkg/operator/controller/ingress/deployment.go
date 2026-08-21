@@ -504,7 +504,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		Name: statsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				DefaultMode: ptr.To[int32](0644),
+				DefaultMode: ptr.To[int32](0600),
 				SecretName:  statsSecretName,
 			},
 		},
@@ -532,7 +532,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		Name: certsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				DefaultMode: ptr.To[int32](0644),
+				DefaultMode: ptr.To[int32](0600),
 				SecretName:  certsSecretName,
 			},
 		},
