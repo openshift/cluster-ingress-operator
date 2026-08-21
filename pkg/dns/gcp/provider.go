@@ -123,23 +123,34 @@ func (p *Provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error 
 	if err != nil {
 		return err
 	}
-	oldRecord := p.dnsService.ResourceRecordSets.List(project, zoneID).Name(record.Spec.DNSName)
-	if err := oldRecord.Pages(ctx, func(page *gdnsv1.ResourceRecordSetsListResponse) error {
-		for _, resourceRecordSet := range page.Rrsets {
-			log.Info("found old DNS resource record set", "resourceRecordSet", resourceRecordSet)
-			change := &gdnsv1.Change{Deletions: []*gdnsv1.ResourceRecordSet{resourceRecordSet}}
-			call := p.dnsService.Changes.Create(project, zoneID, change)
-			_, err := call.Do()
-			if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusNotFound {
-				return nil
-			}
-			return err
+
+	// Collect existing record sets that match the DNS name and type so
+	// they can be atomically replaced in a single Change request.
+	var oldRecords []*gdnsv1.ResourceRecordSet
+	listCall := p.dnsService.ResourceRecordSets.List(project, zoneID).Name(record.Spec.DNSName).Type(string(record.Spec.RecordType))
+	if err := listCall.Pages(ctx, func(page *gdnsv1.ResourceRecordSetsListResponse) error {
+		for _, rrs := range page.Rrsets {
+			log.Info("found old DNS resource record set", "resourceRecordSet", rrs)
+			oldRecords = append(oldRecords, rrs)
 		}
 		return nil
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to list resource record sets in zone %s: %w", zoneID, err)
 	}
-	if err := p.Ensure(record, zone); err != nil {
+
+	// Build a single atomic change that deletes old records and adds
+	// the new one in one API call, preventing a window where the
+	// record does not exist.
+	change := &gdnsv1.Change{
+		Deletions: oldRecords,
+		Additions: []*gdnsv1.ResourceRecordSet{resourceRecordSet(record)},
+	}
+	call := p.dnsService.Changes.Create(project, zoneID, change)
+	if _, err := call.Do(); err != nil {
+		if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusNotFound {
+			// Old records were already gone; fall back to create.
+			return p.Ensure(record, zone)
+		}
 		return err
 	}
 	return nil

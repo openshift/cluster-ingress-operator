@@ -2,6 +2,7 @@ package gcp
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -138,4 +139,50 @@ func Test_Ensure_ConflictCallsReplace(t *testing.T) {
 	assert.NoError(t, err, "Ensure should succeed via Replace fallback on 409")
 	assert.GreaterOrEqual(t, int(callCount.Load()), 2,
 		"expected at least 2 API calls: Ensure (409) then Replace")
+}
+
+func Test_Replace_AtomicChange(t *testing.T) {
+	// Verify that Replace sends a single Change containing both
+	// deletions (old record) and additions (new record).
+	var capturedBody []byte
+	var postCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			if err := json.NewEncoder(w).Encode(&gdnsv1.ResourceRecordSetsListResponse{
+				Rrsets: []*gdnsv1.ResourceRecordSet{{
+					Name: "test.example.com.", Type: "A",
+					Ttl: 300, Rrdatas: []string{"10.0.0.1"},
+				}},
+			}); err != nil {
+				t.Errorf("failed to encode list response: %v", err)
+			}
+		case "POST":
+			postCount++
+			capturedBody, _ = io.ReadAll(r.Body)
+			if err := json.NewEncoder(w).Encode(&gdnsv1.Change{Status: "pending"}); err != nil {
+				t.Errorf("failed to encode change response: %v", err)
+			}
+		}
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server)
+	record := &iov1.DNSRecord{
+		Spec: iov1.DNSRecordSpec{
+			DNSName: "test.example.com.", Targets: []string{"10.0.0.2"},
+			RecordType: iov1.ARecordType, RecordTTL: 300,
+		},
+	}
+	err := p.Replace(record, configv1.DNSZone{ID: "test-zone"})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, postCount,
+		"Replace must send exactly one POST (atomic change)")
+
+	var change gdnsv1.Change
+	assert.NoError(t, json.Unmarshal(capturedBody, &change))
+	assert.Len(t, change.Deletions, 1, "expected 1 deletion")
+	assert.Equal(t, "10.0.0.1", change.Deletions[0].Rrdatas[0])
+	assert.Len(t, change.Additions, 1, "expected 1 addition")
+	assert.Equal(t, "10.0.0.2", change.Additions[0].Rrdatas[0])
 }
