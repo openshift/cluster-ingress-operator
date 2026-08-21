@@ -75,7 +75,7 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 
 	r.config.ModeAccessor.Update(snapshot.desiredMode, managed, present, compliant)
 
-	updateManagementModeMetrics(managedCond, compliantCond, embeddedGatewayAPIVersion(), parseOSSMVersion(r.config.OSSMVersion))
+	updateManagementModeMetrics(managedCond)
 
 	if !snapshot.found {
 		return nil

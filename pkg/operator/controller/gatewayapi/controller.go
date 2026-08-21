@@ -200,10 +200,6 @@ type Config struct {
 	// when the management mode gate is disabled.
 	ModeAccessor *ModeAccessor
 
-	// OSSMVersion is the OpenShift Service Mesh version shipped by
-	// CIO. Used as a label on the gateway_api_info metric.
-	OSSMVersion string
-
 	// SailUninstaller is called to uninstall the CIO-managed Istio
 	// instance when transitioning to Unmanaged mode. May be nil when
 	// the Sail Library is not in use.

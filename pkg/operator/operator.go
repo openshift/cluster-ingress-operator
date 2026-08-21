@@ -394,7 +394,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
-		OSSMVersion:                     config.GatewayAPIOperatorVersion,
 		ModeAccessor:                    modeAccessor,
 		SailUninstaller:                 sailUninstaller,
 		DependentControllers: []controller.Controller{
