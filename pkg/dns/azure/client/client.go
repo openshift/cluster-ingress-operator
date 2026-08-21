@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"errors"
+	"net/http"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
@@ -151,6 +153,10 @@ func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, meta
 func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, nil)
 	if err != nil {
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+			return nil
+		}
 		return pkgerrors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
@@ -197,6 +203,10 @@ func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecor
 func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, nil)
 	if err != nil {
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+			return nil
+		}
 		return pkgerrors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
