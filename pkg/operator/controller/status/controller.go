@@ -442,12 +442,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	co.Status.RelatedObjects = related
 
-	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
+	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers, state.externalTopologyMode)
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
-		computeOperatorAvailableCondition(state.IngressControllers),
+		computeOperatorAvailableCondition(state.IngressControllers, state.externalTopologyMode),
 		computeOperatorProgressingCondition(
 			state.IngressControllers,
 			allIngressesAvailable,
@@ -521,6 +521,10 @@ type operatorState struct {
 	IngressComponentRoutesStatus []configv1.ComponentRouteStatus
 	DNSRecords                   []iov1.DNSRecord
 
+	// externalTopologyMode indicates that the cluster uses an external
+	// control plane topology and no default IngressController is expected.
+	externalTopologyMode bool
+
 	unmanagedGatewayAPICRDNames string
 	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
 	useSailLibrary bool
@@ -578,6 +582,15 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.config.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	if err := r.client.Get(ctx, operatorcontroller.InfrastructureClusterConfigName(), infraConfig); err != nil {
+		if !errors.IsNotFound(err) {
+			return state, fmt.Errorf("failed to get infrastructure config: %w", err)
+		}
+	} else {
+		state.externalTopologyMode = infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode
 	}
 
 	if len(co.Status.Extension.Raw) > 0 {
@@ -699,8 +712,8 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 	}
 }
 
-// checkAllIngressesAvailable checks if all the ingress controllers are available.
-func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
+// checkAllIngressesAvailable checks if all expected ingress controllers are available.
+func checkAllIngressesAvailable(ingresses []operatorv1.IngressController, externalTopologyMode bool) bool {
 	for _, ing := range ingresses {
 		available := false
 		for _, c := range ing.Status.Conditions {
@@ -714,7 +727,7 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 		}
 	}
 
-	return len(ingresses) != 0
+	return len(ingresses) != 0 || externalTopologyMode
 }
 
 // allUnavailableIngressesInfrastructureDriven returns true if every
@@ -811,9 +824,15 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 		}
 	}
 	if !foundDefaultIngressController {
-		degradedCondition.Status = configv1.ConditionTrue
-		degradedCondition.Reason = "IngressDoesNotExist"
-		degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		if state.externalTopologyMode {
+			degradedCondition.Status = configv1.ConditionFalse
+			degradedCondition.Reason = "ExternalTopologyMode"
+			degradedCondition.Message = "External topology mode is active; no default ingress controller is expected."
+		} else {
+			degradedCondition.Status = configv1.ConditionTrue
+			degradedCondition.Reason = "IngressDoesNotExist"
+			degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		}
 	}
 
 	return degradedCondition
@@ -1081,7 +1100,7 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 }
 
 // computeOperatorAvailableCondition computes the operator's current Available status state.
-func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController, externalTopologyMode bool) configv1.ClusterOperatorStatusCondition {
 	availableCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorAvailable,
 	}
@@ -1120,9 +1139,15 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 		}
 	}
 	if !foundDefaultIngressController {
-		availableCondition.Status = configv1.ConditionFalse
-		availableCondition.Reason = "IngressDoesNotExist"
-		availableCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		if externalTopologyMode {
+			availableCondition.Status = configv1.ConditionTrue
+			availableCondition.Reason = "ExternalTopologyMode"
+			availableCondition.Message = "External topology mode is active; no default ingress controller is expected."
+		} else {
+			availableCondition.Status = configv1.ConditionFalse
+			availableCondition.Reason = "IngressDoesNotExist"
+			availableCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		}
 	}
 
 	return availableCondition
