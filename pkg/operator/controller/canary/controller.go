@@ -274,7 +274,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	trueVar := true
 	daemonsetRef := metav1.OwnerReference{
 		APIVersion: "apps/v1",
-		Kind:       "daemonset",
+		Kind:       "DaemonSet",
 		Name:       daemonset.Name,
 		UID:        daemonset.UID,
 		Controller: &trueVar,
