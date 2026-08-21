@@ -107,9 +107,15 @@ func (r *reconciler) clearRouteStatus(route *routev1.Route, icName string) (bool
 	for i := range route.Status.Ingress {
 		if condition := findCondition(&route.Status.Ingress[i], routev1.RouteAdmitted); condition != nil {
 			if route.Status.Ingress[i].RouterName == icName {
-				// Remove this status since it matches our routerName.
+				// Copy the route to avoid mutating the informer
+				// cache's underlying object.
 				route.DeepCopyInto(&updated)
-				updated.Status.Ingress = append(route.Status.Ingress[:i], route.Status.Ingress[i+1:]...)
+				// Build a new slice that excludes the matched entry
+				// so the original cached slice is never modified.
+				updated.Status.Ingress = append(
+					append([]routev1.RouteIngress{}, route.Status.Ingress[:i]...),
+					route.Status.Ingress[i+1:]...,
+				)
 				if err := r.client.Status().Update(context.TODO(), &updated); err != nil {
 					return false, fmt.Errorf("failed to clear route status of %s/%s for routerName %s: %w",
 						route.Namespace, route.Name, icName, err)
