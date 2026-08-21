@@ -459,12 +459,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// Use a separate, in-memory view for CVO status. Individual
 	// IngressControllers must continue reporting actual deployment readiness.
 	statusIngresses := ingressControllersForClusterOperator(state.IngressControllers, r.config.ControlPlaneTopology, state.Nodes)
-	allIngressesAvailable := checkAllIngressesAvailable(statusIngresses)
+	allIngressesAvailable := checkAllIngressesAvailable(statusIngresses, state.externalTopologyMode)
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
-		computeOperatorAvailableCondition(statusIngresses),
+		computeOperatorAvailableCondition(statusIngresses, state.externalTopologyMode),
 		computeOperatorProgressingCondition(
 			statusIngresses,
 			allIngressesAvailable,
@@ -541,6 +541,10 @@ type operatorState struct {
 	IngressComponentRoutesStatus []configv1.ComponentRouteStatus
 	DNSRecords                   []iov1.DNSRecord
 
+	// externalTopologyMode indicates that the cluster uses an external
+	// control plane topology and no default IngressController is expected.
+	externalTopologyMode bool
+
 	unmanagedGatewayAPICRDNames string
 	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
 	useSailLibrary bool
@@ -605,6 +609,15 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 			state.Nodes = nil
 			return state, fmt.Errorf("failed to list nodes for ingress startup: %w", err)
 		}
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	if err := r.client.Get(ctx, operatorcontroller.InfrastructureClusterConfigName(), infraConfig); err != nil {
+		if !errors.IsNotFound(err) {
+			return state, fmt.Errorf("failed to get infrastructure config: %w", err)
+		}
+	} else {
+		state.externalTopologyMode = infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode
 	}
 
 	if len(co.Status.Extension.Raw) > 0 {
@@ -726,8 +739,8 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 	}
 }
 
-// checkAllIngressesAvailable checks if all the ingress controllers are available.
-func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
+// checkAllIngressesAvailable checks if all expected ingress controllers are available.
+func checkAllIngressesAvailable(ingresses []operatorv1.IngressController, externalTopologyMode bool) bool {
 	for _, ing := range ingresses {
 		available := false
 		for _, c := range ing.Status.Conditions {
@@ -741,7 +754,7 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 		}
 	}
 
-	return len(ingresses) != 0
+	return len(ingresses) != 0 || externalTopologyMode
 }
 
 // allUnavailableIngressesInfrastructureDriven returns true if every
@@ -838,9 +851,15 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 		}
 	}
 	if !foundDefaultIngressController {
-		degradedCondition.Status = configv1.ConditionTrue
-		degradedCondition.Reason = "IngressDoesNotExist"
-		degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		if state.externalTopologyMode {
+			degradedCondition.Status = configv1.ConditionFalse
+			degradedCondition.Reason = "ExternalTopologyMode"
+			degradedCondition.Message = "External topology mode is active; no default ingress controller is expected."
+		} else {
+			degradedCondition.Status = configv1.ConditionTrue
+			degradedCondition.Reason = "IngressDoesNotExist"
+			degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		}
 	}
 
 	return degradedCondition
@@ -1110,17 +1129,18 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 }
 
 // computeOperatorAvailableCondition computes the operator's current Available status state.
-func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController, externalTopologyMode bool) configv1.ClusterOperatorStatusCondition {
 	availableCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorAvailable,
 	}
 
-	foundDefaultIngressController := false
+	foundIngressController := false
 	for _, ic := range ingresses {
-		if ic.Name != manifests.DefaultIngressControllerName {
+		if ic.Name != manifests.DefaultIngressControllerName && !externalTopologyMode {
 			continue
 		}
-		foundDefaultIngressController = true
+		foundIngressController = true
+		previousCondition := availableCondition
 		foundAvailableStatusCondition := false
 		for _, cond := range ic.Status.Conditions {
 			if cond.Type != operatorv1.OperatorStatusTypeAvailable {
@@ -1151,11 +1171,23 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 			availableCondition.Reason = "IngressDoesNotHaveAvailableCondition"
 			availableCondition.Message = fmt.Sprintf("The %q ingress controller is not reporting an Available status condition.", ic.Name)
 		}
+		if availableCondition.Status == configv1.ConditionFalse {
+			return availableCondition
+		}
+		if previousCondition.Status == configv1.ConditionUnknown {
+			availableCondition = previousCondition
+		}
 	}
-	if !foundDefaultIngressController {
-		availableCondition.Status = configv1.ConditionFalse
-		availableCondition.Reason = "IngressDoesNotExist"
-		availableCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+	if !foundIngressController {
+		if externalTopologyMode {
+			availableCondition.Status = configv1.ConditionTrue
+			availableCondition.Reason = "ExternalTopologyMode"
+			availableCondition.Message = "External topology mode is active; no default ingress controller is expected."
+		} else {
+			availableCondition.Status = configv1.ConditionFalse
+			availableCondition.Reason = "IngressDoesNotExist"
+			availableCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+		}
 	}
 
 	return availableCondition
