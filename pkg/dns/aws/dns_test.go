@@ -1,9 +1,19 @@
 package aws
 
 import (
+	"context"
+	"encoding/xml"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/stretchr/testify/assert"
 
@@ -366,4 +376,121 @@ func Test_change_EmptyTargets(t *testing.T) {
 	err := p.change(record, configv1.DNSZone{ID: "zone"}, upsertAction)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no targets specified")
+}
+
+func Test_updateRecord_DualStackDeleteRetry(t *testing.T) {
+	// Simulate a Route53 server that rejects the first batched delete
+	// (because AAAA doesn't exist) but accepts individual A deletes.
+	type changeRequest struct {
+		XMLName xml.Name `xml:"ChangeResourceRecordSetsRequest"`
+		Changes struct {
+			Items []struct {
+				Action          string `xml:"Action"`
+				ResourceRecords struct {
+					Name string `xml:"Name"`
+					Type string `xml:"Type"`
+				} `xml:"ResourceRecordSet"`
+			} `xml:"Change"`
+		} `xml:"ChangeBatch>Changes"`
+	}
+	var (
+		callCount atomic.Int32
+		mu        sync.Mutex
+		captured  []changeRequest
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+		}
+		var req changeRequest
+		if xmlErr := xml.Unmarshal(body, &req); xmlErr == nil {
+			mu.Lock()
+			captured = append(captured, req)
+			mu.Unlock()
+		}
+		n := callCount.Add(1)
+		if n == 1 {
+			// First call: batched delete containing both A and AAAA.
+			// Return an error indicating the AAAA record was not found.
+			w.WriteHeader(http.StatusBadRequest)
+			type errResponse struct {
+				XMLName xml.Name `xml:"ErrorResponse"`
+				Error   struct {
+					Type    string
+					Code    string
+					Message string
+				}
+			}
+			resp := errResponse{}
+			resp.Error.Type = "Sender"
+			resp.Error.Code = "InvalidChangeBatch"
+			resp.Error.Message = "[RRSet of type AAAA with DNS name test.example.com. is not found in zone Z123.]"
+			if err := xml.NewEncoder(w).Encode(resp); err != nil {
+				t.Errorf("failed to encode error response: %v", err)
+			}
+			return
+		}
+		// Subsequent calls: individual record deletes succeed.
+		type changeInfo struct {
+			XMLName xml.Name `xml:"ChangeResourceRecordSetsResponse"`
+			Info    struct {
+				Id     string
+				Status string
+			} `xml:"ChangeInfo"`
+		}
+		ci := changeInfo{}
+		ci.Info.Id = "/change/C1"
+		ci.Info.Status = "PENDING"
+		w.WriteHeader(http.StatusOK)
+		if err := xml.NewEncoder(w).Encode(ci); err != nil {
+			t.Errorf("failed to encode success response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "TOKEN")),
+	)
+	assert.NoError(t, err)
+
+	r53client := route53.NewFromConfig(cfg, func(o *route53.Options) {
+		o.BaseEndpoint = aws.String(server.URL)
+	})
+
+	p := &Provider{
+		route53: r53client,
+		config: Config{
+			Region:   "us-east-1",
+			IPFamily: configv1.DualStackIPv4Primary,
+		},
+	}
+
+	// Call updateRecord with DELETE action — dual-stack should produce
+	// A + AAAA, first batch fails, then individual retries succeed.
+	err = p.updateRecord("test.example.com", "Z123", "elb.amazonaws.com", "Z456", string(deleteAction), 60)
+	assert.NoError(t, err, "dual-stack delete should succeed via individual retries")
+
+	// The mock should have received at least 3 calls:
+	// 1 batched (failed) + 2 individual retries (A and AAAA).
+	assert.GreaterOrEqual(t, int(callCount.Load()), 3,
+		"expected at least 3 Route53 API calls (batch + 2 retries)")
+
+	// Verify that individual A and AAAA delete retries were made.
+	mu.Lock()
+	defer mu.Unlock()
+	var retryTypes []string
+	for i, req := range captured {
+		if i == 0 {
+			continue // skip the initial batched request
+		}
+		for _, ch := range req.Changes.Items {
+			retryTypes = append(retryTypes, ch.ResourceRecords.Type)
+		}
+	}
+	assert.Contains(t, retryTypes, "A",
+		"expected an individual A record delete retry")
+	assert.Contains(t, retryTypes, "AAAA",
+		"expected an individual AAAA record delete retry")
 }
