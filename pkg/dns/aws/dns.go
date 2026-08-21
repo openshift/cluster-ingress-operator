@@ -829,11 +829,36 @@ func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, acti
 	if err != nil {
 		if action == string(deleteAction) {
 			var apiErr smithy.APIError
-			if errors.As(err, &apiErr) {
-				if strings.Contains(apiErr.ErrorMessage(), "not found") {
-					log.Info("record not found", "zone id", zoneID, "domain", domain, "target", target)
-					return nil
+			if errors.As(err, &apiErr) && strings.Contains(apiErr.ErrorMessage(), "not found") {
+				// When deleting dual-stack records, the batch may fail
+				// because one record type (A or AAAA) does not exist.
+				// Retry each change individually so the existing record
+				// is still deleted.
+				if len(input.ChangeBatch.Changes) > 1 {
+					var retryErrs []error
+					for _, ch := range input.ChangeBatch.Changes {
+						single := route53.ChangeResourceRecordSetsInput{
+							HostedZoneId: input.HostedZoneId,
+							ChangeBatch: &r53types.ChangeBatch{
+								Changes: []r53types.Change{ch},
+							},
+						}
+						if _, singleErr := m.route53.ChangeResourceRecordSets(context.TODO(), &single); singleErr != nil {
+							var singleAPIErr smithy.APIError
+							if errors.As(singleErr, &singleAPIErr) && strings.Contains(singleAPIErr.ErrorMessage(), "not found") {
+								log.Info("record not found during individual delete", "zone id", zoneID, "domain", domain, "type", ch.ResourceRecordSet.Type)
+								continue
+							}
+							retryErrs = append(retryErrs, fmt.Errorf("failed to delete %s record %q in zone %s: %w", ch.ResourceRecordSet.Type, domain, zoneID, singleErr))
+						}
+					}
+					if len(retryErrs) == 0 {
+						return nil
+					}
+					return kerrors.NewAggregate(retryErrs)
 				}
+				log.Info("record not found", "zone id", zoneID, "domain", domain, "target", target)
+				return nil
 			}
 		}
 		return fmt.Errorf("couldn't update DNS record in zone %s: %v", zoneID, err)
