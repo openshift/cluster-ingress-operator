@@ -98,11 +98,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		CreateFunc: func(e event.CreateEvent) bool {
 			gatewayClass := e.Object.(*gatewayapiv1.GatewayClass)
 
-			if gatewayClass.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName {
-				return true
-			}
-
-			return false
+			return gatewayClass.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			// Don't reconcile gateways when the gatewayclass is

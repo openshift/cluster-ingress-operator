@@ -291,7 +291,7 @@ func (r *reconciler) deleteOrphanedRoles(componentRoutes []aggregatedComponentRo
 	for _, item := range roleList.Items {
 		expectedHash, ok := item.GetLabels()[componentRouteHashLabelKey]
 		if !ok {
-			errors = append(errors, fmt.Errorf("Unable to find componentRoute hash label on role %s/%s", item.GetNamespace(), item.GetName()))
+			errors = append(errors, fmt.Errorf("unable to find componentRoute hash label on role %s/%s", item.GetNamespace(), item.GetName()))
 			continue
 		}
 

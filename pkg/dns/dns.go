@@ -22,6 +22,6 @@ var _ Provider = &FakeProvider{}
 
 type FakeProvider struct{}
 
-func (_ *FakeProvider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error  { return nil }
-func (_ *FakeProvider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error  { return nil }
-func (_ *FakeProvider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
+func (*FakeProvider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error  { return nil }
+func (*FakeProvider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error  { return nil }
+func (*FakeProvider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }

@@ -73,6 +73,9 @@ type dnsClient struct {
 // New returns an authenticated DNSClient
 func New(config Config) (DNSClient, error) {
 	credential, err := getAzureCredentials(config)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get azure credentials")
+	}
 	rsc, err := newRecordSetClient(config, credential)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create recordSetClient")

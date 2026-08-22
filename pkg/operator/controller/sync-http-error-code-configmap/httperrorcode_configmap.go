@@ -139,8 +139,5 @@ func (r *reconciler) updateHttpErrorCodeConfigMap(current, desired *corev1.Confi
 // the configmaps should be considered equal for the purpose of determining
 // whether an update is necessary, false otherwise.
 func configmapsEqual(a, b *corev1.ConfigMap) bool {
-	if !reflect.DeepEqual(a.Data, b.Data) {
-		return false
-	}
-	return true
+	return reflect.DeepEqual(a.Data, b.Data)
 }

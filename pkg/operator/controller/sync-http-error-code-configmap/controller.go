@@ -162,10 +162,6 @@ func (r *reconciler) ingressControllersWithConfigMap(ctx context.Context, config
 	if err := r.cache.List(ctx, controllers, client.MatchingFields{"spec.httpErrorCodePages.name": configmapName}); err != nil {
 		return nil, err
 	}
-	names := []string{}
-	for _, ic := range controllers.Items {
-		names = append(names, ic.Name)
-	}
 	return controllers.Items, nil
 }
 
