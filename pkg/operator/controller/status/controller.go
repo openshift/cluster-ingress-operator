@@ -507,6 +507,9 @@ type operatorState struct {
 	// modeTransition holds the current Gateway API management mode
 	// transition state, populated from the shared ModeAccessor.
 	modeTransition operatorcontroller.TransitionState
+	// gatewayAPIManagementModeEnabled defines if the featuregate for ManagementMode
+	// is enabled. In this case, the state should not calculate degraded state
+	gatewayAPIManagementModeEnabled bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -628,6 +631,7 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 
 	if r.config.ModeAccessor != nil {
 		state.modeTransition = r.config.ModeAccessor.GetTransitionState()
+		state.gatewayAPIManagementModeEnabled = r.config.ModeAccessor.GateEnabled()
 	}
 
 	return state, nil
@@ -683,6 +687,7 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 
 	for _, fn := range []func(state operatorState) configv1.ClusterOperatorStatusCondition{
 		computeIngressControllerDegradedCondition,
+		computeGatewayAPICRDsDegradedCondition,
 		computeGatewayAPIInstallDegradedCondition,
 		computeOrphanedSubscriptionCondition,
 	} {
@@ -733,6 +738,24 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 		degradedCondition.Status = configv1.ConditionTrue
 		degradedCondition.Reason = "IngressDoesNotExist"
 		degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+	}
+
+	return degradedCondition
+}
+
+// computeGatewayAPICRDsDegradedCondition computes the degraded condition for Gateway API CRDs.
+// it is used just when the feature GatewayAPIManagementMode is disabled
+func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+	// if the feature gate is enabled, we should not add degraded conditions to Gateway API anymore
+	if state.gatewayAPIManagementModeEnabled {
+		return degradedCondition
+	}
+
+	if len(state.unmanagedGatewayAPICRDNames) > 0 {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "GatewayAPICRDsDegraded"
+		degradedCondition.Message = fmt.Sprintf("Unmanaged Gateway API CRDs found: %s.", state.unmanagedGatewayAPICRDNames)
 	}
 
 	return degradedCondition
