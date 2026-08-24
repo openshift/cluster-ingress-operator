@@ -158,7 +158,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -250,7 +250,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -316,7 +316,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -383,7 +383,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}

@@ -140,6 +140,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
+	t.Run("testTLSRouteDNS", testTLSRouteDNS)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
@@ -1601,6 +1602,62 @@ func testGatewayAPIListenerSetIgnored(t *testing.T) {
 
 }
 
+// testGatewayAPIObjects tests that Gateway API objects can be created successfully.
+func testTLSRouteDNS(t *testing.T) {
+	// Create a test namespace that cleans itself up and sets up its own service account and role binding.
+	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-"))
+	gatewayName := names.SimpleNameGenerator.GenerateName("test-tls-gateway-")
+	tlsroutename := names.SimpleNameGenerator.GenerateName("tlsroute-")
+
+	secretName := "tls-cert"
+	domain := "gw." + dnsConfig.Spec.BaseDomain
+	hostname := tlsroutename + "." + domain
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	if _, err := ensureGatewayTLSSecret(t, ns.Name, secretName, "*."+domain); err != nil {
+		t.Fatalf("Failed to create secret %s: %v", secretName, err)
+	}
+
+	echoPod := buildTLSPod("tls-echo", ns.Name, secretName)
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+	}
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "tls", 443, 8443)
+	if err = createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+	}
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout) })
+
+	gateway := buildTLSGateway(gatewayName, operatorcontroller.DefaultOperandNamespace, gatewayClass.Name, allNamespaces, domain)
+	if err = createOrGetWithRetry(t, context.Background(), gateway, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create gateway: %v", err)
+	}
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), gateway, DefaultRetryTimeout) })
+
+	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName)
+	if err != nil {
+		t.Fatalf("failed waiting for gateway to be ready: %v", err)
+	}
+
+	tlsroute := buildTLSRoute(tlsroutename, ns.Name, gateway.Name, gateway.Namespace, hostname, echoPod.Name)
+	if err = createOrGetWithRetry(t, context.Background(), tlsroute, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create tlsroute: %v", err)
+	}
+	if _, err = assertTLSRouteSuccessful(t, ns.Name, tlsroutename, gateway); err != nil {
+		t.Fatalf("Failed to observe success status for tlsroute %s: %v", tlsroutename, err)
+	}
+	if err = assertRouteConnection(t, hostname, gateway, "tls"); err != nil {
+		t.Fatalf("Failed to observe success status for tlsroute %s: %v", tlsroutename, err)
+	}
+	//time.Sleep(5 * time.Minute)
+
+}
+
 // testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect
 // the ingress cluster operator's Degraded status.
 func testOperatorDegradedCondition(t *testing.T) {
@@ -1760,7 +1817,7 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 		errs = append(errs, error.Error(err))
 	} else {
 		t.Log("Validating the connectivity to the backend application via the httproute...")
-		err = assertHttpRouteConnection(t, defaultRoutename, gateway)
+		err = assertRouteConnection(t, defaultRoutename, gateway, "http")
 		if err != nil {
 			errs = append(errs, error.Error(err))
 		}
