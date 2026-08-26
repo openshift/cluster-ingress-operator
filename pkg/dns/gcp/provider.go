@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -37,7 +38,26 @@ type Config struct {
 }
 
 func New(config Config) (*Provider, error) {
-	dnsService, err := gdnsv1.NewService(context.TODO(), option.WithCredentialsJSON(config.CredentialsJSON), option.WithUserAgent(config.UserAgent))
+	ctx := context.TODO()
+	// Determine the universe domain from the credentials so that clusters
+	// running outside the default universe (e.g. Google Cloud Dedicated,
+	// GCP's sovereign cloud) target the correct API endpoints. For non-GDU
+	// universe domains, WithCredentialsJSON causes a self-signed JWT to be
+	// used instead of OAuth token exchange, which is not available there.
+	creds, err := google.CredentialsFromJSON(ctx, config.CredentialsJSON, gdnsv1.CloudPlatformScope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create credentials: %w", err)
+	}
+	ud, err := creds.GetUniverseDomain()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get universe domain: %w", err)
+	}
+	opts := []option.ClientOption{
+		option.WithCredentialsJSON(config.CredentialsJSON),
+		option.WithUserAgent(config.UserAgent),
+		option.WithUniverseDomain(ud),
+	}
+	dnsService, err := gdnsv1.NewService(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
