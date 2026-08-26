@@ -1697,23 +1697,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	hashableDeployment.Spec.Template.Spec.NodeSelector = deployment.Spec.Template.Spec.NodeSelector
 	containers := make([]corev1.Container, len(deployment.Spec.Template.Spec.Containers))
 	for i, container := range deployment.Spec.Template.Spec.Containers {
-		env := container.Env
-		sort.Slice(env, func(i, j int) bool {
-			return env[i].Name < env[j].Name
-		})
-		containers[i] = corev1.Container{
-			Command:         container.Command,
-			Env:             env,
-			Image:           container.Image,
-			ImagePullPolicy: container.ImagePullPolicy,
-			Name:            container.Name,
-			LivenessProbe:   hashableProbe(container.LivenessProbe),
-			ReadinessProbe:  hashableProbe(container.ReadinessProbe),
-			StartupProbe:    hashableProbe(container.StartupProbe),
-			Resources:       container.Resources,
-			SecurityContext: container.SecurityContext,
-			Ports:           container.Ports,
-		}
+		containers[i] = hashableContainer(container, false)
 	}
 	sort.Slice(containers, func(i, j int) bool {
 		return containers[i].Name < containers[j].Name
@@ -1721,26 +1705,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	hashableDeployment.Spec.Template.Spec.Containers = containers
 	initContainers := make([]corev1.Container, len(deployment.Spec.Template.Spec.InitContainers))
 	for i, initContainer := range deployment.Spec.Template.Spec.InitContainers {
-		env := initContainer.Env
-		sort.Slice(env, func(i, j int) bool {
-			return env[i].Name < env[j].Name
-		})
-		initContainers[i] = corev1.Container{
-			Args:            initContainer.Args,
-			Command:         initContainer.Command,
-			Env:             env,
-			Image:           initContainer.Image,
-			ImagePullPolicy: initContainer.ImagePullPolicy,
-			Name:            initContainer.Name,
-			LivenessProbe:   hashableProbe(initContainer.LivenessProbe),
-			ReadinessProbe:  hashableProbe(initContainer.ReadinessProbe),
-			StartupProbe:    hashableProbe(initContainer.StartupProbe),
-			SecurityContext: initContainer.SecurityContext,
-			Ports:           initContainer.Ports,
-			Resources:       initContainer.Resources,
-			RestartPolicy:   initContainer.RestartPolicy,
-			VolumeMounts:    initContainer.VolumeMounts,
-		}
+		initContainers[i] = hashableContainer(initContainer, true)
 	}
 	sort.Slice(initContainers, func(i, j int) bool {
 		return initContainers[i].Name < initContainers[j].Name
@@ -1760,6 +1725,26 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		}
 		if vol.Secret != nil && vol.Secret.DefaultMode != nil && *vol.Secret.DefaultMode == int32(420) {
 			volumes[i].Secret.DefaultMode = nil
+		}
+		if vol.Projected != nil {
+			// 420 is the default value for DefaultMode for Projected volumes.
+			if vol.Projected.DefaultMode != nil && *vol.Projected.DefaultMode == int32(420) {
+				volumes[i].Projected.DefaultMode = nil
+			}
+			for _, source := range volumes[i].Projected.Sources {
+				// "v1" is the default value for FieldRef.APIVersion in DownwardAPI items.
+				if source.DownwardAPI != nil {
+					for _, item := range source.DownwardAPI.Items {
+						if item.FieldRef != nil && item.FieldRef.APIVersion == "v1" {
+							item.FieldRef.APIVersion = ""
+						}
+					}
+				}
+				// 3600 is the default value for ServiceAccountToken.ExpirationSeconds
+				if sat := source.ServiceAccountToken; sat != nil && sat.ExpirationSeconds != nil && *sat.ExpirationSeconds == 3600 {
+					sat.ExpirationSeconds = nil
+				}
+			}
 		}
 	}
 	sort.Slice(volumes, func(i, j int) bool {
@@ -1793,6 +1778,41 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	hashableDeployment.Spec.Selector = deployment.Spec.Selector
 
 	return &hashableDeployment
+}
+
+// hashableContainer returns a copy of the given container containing only
+// the fields that should be used for computing the deployment hash. Keep
+// this in sync with copyContainer() — a field present here but missing
+// there is detected as changed but never actually applied.
+//
+// initContainer must be true for init containers: unlike the primary
+// router container, whose Args/Command users are allowed to customize by
+// hand, init containers are fully defined by the manifest, so their
+// Args/Command are also hashed/copied to keep them in sync with it.
+func hashableContainer(container corev1.Container, initContainer bool) corev1.Container {
+	env := container.Env
+	sort.Slice(env, func(i, j int) bool {
+		return env[i].Name < env[j].Name
+	})
+	hashContainer := corev1.Container{
+		Name:            container.Name,
+		Env:             env,
+		Image:           container.Image,
+		ImagePullPolicy: container.ImagePullPolicy,
+		LivenessProbe:   hashableProbe(container.LivenessProbe),
+		Ports:           container.Ports,
+		ReadinessProbe:  hashableProbe(container.ReadinessProbe),
+		Resources:       container.Resources,
+		RestartPolicy:   container.RestartPolicy,
+		SecurityContext: container.SecurityContext,
+		StartupProbe:    hashableProbe(container.StartupProbe),
+		VolumeMounts:    container.VolumeMounts,
+	}
+	if initContainer {
+		hashContainer.Args = container.Args
+		hashContainer.Command = container.Command
+	}
+	return hashContainer
 }
 
 // cmpMatchExpressions is a helper for hashableDeployment.
@@ -1933,7 +1953,17 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		containers[i+1] = *container.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Containers = containers
-	updated.Spec.Template.Spec.InitContainers = expected.Spec.Template.Spec.InitContainers
+
+	// Only overrides init containers if current does not have the expected size.
+	expectedInitContainersCount := len(expected.Spec.Template.Spec.InitContainers)
+	if len(updated.Spec.Template.Spec.InitContainers) != expectedInitContainersCount {
+		initContainers := make([]corev1.Container, len(expected.Spec.Template.Spec.InitContainers))
+		for i, initContainer := range expected.Spec.Template.Spec.InitContainers {
+			initContainers[i] = *initContainer.DeepCopy()
+		}
+		updated.Spec.Template.Spec.InitContainers = initContainers
+	}
+
 	updated.Spec.Template.Spec.AutomountServiceAccountToken = expected.Spec.Template.Spec.AutomountServiceAccountToken
 	updated.Spec.Template.Spec.ShareProcessNamespace = expected.Spec.Template.Spec.ShareProcessNamespace
 	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
@@ -1960,15 +1990,10 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 	updated.Spec.Template.Spec.Volumes = volumes
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
-	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
-	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
-	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, true)
-	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, true)
-	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, true)
-	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
-	updated.Spec.Template.Spec.Containers[0].Resources = expected.Spec.Template.Spec.Containers[0].Resources
-	updated.Spec.Template.Spec.Containers[0].Ports = expected.Spec.Template.Spec.Containers[0].Ports
+	copyContainer(&updated.Spec.Template.Spec.Containers[0], &expected.Spec.Template.Spec.Containers[0], false)
+	for i := range expectedInitContainersCount {
+		copyContainer(&updated.Spec.Template.Spec.InitContainers[i], &expected.Spec.Template.Spec.InitContainers[i], true)
+	}
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.TopologySpreadConstraints = expected.Spec.Template.Spec.TopologySpreadConstraints
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
@@ -1979,6 +2004,32 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Replicas = &replicas
 	updated.Spec.MinReadySeconds = expected.Spec.MinReadySeconds
 	return true, updated
+}
+
+// copyContainer copies container parameters that the operator manages.
+// Keep this in sync with hashableContainer() — a field present here but
+// missing there will not be detected as a change.
+//
+// initContainer must be true for init containers: unlike the primary
+// router container, whose Args/Command users are allowed to customize by
+// hand, init containers are fully defined by the manifest, so their
+// Args/Command are also hashed/copied to keep them in sync with it.
+func copyContainer(to, from *corev1.Container, initContainer bool) {
+	if initContainer {
+		to.Args = from.Args
+		to.Command = from.Command
+	}
+	to.Env = from.Env
+	to.Image = from.Image
+	to.ImagePullPolicy = from.ImagePullPolicy
+	copyProbe(from.LivenessProbe, to.LivenessProbe, true)
+	to.Ports = from.Ports
+	copyProbe(from.ReadinessProbe, to.ReadinessProbe, true)
+	to.Resources = from.Resources
+	to.RestartPolicy = from.RestartPolicy
+	to.SecurityContext = from.SecurityContext
+	copyProbe(from.StartupProbe, to.StartupProbe, true)
+	to.VolumeMounts = from.VolumeMounts
 }
 
 // copyProbe copies probe parameters that the operator manages from probe a to
