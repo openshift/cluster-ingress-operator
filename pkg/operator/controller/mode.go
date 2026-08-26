@@ -79,12 +79,12 @@ type TransitionState struct {
 	Error error
 }
 
-// ModeAccessor provides thread-safe access to the resolved Gateway API
+// GatewayAPIModeAccessor provides thread-safe access to the resolved Gateway API
 // management mode and its derived state. It is constructed once in
 // operator.go and passed to the gatewayapi controller as the sole
 // writer. Dependent controllers read AllowDependents and wire
 // DependentPredicate into their watches.
-type ModeAccessor struct {
+type GatewayAPIModeAccessor struct {
 	mu          sync.RWMutex
 	gateEnabled bool
 
@@ -105,12 +105,12 @@ type ModeAccessor struct {
 	lastAppliedMode *operatorv1alpha1.GatewayAPIManagementMode
 }
 
-// NewModeAccessor creates a ModeAccessor. When gateEnabled is false the
+// NewGatewayAPIModeAccessor creates a GatewayAPIModeAccessor. When gateEnabled is false the
 // accessor operates in legacy mode: AllowDependents tracks only whether
 // the managed CRDs have been established, with no dependency on the
 // Ingress CR.
-func NewModeAccessor(gateEnabled bool) *ModeAccessor {
-	return &ModeAccessor{
+func NewGatewayAPIModeAccessor(gateEnabled bool) *GatewayAPIModeAccessor {
+	return &GatewayAPIModeAccessor{
 		gateEnabled: gateEnabled,
 	}
 }
@@ -119,7 +119,7 @@ func NewModeAccessor(gateEnabled bool) *ModeAccessor {
 // (create/update) Gateway API CRDs and aggregated RBAC. Returns true
 // only when the resolved Managed condition is True -- i.e., the desired
 // mode is Managed and takeover is not blocked.
-func (m *ModeAccessor) ShouldManageCRDs() bool {
+func (m *GatewayAPIModeAccessor) ShouldManageCRDs() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.managed
@@ -129,7 +129,7 @@ func (m *ModeAccessor) ShouldManageCRDs() bool {
 //
 // Gate OFF: true once all managed CRDs are established (legacy path).
 // Gate ON:  true only when Managed + Present + Compliant are all True.
-func (m *ModeAccessor) AllowDependents() bool {
+func (m *GatewayAPIModeAccessor) AllowDependents() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -141,7 +141,7 @@ func (m *ModeAccessor) AllowDependents() bool {
 
 // DesiredMode returns the desired management mode from the Ingress CR
 // spec. Defaults to Managed when the CR is absent or the field is empty.
-func (m *ModeAccessor) DesiredMode() operatorv1alpha1.GatewayAPIManagementMode {
+func (m *GatewayAPIModeAccessor) DesiredMode() operatorv1alpha1.GatewayAPIManagementMode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.desiredMode
@@ -149,7 +149,7 @@ func (m *ModeAccessor) DesiredMode() operatorv1alpha1.GatewayAPIManagementMode {
 
 // GateEnabled returns whether the GatewayAPIManagementMode feature gate
 // was enabled at operator startup.
-func (m *ModeAccessor) GateEnabled() bool {
+func (m *GatewayAPIModeAccessor) GateEnabled() bool {
 	return m.gateEnabled
 }
 
@@ -157,7 +157,7 @@ func (m *ModeAccessor) GateEnabled() bool {
 // AllowDependents is true. Dependent controllers wire this into their
 // operational watches so events are filtered when the mode disallows
 // dependent processing.
-func (m *ModeAccessor) DependentPredicate() predicate.Predicate {
+func (m *GatewayAPIModeAccessor) DependentPredicate() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(_ client.Object) bool {
 		return m.AllowDependents()
 	})
@@ -166,7 +166,7 @@ func (m *ModeAccessor) DependentPredicate() predicate.Predicate {
 // Update is called by the gatewayapi reconciler to refresh the mode
 // accessor after computing conditions from the Ingress CR and CRD
 // state.
-func (m *ModeAccessor) Update(desired operatorv1alpha1.GatewayAPIManagementMode, managed, present, compliant bool) {
+func (m *GatewayAPIModeAccessor) Update(desired operatorv1alpha1.GatewayAPIManagementMode, managed, present, compliant bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.desiredMode = desired
@@ -181,7 +181,7 @@ func (m *ModeAccessor) Update(desired operatorv1alpha1.GatewayAPIManagementMode,
 // to Unmanaged to close the window between beginning Sail uninstall and a
 // concurrently in-flight gatewayclass reconcile that may still observe
 // AllowDependents()==true.
-func (m *ModeAccessor) BlockDependents() {
+func (m *GatewayAPIModeAccessor) BlockDependents() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.managed = false
@@ -190,7 +190,7 @@ func (m *ModeAccessor) BlockDependents() {
 // SetTransitionState is called by the gatewayapi reconciler to signal
 // mode transition progress. The status controller reads this to
 // compute ClusterOperator Progressing and Degraded conditions.
-func (m *ModeAccessor) SetTransitionState(state TransitionState) {
+func (m *GatewayAPIModeAccessor) SetTransitionState(state TransitionState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.transition = state
@@ -198,7 +198,7 @@ func (m *ModeAccessor) SetTransitionState(state TransitionState) {
 
 // GetTransitionState returns the current mode transition state. It is
 // safe for concurrent use and is read by the status controller.
-func (m *ModeAccessor) GetTransitionState() TransitionState {
+func (m *GatewayAPIModeAccessor) GetTransitionState() TransitionState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.transition
@@ -206,7 +206,7 @@ func (m *ModeAccessor) GetTransitionState() TransitionState {
 
 // GetLastAppliedMode returns the mode that was last successfully
 // reconciled to completion. Returns nil if no reconcile has completed.
-func (m *ModeAccessor) GetLastAppliedMode() *operatorv1alpha1.GatewayAPIManagementMode {
+func (m *GatewayAPIModeAccessor) GetLastAppliedMode() *operatorv1alpha1.GatewayAPIManagementMode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastAppliedMode
@@ -214,7 +214,7 @@ func (m *ModeAccessor) GetLastAppliedMode() *operatorv1alpha1.GatewayAPIManageme
 
 // SetLastAppliedMode records the mode that was successfully reconciled
 // to completion. Called at the end of a successful gate-ON reconcile.
-func (m *ModeAccessor) SetLastAppliedMode(mode operatorv1alpha1.GatewayAPIManagementMode) {
+func (m *GatewayAPIModeAccessor) SetLastAppliedMode(mode operatorv1alpha1.GatewayAPIManagementMode) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastAppliedMode = &mode
@@ -222,7 +222,7 @@ func (m *ModeAccessor) SetLastAppliedMode(mode operatorv1alpha1.GatewayAPIManage
 
 // SetCRDsEstablished is called by the gatewayapi reconciler in the
 // gate-off (legacy) path once allManagedCRDsEstablished returns true.
-func (m *ModeAccessor) SetCRDsEstablished(established bool) {
+func (m *GatewayAPIModeAccessor) SetCRDsEstablished(established bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.crdsEstablished = established

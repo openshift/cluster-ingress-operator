@@ -198,7 +198,7 @@ type Config struct {
 	// ModeAccessor is the shared mode accessor that this controller
 	// updates after computing CRD management conditions. May be nil
 	// when the management mode gate is disabled.
-	ModeAccessor *ModeAccessor
+	ModeAccessor *operatorcontroller.GatewayAPIModeAccessor
 
 	// SailUninstaller is called to uninstall the CIO-managed Istio
 	// instance when transitioning to Unmanaged mode. May be nil when
@@ -334,7 +334,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			}
 		}
 
-		// Phase 3: delete VAP+binding BEFORE computing Unmanaged
+		// Phase 2: delete VAP+binding BEFORE computing Unmanaged
 		// status, so the Managed=False/Unmanaged condition is only
 		// written after the admission policy is removed.
 		// Only run transition operations (Sail uninstall, VAP delete)
@@ -352,7 +352,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			}
 		}
 
-		// Phase 2: resolve desired mode BEFORE mutating CRDs/RBAC so
+		// Phase 3: resolve desired mode BEFORE mutating CRDs/RBAC so
 		// that Unmanaged or TakeoverBlocked states skip ensure.
 		if err := r.reconcileIngressStatus(ctx, snapshot); err != nil {
 			r.setTransitionState(operatorcontroller.TransitionState{
@@ -414,7 +414,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
 	} else {
-		updateUnmanagedCRDsMetric(crdNames)
+		if r.managementModeEnabled() {
+			updateUnmanagedCRDsMetric(crdNames)
+		}
 	}
 
 	// The subscriptions resource only exists if the

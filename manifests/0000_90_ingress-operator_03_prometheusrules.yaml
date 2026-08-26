@@ -102,6 +102,7 @@ spec:
         for: 15m
         labels:
           severity: warning
+          namespace: openshift-ingress-operator
         annotations:
           summary: Gateway API management mode transition is stuck
           description: "This alert fires when the Cluster Ingress Operator cannot complete a Gateway API management mode transition (e.g., a ValidatingAdmissionPolicy delete or Sail Library install/uninstall operation is failing). The operator retries automatically and does not report Degraded for this condition; check the ingress-operator logs and the ingress.operator.openshift.io/cluster status.conditions for the failing operation."
@@ -111,6 +112,7 @@ spec:
         for: 1h
         labels:
           severity: warning
+          namespace: openshift-ingress-operator
         annotations:
           summary: Unmanaged Gateway API CRD detected
           description: "This alert fires when a Custom Resource Definition in the gateway.networking.k8s.io group exists on the cluster that the Cluster Ingress Operator does not manage (for example, a third-party or unexpected CRD). This does not block the operator's own Gateway API CRDs from functioning, but blocks taking over management of Gateway API CRDs (TakeoverBlocked) until resolved, and the CRD is not protected by the operator's ValidatingAdmissionPolicy."

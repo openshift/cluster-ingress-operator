@@ -236,7 +236,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Create the shared mode accessor early so the status controller
 	// can read transition state for ClusterOperator conditions. The
 	// gatewayapi controller is the sole writer.
-	modeAccessor := gatewayapicontroller.NewModeAccessor(gatewayAPIManagementModeEnabled)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(gatewayAPIManagementModeEnabled)
 
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{

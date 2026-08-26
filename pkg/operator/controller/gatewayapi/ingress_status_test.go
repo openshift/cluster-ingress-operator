@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -110,7 +111,7 @@ func TestComputeManagedCondition(t *testing.T) {
 			if mode == "" {
 				mode = operatorv1alpha1.GatewayAPIManagementModeManaged
 			}
-			cond := computeManagedCondition(mode, tc.present, tc.compliant, tc.anyExistingNonCompliant, tc.wasAlreadyManaged)
+			cond := computeManagedCondition(mode, tc.anyExistingNonCompliant, tc.wasAlreadyManaged, []string{})
 			assert.Equal(t, conditionTypeGatewayAPICRDsManaged, cond.Type)
 			assert.Equal(t, tc.wantStatus, cond.Status)
 			assert.Equal(t, tc.wantReason, cond.Reason)
@@ -312,7 +313,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-			modeAccessor := NewModeAccessor(true)
+			modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 			r := &reconciler{
 				client: cl,
 				cache:  fakeCache,
@@ -394,17 +395,6 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 	operatorv1alpha1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
-	unknownCRD := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: "invalids.gateway.networking.k8s.io"},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "gateway.networking.k8s.io",
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Plural: "invalids",
-				Kind:   "Invalid",
-			},
-		},
-	}
-
 	ingressObj := &operatorv1alpha1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
 		Spec: operatorv1alpha1.IngressSpec{
@@ -445,7 +435,7 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 	}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -472,6 +462,7 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 	require.NotNil(t, managedCond)
 	assert.Equal(t, metav1.ConditionFalse, managedCond.Status)
 	assert.Equal(t, reasonTakeoverBlocked, managedCond.Reason)
+	assert.Equal(t, "Cannot take ownership of existing Gateway API CRDs: CRDs do not match the expected version: invalids.gateway.networking.k8s.io", managedCond.Message)
 }
 
 func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
@@ -519,7 +510,7 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -546,6 +537,7 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	require.NotNil(t, managedCond)
 	assert.Equal(t, metav1.ConditionFalse, managedCond.Status)
 	assert.Equal(t, reasonTakeoverBlocked, managedCond.Reason)
+	assert.Equal(t, "Cannot take ownership of existing Gateway API CRDs: CRDs do not match the expected version", managedCond.Message)
 
 	compliantCond := findCondition(updated.Status.Conditions, conditionTypeGatewayAPICRDsCompliant)
 	require.NotNil(t, compliantCond)
@@ -604,7 +596,7 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 	}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -701,7 +693,7 @@ func TestReconcileIngressStatus_ObservedGeneration(t *testing.T) {
 	}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -765,3 +757,16 @@ func allManagedCRDObjects() []runtime.Object {
 	}
 	return objs
 }
+
+var (
+	unknownCRD = &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalids.gateway.networking.k8s.io"},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "gateway.networking.k8s.io",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Plural: "invalids",
+				Kind:   "Invalid",
+			},
+		},
+	}
+)

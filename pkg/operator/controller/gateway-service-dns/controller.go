@@ -46,7 +46,7 @@ var log = logf.Logger.WithName(controllerName)
 // NewUnmanaged creates and returns a controller that watches services that are
 // associated with gateways and creates dnsrecord objects for them.  This is an
 // unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:       config,
@@ -166,7 +166,7 @@ type reconciler struct {
 	client       client.Client
 	cache        cache.Cache
 	recorder     record.EventRecorder
-	modeAccessor *operatorcontroller.ModeAccessor
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // Reconcile expects request to refer to a service and creates or reconciles a

@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -139,7 +140,7 @@ func TestReconcile_GateOn_Managed_CreatesVAP(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -221,7 +222,7 @@ func TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -302,7 +303,7 @@ func TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -384,7 +385,7 @@ func TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -460,7 +461,7 @@ func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -560,7 +561,7 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,

@@ -957,7 +957,7 @@ func Test_Reconcile(t *testing.T) {
 			cache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 			// Create a ModeAccessor with gate disabled and CRDs established
 			// so that AllowDependents returns true for tests.
-			testModeAccessor := operatorcontroller.NewModeAccessor(false)
+			testModeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(false)
 			testModeAccessor.SetCRDsEstablished(true)
 			reconciler := &reconciler{
 				client: cl,

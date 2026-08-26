@@ -116,7 +116,7 @@ var gatewayClassController controller.Controller
 // installs and configures Istio.  This is an unmanaged controller, which means
 // that the manager does not start it. It also returns a SailUninstaller that
 // the gatewayapi controller can use to trigger Sail uninstall on mode transitions.
-func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, operatorcontroller.SailUninstaller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, operatorcontroller.SailUninstaller, error) {
 	operatorCache := mgr.GetCache()
 
 	reconciler := &reconciler{
@@ -362,7 +362,7 @@ type reconciler struct {
 	// modeAccessor provides thread-safe access to the resolved Gateway API
 	// management mode. When AllowDependents returns false, the reconciler
 	// skips Sail/OLM installation to prevent resource creation in Unmanaged mode.
-	modeAccessor *operatorcontroller.ModeAccessor
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // enqueueRequestForCRDOwnershipChange handles events that may affect CRD ownership.
@@ -812,7 +812,37 @@ func (r *reconciler) UninstallSail(ctx context.Context) error {
 	if r.sailInstaller == nil {
 		return nil
 	}
-	return r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name)
+	if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+		return err
+	}
+
+	// Reflect the teardown on the CIO-managed GatewayClass status so it no
+	// longer reports the control plane as installed. This controller's own
+	// watches are gated off while dependents are disallowed (Unmanaged
+	// mode), so the update must happen here as part of the transition rather
+	// than on a later reconcile that will not be triggered.
+	return r.markControllerUninstalled(ctx)
+}
+
+// markControllerUninstalled sets ControllerInstalled=False on every
+// GatewayClass managed by this controller, reflecting that istiod has been
+// torn down for the transition to Unmanaged mode.
+func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
+	var gatewayclasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayclasses, client.MatchingFields{operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName}); err != nil {
+		return fmt.Errorf("failed to list gatewayclasses to mark controller uninstalled: %w", err)
+	}
+	var errs []error
+	for i := range gatewayclasses.Items {
+		current := &gatewayclasses.Items[i]
+		updated := current.DeepCopy()
+		if setControllerUninstalledCondition(&updated.Status.Conditions, current.Generation) {
+			if err := r.client.Status().Patch(ctx, updated, client.MergeFrom(current)); err != nil {
+				errs = append(errs, fmt.Errorf("failed to patch gatewayclass %q status: %w", current.Name, err))
+			}
+		}
+	}
+	return utilerrors.NewAggregate(errs)
 }
 
 // SailLibrarySource bridges a Sail Library channel to a MapFunc logic.

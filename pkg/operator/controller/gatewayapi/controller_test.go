@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -474,7 +475,7 @@ func TestReconcile_ForbiddenIngress_BlocksOwnership(t *testing.T) {
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -504,17 +505,115 @@ func TestReconcile_ForbiddenIngress_BlocksOwnership(t *testing.T) {
 		"dependent controllers must NOT start when Ingress is Forbidden")
 }
 
+// TestReconcile_UnmanagedCRDsMetricGatedByFeatureGate verifies that the
+// ingress_controller_gateway_api_unmanaged_crds metric is emitted only when
+// the GatewayAPIManagementMode feature gate is enabled. With the gate off the
+// metric must stay absent even when an unmanaged Gateway API-group CRD is
+// present on the cluster; with the gate on the same CRD must produce a series.
+// This guards the r.managementModeEnabled() guard around
+// updateUnmanagedCRDsMetric in Reconcile against accidental removal.
+func TestReconcile_UnmanagedCRDsMetricGatedByFeatureGate(t *testing.T) {
+	const unmanagedCRDName = "test.gateway.networking.k8s.io"
+
+	buildReconciler := func(t *testing.T, gateEnabled bool) (*reconciler, reconcile.Request) {
+		scheme := runtime.NewScheme()
+		configv1.Install(scheme)
+		apiextensionsv1.AddToScheme(scheme)
+		rbacv1.AddToScheme(scheme)
+		operatorv1alpha1.Install(scheme)
+		admissionregistrationv1.AddToScheme(scheme)
+
+		objs := establishedManagedCRDs()
+		objs = append(objs,
+			&apiextensionsv1.CustomResourceDefinition{
+				ObjectMeta: metav1.ObjectMeta{Name: unmanagedCRDName},
+			},
+			&configv1.ClusterOperator{
+				ObjectMeta: metav1.ObjectMeta{Name: "ingress"},
+			},
+		)
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithRuntimeObjects(objs...).
+			WithStatusSubresource(&configv1.ClusterOperator{}).
+			WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+				if strings.Contains(o.GetName(), unmanagedCRDName) {
+					return []string{unmanagedGatewayAPICRDIndexFieldValue}
+				}
+				return []string{}
+			})).
+			Build()
+
+		cl := &testutil.FakeClientRecorder{
+			Client:  fakeClient,
+			T:       t,
+			Added:   []client.Object{},
+			Updated: []client.Object{},
+			Deleted: []client.Object{},
+			StatusWriter: &testutil.FakeStatusWriter{
+				StatusWriter: fakeClient.Status(),
+			},
+		}
+		informer := informertest.FakeInformers{Scheme: scheme}
+		cache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+		ctrl := &testutil.FakeController{T: t, Started: false, StartNotificationChan: nil}
+		r := &reconciler{
+			client: cl,
+			cache:  cache,
+			config: Config{
+				MarketplaceEnabled:              true,
+				OperatorLifecycleManagerEnabled: true,
+				ModeAccessor:                    operatorcontroller.NewGatewayAPIModeAccessor(gateEnabled),
+				DependentControllers:            []controller.Controller{ctrl},
+			},
+			fieldIndexer: FakeIndexer{},
+		}
+		return r, reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
+	}
+
+	// resetMetric clears the package-level unmanaged-CRDs gauge and its
+	// diff-tracking state so each subtest observes an isolated starting
+	// point.
+	resetMetric := func() {
+		gatewayAPIUnmanagedCRDsMetric.Reset()
+		unmanagedCRDsMetricMu.Lock()
+		lastUnmanagedCRDNames = sets.New[string]()
+		unmanagedCRDsMetricMu.Unlock()
+	}
+
+	t.Run("gate disabled suppresses the metric", func(t *testing.T) {
+		resetMetric()
+		r, req := buildReconciler(t, false)
+		_, err := r.Reconcile(context.Background(), req)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric),
+			"unmanaged CRDs metric must not be emitted when the feature gate is disabled")
+	})
+
+	t.Run("gate enabled emits the metric", func(t *testing.T) {
+		resetMetric()
+		r, req := buildReconciler(t, true)
+		_, err := r.Reconcile(context.Background(), req)
+		assert.NoError(t, err)
+		assert.Equal(t, float64(1), gaugeValue(t, gatewayAPIUnmanagedCRDsMetric.WithLabelValues(unmanagedCRDName)),
+			"unmanaged CRDs metric must be emitted for the unmanaged CRD when the feature gate is enabled")
+		assert.Equal(t, 1, collectGaugeVecCount(gatewayAPIUnmanagedCRDsMetric),
+			"only the unmanaged CRD series should be present")
+	})
+}
+
 func TestManagementModeEnabled(t *testing.T) {
 	t.Run("nil ModeAccessor", func(t *testing.T) {
 		r := &reconciler{config: Config{ModeAccessor: nil}}
 		assert.False(t, r.managementModeEnabled())
 	})
 	t.Run("gate disabled", func(t *testing.T) {
-		r := &reconciler{config: Config{ModeAccessor: NewModeAccessor(false)}}
+		r := &reconciler{config: Config{ModeAccessor: operatorcontroller.NewGatewayAPIModeAccessor(false)}}
 		assert.False(t, r.managementModeEnabled())
 	})
 	t.Run("gate enabled", func(t *testing.T) {
-		r := &reconciler{config: Config{ModeAccessor: NewModeAccessor(true)}}
+		r := &reconciler{config: Config{ModeAccessor: operatorcontroller.NewGatewayAPIModeAccessor(true)}}
 		assert.True(t, r.managementModeEnabled())
 	})
 }
@@ -553,14 +652,14 @@ func TestRegisterIngressWatch(t *testing.T) {
 
 	t.Run("gate disabled does not watch", func(t *testing.T) {
 		fc := &fakeWatchController{}
-		err := registerIngressWatch(fc, nil, Config{ModeAccessor: NewModeAccessor(false)}, toFeatureGate)
+		err := registerIngressWatch(fc, nil, Config{ModeAccessor: operatorcontroller.NewGatewayAPIModeAccessor(false)}, toFeatureGate)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, fc.watchCalls, "must not watch Ingress when the gate is disabled")
 	})
 
 	t.Run("gate enabled watches", func(t *testing.T) {
 		fc := &fakeWatchController{}
-		err := registerIngressWatch(fc, nil, Config{ModeAccessor: NewModeAccessor(true)}, toFeatureGate)
+		err := registerIngressWatch(fc, nil, Config{ModeAccessor: operatorcontroller.NewGatewayAPIModeAccessor(true)}, toFeatureGate)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, fc.watchCalls, "must watch Ingress when the gate is enabled")
 	})
@@ -613,7 +712,7 @@ func TestReconcile_Unmanaged_SkipsCRDAndRBAC(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -692,7 +791,7 @@ func TestReconcile_TakeoverBlocked_SkipsCRDAndRBAC(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -779,7 +878,7 @@ func TestReconcile_PartialPresenceNonCompliant_TakeoverBlocked(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -926,7 +1025,7 @@ func TestReconcile_ManagedAndAbsent_InstallsCRDs(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -975,7 +1074,7 @@ func TestModeAccessor_ShouldManageCRDs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := NewModeAccessor(true)
+			m := operatorcontroller.NewGatewayAPIModeAccessor(true)
 			m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, tc.managed, tc.present, tc.compliant)
 			assert.Equal(t, tc.want, m.ShouldManageCRDs())
 		})
@@ -1099,7 +1198,7 @@ func TestReconcile_ModeSnapshot_PreventsStaleUnmanaged(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -1203,7 +1302,7 @@ func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -1303,7 +1402,7 @@ func TestReconcile_SteadyState_NoSpuriousInProgress(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -1394,7 +1493,7 @@ func TestReconcile_ModeChange_SetsInProgress(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
@@ -1467,7 +1566,7 @@ func TestReconcile_SnapshotFailure_ClearsStaleState(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 
 	// Simulate stale transition state from a prior successful reconcile
 	// that set InProgress=true before an error path.
@@ -1535,7 +1634,7 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	modeAccessor := NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 
 	var allowDependentsAtUninstallTime bool
 	uninstaller := &fakeSailUninstaller{
@@ -1588,9 +1687,12 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 	// Second reconcile: same Unmanaged mode (steady state).
 	// UninstallSail must NOT be called again.
 	_, err = r.Reconcile(context.Background(), req)
+	ts := modeAccessor.GetTransitionState()
 	assert.NoError(t, err)
 	assert.False(t, uninstaller.called,
 		"UninstallSail must NOT be called on steady-state Unmanaged reconcile")
 	assert.Empty(t, cl.Deleted,
 		"no VAP/VAPBinding deletions should occur on steady-state Unmanaged reconcile")
+	assert.False(t, ts.InProgress,
+		"steady-state reconcile must NOT set InProgress=true")
 }

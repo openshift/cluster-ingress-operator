@@ -35,7 +35,7 @@ var log = logf.Logger.WithName(controllerName)
 // The "istio.io/rev" label MUST be present on gateways in order for an
 // Istio control-plane deployed via the OSSM Operator to consider that
 // resource managed.
-func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	// Create a new cache for gateways so it can watch all namespaces.
 	// (Using the operator cache for gateways in all namespaces would cause
 	// it to cache other resources in all namespaces.)
@@ -192,7 +192,7 @@ type reconciler struct {
 	cache        cache.Cache
 	client       client.Client
 	recorder     record.EventRecorder
-	modeAccessor *operatorcontroller.ModeAccessor
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // Reconcile expects request to refer to a gateway and adds the istio.io/rev

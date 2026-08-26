@@ -48,14 +48,14 @@ type reconciler struct {
 	// without a Cache (see NewClient), but in case we decide to change the client
 	// to be cached, we want to still be able to read events directly from the API
 	eventreader  client.Reader
-	modeAccessor *operatorcontroller.ModeAccessor
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // NewUnmanaged creates and returns a controller that adds watches for changes on
 // Services, DNSRecords and Gateways and when managed, adds the proper status
 // conditions to these Gateways.
 // This is an unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	// Create a dedicated cache for this controller to watch resources only in the
 	// "openshift-ingress" namespace. Using the operator's main cache would cause it
 	// to watch Gateways, Services, and DNSRecords in all namespaces, which would

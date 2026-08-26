@@ -5,11 +5,19 @@ metadata:
 spec:
   matchConstraints:
     matchPolicy: Equivalent
+    # namespaceSelector and objectSelector are defaulted to empty (match
+    # everything) by the API server. Set them explicitly so the persisted
+    # object round-trips equal to this asset and the reconciler does not
+    # detect spurious drift.
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
     - apiGroups:   ["apiextensions.k8s.io"]
       apiVersions: ["v1"]
       operations:  ["CREATE","UPDATE","DELETE"]
       resources:   ["customresourcedefinitions"]
+      # scope defaults to "*" server-side; set explicitly to avoid drift.
+      scope: "*"
   matchConditions:
     - name: "check-only-gateway-api-crds"
       expression: "(request.operation == 'DELETE' ? oldObject : object).spec.group == 'gateway.networking.k8s.io'"

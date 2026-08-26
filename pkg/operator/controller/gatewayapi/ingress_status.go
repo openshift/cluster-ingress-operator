@@ -70,7 +70,7 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 		}
 	}
 
-	managedCond := computeManagedCondition(snapshot.desiredMode, present, compliant, blocksTakeover, wasAlreadyManaged)
+	managedCond := computeManagedCondition(snapshot.desiredMode, blocksTakeover, wasAlreadyManaged, unknownCRDs)
 	managed := managedCond.Status == metav1.ConditionTrue
 
 	r.config.ModeAccessor.Update(snapshot.desiredMode, managed, present, compliant)
@@ -153,7 +153,7 @@ func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition
 // set of CRDs is not present.
 // wasAlreadyManaged indicates whether the operator was managing CRDs
 // in the previous reconcile, used to distinguish upgrades from takeover.
-func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMode, present, compliant, anyExistingNonCompliant, wasAlreadyManaged bool) metav1.Condition {
+func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMode, anyExistingNonCompliant, wasAlreadyManaged bool, unknownCRDs []string) metav1.Condition {
 	if desiredMode == operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsManaged,
@@ -171,11 +171,15 @@ func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMo
 	// a version mismatch is a normal upgrade scenario (v1.0->v1.1) and we
 	// should proceed with updating the CRDs, not block takeover.
 	if anyExistingNonCompliant && !wasAlreadyManaged {
+		msg := "Cannot take ownership of existing Gateway API CRDs: CRDs do not match the expected version"
+		if len(unknownCRDs) > 0 {
+			msg = fmt.Sprintf("%s: %s", msg, strings.Join(unknownCRDs, ","))
+		}
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsManaged,
 			Status:  metav1.ConditionFalse,
 			Reason:  reasonTakeoverBlocked,
-			Message: "Cannot take ownership of existing Gateway API CRDs: CRDs do not match the expected version",
+			Message: msg,
 		}
 	}
 

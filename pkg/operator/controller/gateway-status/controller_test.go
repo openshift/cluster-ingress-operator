@@ -977,7 +977,7 @@ func Test_Reconcile(t *testing.T) {
 			}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := testutil.FakeCache{Informers: &informer, Reader: cl}
-			testModeAccessor := operatorcontroller.NewModeAccessor(false)
+			testModeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(false)
 			testModeAccessor.SetCRDsEstablished(true)
 			reconciler := &reconciler{
 				cache:        cache,
@@ -1093,7 +1093,7 @@ func TestReconcileTransition(t *testing.T) {
 	}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	cache := testutil.FakeCache{Informers: &informer, Reader: cl}
-	testModeAccessor := operatorcontroller.NewModeAccessor(false)
+	testModeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	testModeAccessor.SetCRDsEstablished(true)
 	reconciler := &reconciler{
 		cache:        cache,

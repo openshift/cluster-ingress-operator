@@ -64,7 +64,7 @@ func RegisterMetrics() error {
 	return nil
 }
 
-func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	r := &reconciler{
 		client:       mgr.GetClient(),
@@ -184,7 +184,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAcce
 type reconciler struct {
 	client       client.Client
 	cache        cache.Cache
-	modeAccessor *operatorcontroller.ModeAccessor
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // Reconcile handles a single ListenerSet. It checks whether the

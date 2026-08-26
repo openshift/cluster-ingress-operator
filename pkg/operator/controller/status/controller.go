@@ -238,7 +238,7 @@ type Config struct {
 	// ModeAccessor provides read-only access to the Gateway API
 	// management mode transition state. May be nil when the
 	// management mode feature gate is disabled.
-	ModeAccessor *operatorcontroller.ModeAccessor
+	ModeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.

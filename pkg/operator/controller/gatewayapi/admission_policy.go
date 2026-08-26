@@ -27,10 +27,11 @@ var (
 
 // desiredAdmissionPolicyForTopology returns the desired
 // ValidatingAdmissionPolicy for the given control-plane topology
-// mode. Non-External topologies on non-IBMCloud platforms get the
-// additional pod-bound token validation (node-name + pod-name claims).
-// External topologies, IBMCloud platforms, and the infra-unavailable
-// fallback use the SA-only base.
+// mode.
+// In HyperShift, the ingress operator runs on the management cluster and
+// communicates with the hosted cluster via a generated Kubeconfig
+// so additional pod-bound token validation (node-name + pod-name claims) are not
+// available and should be skipped from the VAP.
 func desiredAdmissionPolicyForTopology(skipPodBound bool) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	vap := baseAdmissionPolicy.DeepCopy()
 	if !skipPodBound {

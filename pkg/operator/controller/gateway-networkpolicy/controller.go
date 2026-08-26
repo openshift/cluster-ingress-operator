@@ -30,7 +30,7 @@ const (
 
 var log = logf.Logger.WithName(controllerName)
 
-func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.ModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client:       mgr.GetClient(),
@@ -93,7 +93,7 @@ type reconciler struct {
 	cache        cache.Cache
 	recorder     record.EventRecorder
 	fieldIndexer client.FieldIndexer
-	modeAccessor *operatorcontroller.ModeAccessor
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {

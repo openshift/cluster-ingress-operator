@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
@@ -26,8 +27,12 @@ import (
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,6 +47,14 @@ type fakeSailInstaller struct {
 	status          install.Status
 	uninstallCalled bool
 	uninstallError  error
+
+	// applyStarted, when non-nil, receives a signal as soon as Apply is
+	// invoked (after sailLifecycleMu has been acquired by the caller).
+	// applyRelease, when non-nil, blocks Apply until it is closed. Together
+	// they let a test hold an Apply in flight inside the critical section to
+	// exercise sailLifecycleMu serialization against a concurrent Uninstall.
+	applyStarted chan struct{}
+	applyRelease chan struct{}
 }
 
 // Test if implementation adheres the interface
@@ -53,6 +66,12 @@ func (i *fakeSailInstaller) Start(ctx context.Context) (<-chan struct{}, error) 
 }
 
 func (i *fakeSailInstaller) Apply(opts install.Options) error {
+	if i.applyStarted != nil {
+		i.applyStarted <- struct{}{}
+	}
+	if i.applyRelease != nil {
+		<-i.applyRelease
+	}
 	i.internalOpts = opts // Capture the options passed in
 
 	// Simulate successful installation with CRDs in unknown state
@@ -89,13 +108,19 @@ func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, configv1.Install(scheme))
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	require.NoError(t, gatewayapiv1.Install(scheme))
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
+			gc := o.(*gatewayapiv1.GatewayClass)
+			return []string{string(gc.Spec.ControllerName)}
+		}).
+		Build()
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 
 	installer := &fakeSailInstaller{}
-	modeAccessor := operatorcontroller.NewModeAccessor(true)
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	// managed=false => AllowDependents() is false, simulating
 	// steady-state Unmanaged.
 	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
@@ -135,6 +160,153 @@ func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 	assert.False(t, installer.status.Installed,
 		"Apply must never install while AllowDependents is false, even under concurrent access")
 	assert.True(t, installer.uninstallCalled, "UninstallSail should have been called")
+}
+
+// TestUninstallSail_WaitsForInFlightApply is a deterministic regression
+// test for the sailLifecycleMu serialization between ensureIstio's Apply()
+// (driven by the gatewayclass controller) and UninstallSail's Uninstall()
+// (driven by the gatewayapi controller when transitioning to Unmanaged).
+//
+// It starts in Managed mode so AllowDependents()==true, lets ensureIstio
+// enter its critical section and block inside Apply while still holding
+// sailLifecycleMu, transitions the mode to Unmanaged, then invokes
+// UninstallSail. UninstallSail must block until the in-flight Apply
+// releases the lock: this proves an Apply that already passed the
+// AllowDependents check cannot land after Uninstall completes, and that
+// Uninstall waits for it rather than running concurrently.
+func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, configv1.Install(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	require.NoError(t, gatewayapiv1.Install(scheme))
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
+			gc := o.(*gatewayapiv1.GatewayClass)
+			return []string{string(gc.Spec.ControllerName)}
+		}).
+		Build()
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+
+	applyStarted := make(chan struct{})
+	applyRelease := make(chan struct{})
+	installer := &fakeSailInstaller{
+		applyStarted: applyStarted,
+		applyRelease: applyRelease,
+	}
+
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
+	// managed && present && compliant => AllowDependents() is true, so
+	// ensureIstio proceeds all the way to Apply.
+	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+
+	r := &reconciler{
+		client:        fakeClient,
+		cache:         fakeCache,
+		sailInstaller: installer,
+		modeAccessor:  modeAccessor,
+		config:        Config{OperandNamespace: "test-ns"},
+	}
+
+	ensureDone := make(chan error, 1)
+	go func() {
+		ensureDone <- r.ensureIstio(context.Background(), "v1.0", nil, &configv1.Infrastructure{})
+	}()
+
+	// Wait until Apply is in flight; at this point ensureIstio holds
+	// sailLifecycleMu.
+	select {
+	case <-applyStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Apply to start")
+	}
+
+	// Simulate the transition to Unmanaged. The in-flight Apply already
+	// passed its AllowDependents check, so this must not affect it.
+	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
+
+	uninstallDone := make(chan error, 1)
+	go func() {
+		uninstallDone <- r.UninstallSail(context.Background())
+	}()
+
+	// UninstallSail must block on sailLifecycleMu while Apply holds it: it
+	// must not complete during this window. (We rely on the channel not
+	// firing rather than reading installer fields, to stay race-free.)
+	select {
+	case <-uninstallDone:
+		t.Fatal("UninstallSail returned while Apply still held sailLifecycleMu")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Release the in-flight Apply; ensureIstio completes and frees the lock.
+	close(applyRelease)
+	require.NoError(t, <-ensureDone)
+
+	// UninstallSail can now acquire the lock and complete.
+	select {
+	case err := <-uninstallDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("UninstallSail did not complete after Apply released the lock")
+	}
+	assert.True(t, installer.uninstallCalled,
+		"Uninstall must run once the in-flight Apply releases sailLifecycleMu")
+}
+
+// TestUninstallSail_MarksControllerUninstalled verifies that after the Istio
+// control plane is torn down (transition to Unmanaged mode), UninstallSail
+// flips the CIO-managed GatewayClass's ControllerInstalled condition to False
+// with reason Unmanaged, so the status no longer reports a stale
+// "installed" control plane.
+func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, configv1.Install(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	require.NoError(t, gatewayapiv1.Install(scheme))
+
+	gwc := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "openshift-default"},
+		Spec: gatewayapiv1.GatewayClassSpec{
+			ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		},
+		Status: gatewayapiv1.GatewayClassStatus{
+			Conditions: []metav1.Condition{{
+				Type:    ControllerInstalledConditionType,
+				Status:  metav1.ConditionTrue,
+				Reason:  "Installed",
+				Message: "istiod installed",
+			}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(gwc).
+		WithStatusSubresource(gwc).
+		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
+			return []string{string(o.(*gatewayapiv1.GatewayClass).Spec.ControllerName)}
+		}).
+		Build()
+	informer := informertest.FakeInformers{Scheme: scheme}
+	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+
+	r := &reconciler{
+		client:        fakeClient,
+		cache:         fakeCache,
+		sailInstaller: &fakeSailInstaller{},
+		modeAccessor:  operatorcontroller.NewGatewayAPIModeAccessor(true),
+		config:        Config{OperandNamespace: "test-ns"},
+	}
+
+	require.NoError(t, r.UninstallSail(context.Background()))
+
+	got := &gatewayapiv1.GatewayClass{}
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "openshift-default"}, got))
+	cond := meta.FindStatusCondition(got.Status.Conditions, ControllerInstalledConditionType)
+	require.NotNil(t, cond, "ControllerInstalled condition must be present")
+	assert.Equal(t, metav1.ConditionFalse, cond.Status, "ControllerInstalled must be False after uninstall")
+	assert.Equal(t, "Unmanaged", cond.Reason, "ControllerInstalled reason must be Unmanaged")
 }
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
