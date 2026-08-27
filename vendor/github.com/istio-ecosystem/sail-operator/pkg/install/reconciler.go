@@ -255,10 +255,20 @@ func (inst *installer) reconcile(ctx context.Context, opts Options) Status {
 		return status
 	}
 
+	if opts.ManageCRDs {
+		if err := reconcileAggregationClusterRoles(ctx, inst.crdManager.cl, inst.crdManager, revisionName); err != nil {
+			status.Error = fmt.Errorf("failed to reconcile RBAC aggregation ClusterRoles: %w", err)
+			return status
+		}
+	}
+
 	status.Installed = true
 	return status
 }
 
 func (inst *installer) uninstall(ctx context.Context, namespace, revisionName string) error {
-	return inst.istiodReconciler.Uninstall(ctx, namespace, revisionName)
+	if err := inst.istiodReconciler.Uninstall(ctx, namespace, revisionName); err != nil {
+		return err
+	}
+	return deleteAggregationClusterRoles(ctx, inst.crdManager.cl, revisionName)
 }
