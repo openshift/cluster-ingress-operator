@@ -192,14 +192,6 @@ func ClientCAConfigMapName(ic *operatorv1.IngressController) types.NamespacedNam
 	}
 }
 
-// CRLConfigMapName returns the namespaced name for the CRL configmap.
-func CRLConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: "openshift-ingress",
-		Name:      "router-client-ca-crl-" + ic.Name,
-	}
-}
-
 // RsyslogConfigMapName returns the namespaced name for the rsyslog configmap.
 func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
