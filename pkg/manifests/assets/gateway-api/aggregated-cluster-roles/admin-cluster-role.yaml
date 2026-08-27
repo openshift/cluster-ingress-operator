@@ -20,9 +20,6 @@ rules:
       - httproutes
       - grpcroutes
       - referencegrants
-      - backendtlspolicies
-      - listenersets
-      - tlsroutes
     verbs:
       - get
       - list
