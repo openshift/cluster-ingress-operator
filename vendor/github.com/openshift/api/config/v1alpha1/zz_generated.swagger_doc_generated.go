@@ -357,6 +357,9 @@ var map_NodeExporterCollectorConfig = map[string]string{
 	"systemd":               "systemd configures the systemd collector, which collects statistics on the systemd daemon and its managed services. systemd is optional. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is disabled. Enabling this collector with a long list of selected units may produce metrics with high cardinality. If you enable this collector, closely monitor the prometheus-k8s deployment for excessive memory usage. Enable when you need metrics for specific units; scope units carefully.",
 	"softirqs":              "softirqs configures the softirqs collector, which exposes detailed softirq statistics from /proc/softirqs. softirqs is optional. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is disabled. Enable when you need visibility into kernel softirq processing across CPUs.",
 	"deviceMapperMultipath": "deviceMapperMultipath configures the dmmultipath collector, which collects statistics about DM-Multipath devices. deviceMapperMultipath is optional. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is enabled.",
+	"zoneinfo":              "zoneinfo configures the zoneinfo collector, which exposes per-zone memory page counts, watermarks, and protection thresholds from /proc/zoneinfo. zoneinfo is optional. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is to not collect zoneinfo metrics. Enable when you need visibility into kernel memory zone allocation and pressure.",
+	"nvmExpressSubsystem":   "nvmExpressSubsystem configures the nvmesubsystem collector, which collects statistics about NVM Express (NVMe) subsystem devices. nvmExpressSubsystem is optional. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is enabled.",
+	"interrupts":            "interrupts configures the interrupts collector, which exposes interrupt counts from /proc/interrupts. interrupts is optional. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is disabled. The interrupts collector can produce a large number of metrics depending on the hardware and interrupt sources present. When enabled, the collect field with at least one include pattern is required to explicitly select which interrupt lines are collected.",
 }
 
 func (NodeExporterCollectorConfig) SwaggerDoc() map[string]string {
@@ -390,6 +393,25 @@ func (NodeExporterCollectorEthtoolConfig) SwaggerDoc() map[string]string {
 	return map_NodeExporterCollectorEthtoolConfig
 }
 
+var map_NodeExporterCollectorInterruptsCollectConfig = map[string]string{
+	"":        "NodeExporterCollectorInterruptsCollectConfig holds configuration options for the interrupts collector when it is actively collecting metrics. At least one field must be specified.",
+	"include": "include is a list of regular expression patterns that select which interrupt lines to collect. This field is required. Each line in /proc/interrupts is matched against the same string node-exporter uses: the IRQ name, info, and devices fields joined with \";\", for example \"LOC;77;IO-APIC 2-edge ...\". Patterns are combined with OR into a single expression anchored on both ends, so each pattern must match the entire string (use \".*\" where needed). Each entry must be at least 1 character, at most 1024 characters, and only contain printable ASCII characters. Maximum length for this list is 50. Minimum length for this list is 1. Entries in this list must be unique.",
+}
+
+func (NodeExporterCollectorInterruptsCollectConfig) SwaggerDoc() map[string]string {
+	return map_NodeExporterCollectorInterruptsCollectConfig
+}
+
+var map_NodeExporterCollectorInterruptsConfig = map[string]string{
+	"":                 "NodeExporterCollectorInterruptsConfig provides configuration for the interrupts collector of the node-exporter agent. The interrupts collector exposes interrupt counts from /proc/interrupts. It is disabled by default. The interrupts collector can produce a large number of metrics depending on the hardware and interrupt sources present. When enabled, the collect field with at least one include pattern is required to explicitly select which interrupt lines are collected. When collectionPolicy is Collect, the collect field must be set with at least one include pattern. When collectionPolicy is DoNotCollect, the collect field must not be set.",
+	"collectionPolicy": "collectionPolicy declares whether the interrupts collector collects metrics. This field is required. Valid values are \"Collect\" and \"DoNotCollect\". When set to \"Collect\", the interrupts collector is active and the collect field must be set with at least one include pattern to select which interrupt lines are collected. When set to \"DoNotCollect\", the interrupts collector is inactive and the collect field must not be set.",
+	"collect":          "collect contains configuration options that apply only when the interrupts collector is actively collecting metrics (i.e. when collectionPolicy is Collect). collect is required when collectionPolicy is Collect and must contain at least one include pattern to explicitly select which interrupt lines are collected. collect must not be set when collectionPolicy is DoNotCollect. When set, at least one field must be specified within collect.",
+}
+
+func (NodeExporterCollectorInterruptsConfig) SwaggerDoc() map[string]string {
+	return map_NodeExporterCollectorInterruptsConfig
+}
+
 var map_NodeExporterCollectorKSMDConfig = map[string]string{
 	"":                 "NodeExporterCollectorKSMDConfig provides configuration for the ksmd collector of the node-exporter agent. The ksmd collector collects statistics from the kernel same-page merger daemon. It is disabled by default.",
 	"collectionPolicy": "collectionPolicy declares whether the ksmd collector collects metrics. This field is required. Valid values are \"Collect\" and \"DoNotCollect\". When set to \"Collect\", the ksmd collector is active and kernel same-page merger statistics are collected. When set to \"DoNotCollect\", the ksmd collector is inactive.",
@@ -406,6 +428,15 @@ var map_NodeExporterCollectorMountStatsConfig = map[string]string{
 
 func (NodeExporterCollectorMountStatsConfig) SwaggerDoc() map[string]string {
 	return map_NodeExporterCollectorMountStatsConfig
+}
+
+var map_NodeExporterCollectorNVMExpressSubsystemConfig = map[string]string{
+	"":                 "NodeExporterCollectorNVMExpressSubsystemConfig provides configuration for the nvmesubsystem collector of the node-exporter agent. The nvmesubsystem collector collects statistics about NVM Express (NVMe) subsystem devices. It is enabled by default.",
+	"collectionPolicy": "collectionPolicy declares whether the nvmesubsystem collector collects metrics. This field is required. Valid values are \"Collect\" and \"DoNotCollect\". When set to \"Collect\", the nvmesubsystem collector is active and NVMe subsystem statistics are collected. When set to \"DoNotCollect\", the nvmesubsystem collector is inactive and the corresponding metrics become unavailable.",
+}
+
+func (NodeExporterCollectorNVMExpressSubsystemConfig) SwaggerDoc() map[string]string {
+	return map_NodeExporterCollectorNVMExpressSubsystemConfig
 }
 
 var map_NodeExporterCollectorNetClassCollectConfig = map[string]string{
@@ -480,6 +511,15 @@ var map_NodeExporterCollectorTcpStatConfig = map[string]string{
 
 func (NodeExporterCollectorTcpStatConfig) SwaggerDoc() map[string]string {
 	return map_NodeExporterCollectorTcpStatConfig
+}
+
+var map_NodeExporterCollectorZoneinfoConfig = map[string]string{
+	"":                 "NodeExporterCollectorZoneinfoConfig provides configuration for the zoneinfo collector of the node-exporter agent. The zoneinfo collector exposes per-zone memory page counts, watermarks, and protection thresholds from /proc/zoneinfo. By default, the zoneinfo collector does not collect metrics.",
+	"collectionPolicy": "collectionPolicy declares whether the zoneinfo collector collects metrics. This field is required. Valid values are \"Collect\" and \"DoNotCollect\". When set to \"Collect\", the zoneinfo collector is active and zone memory statistics are collected. When set to \"DoNotCollect\", the zoneinfo collector is inactive.",
+}
+
+func (NodeExporterCollectorZoneinfoConfig) SwaggerDoc() map[string]string {
+	return map_NodeExporterCollectorZoneinfoConfig
 }
 
 var map_NodeExporterConfig = map[string]string{
@@ -645,6 +685,7 @@ var map_RemoteWriteSpec = map[string]string{
 	"":                     "RemoteWriteSpec represents configuration for remote write endpoints.",
 	"url":                  "url is the URL of the remote write endpoint. Must be a valid URL with http or https scheme and a non-empty hostname. Query parameters, fragments, and user information (e.g. user:password@host) are not allowed. Empty string is invalid. Must be between 1 and 2048 characters in length.",
 	"name":                 "name is a required identifier for this remote write configuration (name is the list key for the remoteWrite list). This name is used in metrics and logging to differentiate remote write queues. Must contain only alphanumeric characters, hyphens, and underscores. Must be between 1 and 63 characters in length.",
+	"messageVersion":       "messageVersion defines the Remote Write message's version to use when writing to the endpoint. When omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The default value is \"V1.0\". When set to \"V1.0\", Prometheus uses the `prometheus.WriteRequest` protobuf message introduced in Remote Write 1.0. When set to \"V2.0\", Prometheus uses the `io.prometheus.write.v2.Request` protobuf message introduced in Remote Write 2.0.",
 	"authorization":        "authorization defines the authorization method for the remote write endpoint. When omitted, no authorization is performed. When set, type must be one of Authorization, BasicAuth, OAuth2, SigV4, or ServiceAccount; the corresponding nested config must be set (ServiceAccount has no config).",
 	"headers":              "headers specifies the custom HTTP headers to be sent along with each remote write request. Sending custom headers makes the configuration of a proxy in between optional and helps the receiver recognize the given source better. Clients MAY allow users to send custom HTTP headers; they MUST NOT allow users to configure them in such a way as to send reserved headers. Headers set by Prometheus cannot be overwritten. When omitted, no custom headers are sent. Maximum of 50 headers can be specified. Each header name must be unique. Each header name must contain only alphanumeric characters, hyphens, and underscores, and must not be a reserved Prometheus header (Host, Authorization, Content-Encoding, Content-Type, X-Prometheus-Remote-Write-Version, User-Agent, Connection, Keep-Alive, Proxy-Authenticate, Proxy-Authorization, WWW-Authenticate).",
 	"metadataConfig":       "metadataConfig configures the sending of series metadata to remote storage. When omitted, no metadata is sent. When set to sendPolicy: Default, metadata is sent using platform-chosen defaults (e.g. send interval 30 seconds). When set to sendPolicy: Custom, metadata is sent using the settings in the custom field (e.g. custom.sendIntervalSeconds).",
