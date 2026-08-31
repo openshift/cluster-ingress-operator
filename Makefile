@@ -78,7 +78,7 @@ gatewayapi-tls-scanner-setup:
 
 .PHONY: setup-ossm-pre-release
 setup-ossm-pre-release:
-	hack/test-pre-release-ossm-images.sh
+	hack/setup-ossm-pre-release-testing.sh
 
 .PHONY: clean
 clean:
