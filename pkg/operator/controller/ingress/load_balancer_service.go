@@ -608,14 +608,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			for i, cidr := range lb.AllowedSourceRanges {
 				_, ipNet, err := netutils.ParseCIDRSloppy(string(cidr)) // check if CIDR is valid
 				if err != nil {
+					// API validation should prevent any parsing errors, but as a safeguard, log
+					// the error and still add the CIDR to keep behavior unchanged.
 					log.Error(err, "invalid CIDR", "cidr", string(cidr))
 					cidrs[i] = string(cidr)
 				} else {
-					cidrs[i] = ipNet.String() //Normalizing the Inputted CIDR
-					if string(cidr) != ipNet.String() {
-						log.Info("normalizing malformed CIDR", "original", string(cidr), "normalized", ipNet.String())
-					}
-
+					cidrs[i] = ipNet.String()
 				}
 
 			}
@@ -808,6 +806,11 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 			if !changed {
 				changed = true
 				updated = current.DeepCopy()
+			}
+			for i, expectedCIDR := range expected.Spec.LoadBalancerSourceRanges {
+				if i < len(current.Spec.LoadBalancerSourceRanges) && current.Spec.LoadBalancerSourceRanges[i] != expectedCIDR {
+					log.Info("normalizing malformed CIDR", "original", current.Spec.LoadBalancerSourceRanges[i], "normalized", expectedCIDR)
+				}
 			}
 			updated.Spec.LoadBalancerSourceRanges = expected.Spec.LoadBalancerSourceRanges
 		}
