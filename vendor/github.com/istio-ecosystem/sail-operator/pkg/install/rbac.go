@@ -73,6 +73,7 @@ func LibraryRBACRules() []rbacv1.PolicyRule {
 	addEntry("", "pods", readOnlyVerbs)
 	addEntry("", "secrets", helmManagedVerbs)
 	addEntry("apiextensions.k8s.io", "customresourcedefinitions", crdVerbs)
+	addEntry("rbac.authorization.k8s.io", "clusterroles", []string{"escalate"})
 
 	var rules []rbacv1.PolicyRule
 	for key, resources := range grouped {
