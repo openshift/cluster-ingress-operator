@@ -1307,7 +1307,7 @@ func getHTTPResponse(client *http.Client, name string) (int, http.Header, string
 	// Send the HTTP request.
 	response, err := client.Get("http://" + name)
 	if err != nil {
-		return 0, nil, "", fmt.Errorf("GET %s failed: %v", name, err)
+		return 0, nil, "", fmt.Errorf("GET %s failed: %w", name, err)
 	}
 
 	// Close response body.
@@ -1324,7 +1324,7 @@ func getTLSResponse(client *http.Client, name string) (int, http.Header, string,
 	// Send the HTTP request.
 	response, err := client.Get("https://" + name)
 	if err != nil {
-		return 0, nil, "", fmt.Errorf("GET %s failed: %v", name, err)
+		return 0, nil, "", fmt.Errorf("GET %s failed: %w", name, err)
 	}
 
 	// Close response body.
