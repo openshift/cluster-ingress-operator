@@ -130,10 +130,9 @@ func indexDNSRecords(o client.Object) []string {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	CredentialsRequestNamespace  string
-	DNSRecordNamespaces          []string
-	OperatorReleaseVersion       string
-	AzureWorkloadIdentityEnabled bool
+	CredentialsRequestNamespace string
+	DNSRecordNamespaces         []string
+	OperatorReleaseVersion      string
 }
 
 type reconciler struct {
@@ -276,7 +275,7 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *
 	}
 
 	if needUpdate {
-		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus, &infraConfig.Status, creds, r.config.AzureWorkloadIdentityEnabled)
+		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus, &infraConfig.Status, creds)
 		if err != nil {
 			return fmt.Errorf("failed to create DNS provider: %v", err)
 		}
@@ -740,7 +739,7 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 
 // createDNSProvider creates a DNS manager compatible with the given cluster
 // configuration.
-func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, infraStatus *configv1.InfrastructureStatus, creds *corev1.Secret, AzureWorkloadIdentityEnabled bool) (dns.Provider, error) {
+func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, infraStatus *configv1.InfrastructureStatus, creds *corev1.Secret) (dns.Provider, error) {
 	// If no DNS configuration is provided, don't try to set up provider clients.
 	// TODO: the provider configuration can be refactored into the provider
 	// implementations themselves, so this part of the code won't need to
@@ -854,7 +853,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			ARMEndpoint:    platformStatus.Azure.ARMEndpoint,
 			InfraID:        infraStatus.InfrastructureName,
 			Tags:           azuredns.GetTagList(infraStatus),
-		}, AzureWorkloadIdentityEnabled)
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
 		}

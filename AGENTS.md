@@ -327,7 +327,6 @@ Defined as constants in `pkg/operator/controller/names.go`:
 Controllers check these feature gates (from `github.com/openshift/api/features`):
 - `features.FeatureGateGatewayAPI` — Gateway API support
 - `features.FeatureGateGatewayAPIController` — Gateway API controller
-- `features.FeatureGateAzureWorkloadIdentity` — Azure workload identity
 - `features.FeatureGateIngressControllerDynamicConfigurationManager` — Dynamic configuration management
 - `features.FeatureGateRouteExternalCertificate` — External route certificates (being removed)
 
