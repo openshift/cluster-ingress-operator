@@ -79,7 +79,7 @@ spec:
         - name: GATEWAY_API_OPERATOR_CHANNEL
           value: stable
         - name: GATEWAY_API_OPERATOR_VERSION
-          value: servicemeshoperator3.v3.4.1
+          value: servicemeshoperator3.v3.4.2
         - name: ISTIO_VERSION
           value: v1.30-latest
         image: openshift/origin-cluster-ingress-operator:latest

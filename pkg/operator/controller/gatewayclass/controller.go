@@ -254,15 +254,6 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 			return nil, nil, err
 		}
 
-		// Watch the istiod deployment so that when it becomes available,
-		// we can annotate the GatewayClass to trigger a re-enqueue of
-		// any Gateways that were dropped during istiod's startup race.
-		isIstiodDeployment := predicate.NewPredicateFuncs(func(o client.Object) bool {
-			return o.GetNamespace() == config.OperandNamespace && o.GetName() == "istiod-"+operatorcontroller.IstioName("").Name
-		})
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.Deployment{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodDeployment, dependentPred)); err != nil {
-			return nil, nil, fmt.Errorf("failed to watch istiod deployment: %w", err)
-		}
 	}
 
 	// Watch the cluster infrastructure config in case the infrastructure
