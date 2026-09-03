@@ -40,15 +40,11 @@ type Config struct {
 	// if Azure workload identity is not used.
 	ClientSecret string
 	// FederatedTokenFile is the path to a file containing a workload
-	// identity token.  If FederatedTokenFile is specified and
-	// AzureWorkloadIdentityEnabled is true, then Azure workload identity is
-	// used instead of using a client secret.
+	// identity token. If no client secret is available, Azure workload
+	// identity is used instead.
 	FederatedTokenFile string
 	// TenantID is the Azure tenant ID.
 	TenantID string
-	// AzureWorkloadIdentityEnabled indicates whether the
-	// "AzureWorkloadIdentity" feature gate is enabled.
-	AzureWorkloadIdentityEnabled bool
 }
 
 // ARecord is a DNS A record.

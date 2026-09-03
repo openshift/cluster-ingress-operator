@@ -65,7 +65,7 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
+	} else if strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud:     cloudConfig,
