@@ -97,6 +97,26 @@ spec:
           summary: ListenerSet targeting an OpenShift-managed Gateway detected
           description: "This alert fires when a ListenerSet resource targets an OpenShift-managed Gateway. ListenerSets are not supported by the OpenShift Gateway API implementation. Remove the ListenerSet or retarget it to a non-OpenShift-managed Gateway."
           message: "ListenerSet {{ $labels.listenerset_namespace }}/{{ $labels.listenerset_name }} is targeting an OpenShift-managed Gateway and will not be reconciled. On a future upgrade, this ListenerSet may become active and could cause unexpected traffic routing."
+      - alert: GatewayAPIModeTransitionFailed
+        expr: ingress_controller_gateway_api_mode_transition_failed == 1
+        for: 15m
+        labels:
+          severity: warning
+          namespace: openshift-ingress-operator
+        annotations:
+          summary: Gateway API management mode transition is stuck
+          description: "This alert fires when the Cluster Ingress Operator cannot complete a Gateway API management mode transition (e.g., a ValidatingAdmissionPolicy delete or Sail Library install/uninstall operation is failing). The operator retries automatically and does not report Degraded for this condition; check the ingress-operator logs and the ingress.operator.openshift.io/cluster status.conditions for the failing operation."
+          message: "The Cluster Ingress Operator has been unable to transition the Gateway API management mode to {{ $labels.target }} for over 15 minutes."
+      - alert: GatewayAPIUnmanagedCRDsFound
+        expr: ingress_controller_gateway_api_unmanaged_crds == 1
+        for: 1h
+        labels:
+          severity: warning
+          namespace: openshift-ingress-operator
+        annotations:
+          summary: Unmanaged Gateway API CRD detected
+          description: "This alert fires when a Custom Resource Definition in the gateway.networking.k8s.io group exists on the cluster that the Cluster Ingress Operator does not manage (for example, a third-party or unexpected CRD). This does not block the operator's own Gateway API CRDs from functioning, but blocks taking over management of Gateway API CRDs (TakeoverBlocked) until resolved, and the CRD is not protected by the operator's ValidatingAdmissionPolicy."
+          message: "The Gateway API CRD {{ $labels.name }} is not managed by the Cluster Ingress Operator."
       # Recording rules related to route metrics for sending via telemetry
       - expr: min(route_metrics_controller_routes_per_shard)
         record: cluster:route_metrics_controller_routes_per_shard:min

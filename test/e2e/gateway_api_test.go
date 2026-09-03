@@ -112,6 +112,11 @@ func TestGatewayAPI(t *testing.T) {
 		t.Fatalf("error checking without olm feature gate enabled status: %v", err)
 	}
 
+	gatewayAPIManagementModeEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
+	if err != nil {
+		t.Fatalf("error checking GatewayAPIManagementMode feature gate enabled status: %v", err)
+	}
+
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
 		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
@@ -143,6 +148,13 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
+	if gatewayAPIManagementModeEnabled {
+		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
+		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
+		t.Run("testGatewayAPIManagementModeCRDCompliance", testGatewayAPIManagementModeCRDCompliance)
+		t.Run("testGatewayAPIManagementModeUnmanaged", testGatewayAPIManagementModeUnmanaged)
+		t.Run("testGatewayAPIManagementModeTakeover", testGatewayAPIManagementModeTakeover)
+	}
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
 	}

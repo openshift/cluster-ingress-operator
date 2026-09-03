@@ -68,3 +68,9 @@ install_crd \
 install_crd \
   "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords-OKD.crd.yaml" \
   "manifests/00-custom-resource-definition-internal-OKD.yaml"
+
+# Ingress (operator.openshift.io/v1alpha1) — only in TechPreview/DevPreview/Custom (not Default or OKD).
+# The source is a single merged CRD covering all three feature sets.
+install_crd \
+  "vendor/github.com/openshift/api/operator/v1alpha1/zz_generated.crd-manifests/0000_50_ingress_02_ingresses.crd.yaml" \
+  "manifests/00-custom-resource-definition-ingress.yaml"

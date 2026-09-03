@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
@@ -44,13 +46,14 @@ var log = logf.Logger.WithName(controllerName)
 // NewUnmanaged creates and returns a controller that watches services that are
 // associated with gateways and creates dnsrecord objects for them.  This is an
 // unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		config:   config,
-		client:   mgr.GetClient(),
-		cache:    operatorCache,
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		config:       config,
+		client:       mgr.GetClient(),
+		cache:        operatorCache,
+		recorder:     mgr.GetEventRecorderFor(controllerName),
+		modeAccessor: modeAccessor,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -104,15 +107,29 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		}
 		return requests
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
+
+	// Watch the Ingress CR for mode changes. Any change to the Ingress
+	// CR triggers re-evaluation of all services in the operand namespace
+	// so that dependent controllers can start or stop processing when
+	// the management mode changes. Only register when the management mode
+	// gate is enabled because the Ingress CRD only exists on
+	// TechPreview/DevPreview clusters.
+	if modeAccessor != nil && modeAccessor.GateEnabled() {
+		ingressToServices := operatorcontroller.IngressWakeUpMapper(operatorCache, func() client.ObjectList { return &corev1.ServiceList{} }, client.InNamespace(config.OperandNamespace), client.HasLabels{operatorcontroller.ManagedByIstioLabelKey})
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToServices))); err != nil {
+			return nil, err
+		}
+	}
+
 	return c, nil
 }
 
@@ -146,15 +163,20 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client   client.Client
-	cache    cache.Cache
-	recorder record.EventRecorder
+	client       client.Client
+	cache        cache.Cache
+	recorder     record.EventRecorder
+	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // Reconcile expects request to refer to a service and creates or reconciles a
 // dnsrecord.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
+	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
+		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
+		return reconcile.Result{}, nil
+	}
 
 	var service corev1.Service
 	if err := r.cache.Get(ctx, request.NamespacedName, &service); err != nil {

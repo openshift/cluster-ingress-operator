@@ -12,6 +12,7 @@ FROM registry.ci.openshift.org/ocp/5.0:base-rhel9
 COPY --from=builder /ingress-operator/ingress-operator /usr/bin/
 COPY --from=builder /tmp/cluster-ingress-operator-tests-ext.gz /usr/bin/
 COPY manifests /manifests
+COPY pkg/manifests/assets/gateway-api/gateway.networking.k8s.io_*.yaml /gateway-api-manifests/
 ENTRYPOINT ["/usr/bin/ingress-operator"]
 LABEL io.openshift.release.operator="true"
 LABEL io.k8s.display-name="OpenShift ingress-operator" \

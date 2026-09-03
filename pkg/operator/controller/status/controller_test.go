@@ -2,6 +2,7 @@ package status
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -10,6 +11,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -161,7 +163,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
 			}
 
-			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2, operatorcontroller.TransitionState{})
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 			}
@@ -1019,6 +1021,46 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Message: "Unmanaged Gateway API CRDs found: httproutes.gateway.networking.k8s.io.",
 			},
 		},
+		// GatewayAPIManagementMode specific tests
+		{
+			// Unmanaged/foreign Gateway API CRDs are observable via the
+			// ClusterOperator extension status and the takeover-blocking
+			// TakeoverBlocked reason on the Ingress CR, but must never
+			// set ClusterOperator Degraded: see
+			// ingress_controller_gateway_api_unmanaged_crds and its alert.
+			description: "default ingresscontroller not degraded, unmanaged gateway api crds do not degrade",
+			modes:       both,
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				unmanagedGatewayAPICRDNames:     "notvalid.gateway.networking.k8s.io",
+				gatewayAPIManagementModeEnabled: true,
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegraded",
+				Message: `The "default" ingress controller reports Degraded=False.`,
+			},
+		},
+		{
+			description: "default ingresscontroller degraded, unmanaged gateway api crds do not add to degraded when using GatewayAPIManagementMode",
+			modes:       both,
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", true),
+				},
+				unmanagedGatewayAPICRDNames:     "notvalid.gateway.networking.k8s.io",
+				gatewayAPIManagementModeEnabled: true,
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionTrue,
+				Reason:  "IngressDegraded",
+				Message: `The "default" ingress controller reports Degraded=True: dummy: dummy.`,
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1143,6 +1185,85 @@ func Test_compareVersionNums(t *testing.T) {
 				}
 				if result != tc.expectedResult {
 					t.Fatalf("actual result %d differs from expected result %d", result, tc.expectedResult)
+				}
+			}
+		})
+	}
+}
+
+func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
+	testCases := []struct {
+		description       string
+		modeTransition    operatorcontroller.TransitionState
+		expectProgressing configv1.ConditionStatus
+		expectInMessage   string
+	}{
+		{
+			description:       "no mode transition",
+			modeTransition:    operatorcontroller.TransitionState{},
+			expectProgressing: configv1.ConditionFalse,
+		},
+		{
+			description: "mode transition in progress to Unmanaged",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			},
+			expectProgressing: configv1.ConditionTrue,
+			expectInMessage:   "Transitioning Gateway API management mode to Unmanaged",
+		},
+		{
+			description: "mode transition in progress to Managed",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeManaged,
+			},
+			expectProgressing: configv1.ConditionTrue,
+			expectInMessage:   "Transitioning Gateway API management mode to Managed",
+		},
+		{
+			description: "mode transition with error still reports progressing",
+			modeTransition: operatorcontroller.TransitionState{
+				InProgress: true,
+				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+				Error:      fmt.Errorf("some error"),
+			},
+			expectProgressing: configv1.ConditionTrue,
+			expectInMessage:   "Failed to transition Gateway API management mode to Unmanaged, retrying: some error",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ingresscontrollers := []operatorv1.IngressController{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "default"},
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{
+							{
+								Type:   operatorv1.OperatorStatusTypeAvailable,
+								Status: operatorv1.ConditionTrue,
+							},
+						},
+					},
+				},
+			}
+			versions := []configv1.OperandVersion{
+				{Name: OperatorVersionName, Version: "v1"},
+				{Name: IngressControllerVersionName, Version: "ic-v1"},
+				{Name: CanaryImageVersionName, Version: "c-v1"},
+			}
+			actual := computeOperatorProgressingCondition(
+				ingresscontrollers, true,
+				versions, versions,
+				"v1", "ic-v1", "c-v1",
+				tc.modeTransition,
+			)
+			if actual.Status != tc.expectProgressing {
+				t.Errorf("expected status %q, got %q", tc.expectProgressing, actual.Status)
+			}
+			if tc.expectInMessage != "" {
+				if !strings.Contains(actual.Message, tc.expectInMessage) {
+					t.Errorf("expected message to contain %q, got %q", tc.expectInMessage, actual.Message)
 				}
 			}
 		})

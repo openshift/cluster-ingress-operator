@@ -1,0 +1,7 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: openshift-ingress-operator-gatewayapi-crd-admission
+spec:
+  policyName: openshift-ingress-operator-gatewayapi-crd-admission
+  validationActions: [Deny]
