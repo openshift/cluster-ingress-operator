@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -203,7 +204,7 @@ func createHttpRoute(t *testing.T, namespace, routeName, parentNamespace, hostna
 		return nil, fmt.Errorf("failed to create replicaset %s/%s: %v", namespace, echoRs.Name, err)
 	}
 	// buildEchoService builds a service that targets port 8080.
-	echoService := buildEchoService(echoRs.Name, namespace, echoRs.Spec.Template.ObjectMeta.Labels)
+	echoService := buildEchoService(echoRs.Name, namespace, echoRs.Spec.Template.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.TODO(), echoService, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -345,6 +346,32 @@ func buildGateway(name, namespace, gcname, fromNs, domain string) *gatewayapiv1.
 	}
 }
 
+// buildGateway initializes the Gateway and returns its address.
+func buildTLSGateway(name, namespace, gcname, fromNs, domain string) *gatewayapiv1.Gateway {
+	hostname := gatewayapiv1.Hostname("*." + domain)
+	fromNamespace := gatewayapiv1.FromNamespaces(fromNs)
+	// Tell the gateway listener to allow routes from the namespace/s in the fromNamespaces variable, which could be "All".
+	allowedRoutes := gatewayapiv1.AllowedRoutes{Namespaces: &gatewayapiv1.RouteNamespaces{From: &fromNamespace}}
+	listener1 := gatewayapiv1.Listener{
+		Name:     "tls-passthrough",
+		Hostname: &hostname,
+		Port:     443,
+		Protocol: gatewayapiv1.TLSProtocolType,
+		TLS: &gatewayapiv1.ListenerTLSConfig{
+			Mode: ptr.To(gatewayapiv1.TLSModePassthrough),
+		},
+		AllowedRoutes: &allowedRoutes,
+	}
+
+	return &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gcname),
+			Listeners:        []gatewayapiv1.Listener{listener1},
+		},
+	}
+}
+
 // buildHTTPRoute initializes the HTTPRoute and returns its address.
 func buildHTTPRoute(routeName, namespace, parentgateway, parentNamespace, hostname, backendRefname string) *gatewayapiv1.HTTPRoute {
 	parentns := gatewayapiv1.Namespace(parentNamespace)
@@ -367,6 +394,30 @@ func buildHTTPRoute(routeName, namespace, parentgateway, parentNamespace, hostna
 			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{ParentRefs: []gatewayapiv1.ParentReference{parent}},
 			Hostnames:       []gatewayapiv1.Hostname{gatewayapiv1.Hostname(hostname)},
 			Rules:           []gatewayapiv1.HTTPRouteRule{rule},
+		},
+	}
+}
+
+// buildTLSRoute initializes the TLSRoute and returns its address.
+func buildTLSRoute(routeName, namespace, parentgateway, parentNamespace, hostname, backendRefname string) *gatewayapiv1.TLSRoute {
+	parentns := gatewayapiv1.Namespace(parentNamespace)
+	parent := gatewayapiv1.ParentReference{Name: gatewayapiv1.ObjectName(parentgateway), Namespace: &parentns}
+	port := gatewayapiv1.PortNumber(443)
+	rule := gatewayapiv1.TLSRouteRule{
+		BackendRefs: []gatewayapiv1.BackendRef{{
+			BackendObjectReference: gatewayapiv1.BackendObjectReference{
+				Name: gatewayapiv1.ObjectName(backendRefname),
+				Port: &port,
+			},
+		}},
+	}
+
+	return &gatewayapiv1.TLSRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: routeName, Namespace: namespace},
+		Spec: gatewayapiv1.TLSRouteSpec{
+			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{ParentRefs: []gatewayapiv1.ParentReference{parent}},
+			Hostnames:       []gatewayapiv1.Hostname{gatewayapiv1.Hostname(hostname)},
+			Rules:           []gatewayapiv1.TLSRouteRule{rule},
 		},
 	}
 }
@@ -1148,7 +1199,7 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 
 // assertHttpRouteConnection checks if the http route of the given name replies successfully,
 // and returns an error if not
-func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
+func assertRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway, route string) error {
 	domain := ""
 
 	// Get gateway listener hostname to use for dnsRecord.
@@ -1179,7 +1230,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
 				_, err := net.LookupHost(hostname)
 				if err != nil {
-					t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
+					t.Logf("%v waiting for %s route name %s to resolve (%v)", time.Now(), route, hostname, err)
 					return false, nil
 				}
 				return true, nil
@@ -1230,7 +1281,11 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 	t.Logf("Probing %s...", hostname)
 	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		var err error
-		statusCode, headers, body, err = getHTTPResponse(client, hostname)
+		if route == "http" {
+			statusCode, headers, body, err = getHTTPResponse(client, hostname)
+		} else {
+			statusCode, headers, body, err = getTLSResponse(client, hostname)
+		}
 		if err != nil {
 			t.Logf("GET %s failed: %v, retrying...", hostname, err)
 			return false, nil
@@ -1257,7 +1312,7 @@ func getHTTPResponse(client *http.Client, name string) (int, http.Header, string
 	// Send the HTTP request.
 	response, err := client.Get("http://" + name)
 	if err != nil {
-		return 0, nil, "", fmt.Errorf("GET %s failed: %v", name, err)
+		return 0, nil, "", fmt.Errorf("GET %s failed: %w", name, err)
 	}
 
 	// Close response body.
@@ -1268,6 +1323,90 @@ func getHTTPResponse(client *http.Client, name string) (int, http.Header, string
 	}
 
 	return response.StatusCode, response.Header, string(body), nil
+}
+
+func getTLSResponse(client *http.Client, name string) (int, http.Header, string, error) {
+	// Send the HTTP request.
+	response, err := client.Get("https://" + name)
+	if err != nil {
+		return 0, nil, "", fmt.Errorf("GET %s failed: %w", name, err)
+	}
+
+	// Close response body.
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return 0, nil, "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return response.StatusCode, response.Header, string(body), nil
+}
+
+// assertTLSRouteSuccessful checks if the tls route was created and has parent conditions that indicate
+// it was accepted successfully.  A parent is usually a gateway.  Returns an error not accepted and/or not resolved.
+func assertTLSRouteSuccessful(t *testing.T, namespace, name string, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.TLSRoute, error) {
+	t.Helper()
+
+	if gateway == nil {
+		return nil, errors.New("unable to validate TLSRoute, no gateway available")
+	}
+	tlsroute := &gatewayapiv1.TLSRoute{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: name}
+
+	// Wait 1 minute for parent/s to update
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, tlsroute); err != nil {
+			t.Logf("Failed to get tlsroute %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		numParents := len(tlsroute.Status.Parents)
+		if numParents == 0 {
+			t.Logf("Found no parents in tlsroute %v with status %+v; retrying...", nsName, tlsroute.Status)
+			return false, nil
+		}
+		t.Logf("Found tlsroute %v with %d parent/s; status: %+v", nsName, numParents, tlsroute.Status)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	acceptedConditionMsg := "no accepted parent conditions"
+	resolvedRefConditionMsg := "no resolved ref parent conditions"
+	accepted := false
+	resolvedRefs := false
+
+	// The tls route must have at least one parent for which it is successful.
+	for _, parent := range tlsroute.Status.Parents {
+		// For each parent conditions should be true for both Accepted and ResolvedRefs
+		for _, condition := range parent.Conditions {
+			switch condition.Type {
+			case string(gatewayapiv1.RouteConditionAccepted):
+				acceptedConditionMsg = condition.Message
+				if condition.Status == metav1.ConditionTrue {
+					accepted = true
+				}
+			case string(gatewayapiv1.RouteConditionResolvedRefs):
+				resolvedRefConditionMsg = condition.Message
+				if condition.Status == metav1.ConditionTrue {
+					resolvedRefs = true
+				}
+			}
+		}
+		// Check the results for each parent.
+		switch {
+		case !accepted && !resolvedRefs:
+			return nil, fmt.Errorf("TLSRoute %s/%s, parent %v/%v neither %v nor %v, last recorded status messages: %s, %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionAccepted, gatewayapiv1.RouteConditionResolvedRefs, acceptedConditionMsg, resolvedRefConditionMsg)
+		case !accepted:
+			return nil, fmt.Errorf("TLSRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionAccepted, acceptedConditionMsg)
+		case !resolvedRefs:
+			return nil, fmt.Errorf("TLSRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionResolvedRefs, resolvedRefConditionMsg)
+		}
+	}
+
+	t.Logf("Observed that all parents of tlsroute %v report accepted and resolved; status: %+v", nsName, tlsroute.Status)
+
+	return tlsroute, nil
 }
 
 // assertCatalogSource checks if the CatalogSource of the given name exists,

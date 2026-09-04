@@ -88,6 +88,65 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 	}
 }
 
+// buildTLSPod returns a pod definition to communicate with TLSRoutes.
+func buildTLSPod(name, namespace string, secret string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"app":  name,
+				"type": "test-pod",
+			},
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Command: []string{"/bin/bash", "-c", `
+					cat > /tmp/handler.sh <<- 'SCRIPT'
+					#!/bin/bash
+					printf "HTTP/1.0 200 OK\r\n\r\n"
+					sed -e "/^\r/q"
+					SCRIPT
+					chmod +x /tmp/handler.sh
+					socat OPENSSL-LISTEN:8443,reuseaddr,fork,cert=/etc/tls/tls.crt,key=/etc/tls/tls.key,verify=0 SYSTEM:/tmp/handler.sh`},
+					Image: "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest",
+					Name:  "echo",
+					Ports: []corev1.ContainerPort{
+						{
+							ContainerPort: int32(8443),
+							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					VolumeMounts: []corev1.VolumeMount{{
+						Name:      "tls-cert",
+						MountPath: "/etc/tls",
+						ReadOnly:  false,
+					}},
+				},
+			},
+			Volumes: []corev1.Volume{{
+				Name: "tls-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: secret,
+					},
+				},
+			}},
+		},
+	}
+}
+
 // generateUnprivilegedSecurityContext returns a SecurityContext with the minimum possible privileges that satisfy
 // restricted pod security requirements
 func generateUnprivilegedSecurityContext() *corev1.SecurityContext {
@@ -118,7 +177,7 @@ func waitForHTTPClientCondition(t *testing.T, httpClient *http.Client, req *http
 }
 
 // buildEchoService returns a service definition for an HTTP service.
-func buildEchoService(name, namespace string, labels map[string]string) *corev1.Service {
+func buildEchoService(name, namespace string, labels map[string]string, portName string, port int, targetPort int) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -127,10 +186,10 @@ func buildEchoService(name, namespace string, labels map[string]string) *corev1.
 		Spec: corev1.ServiceSpec{
 			Ports: []corev1.ServicePort{
 				{
-					Name:       "http",
-					Port:       int32(80),
+					Name:       portName,
+					Port:       int32(port),
 					Protocol:   corev1.ProtocolTCP,
-					TargetPort: intstr.FromInt(8080),
+					TargetPort: intstr.FromInt(targetPort),
 				},
 			},
 			Selector: labels,
@@ -922,7 +981,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -991,7 +1050,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
