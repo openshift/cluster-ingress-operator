@@ -110,14 +110,18 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	}
 	updated.Status.EffectiveHAProxyVersion = haproxyVersion
 
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
+	deploymentAvailableCondition := computeDeploymentAvailableCondition(deployment)
+	previousDeploymentAvailableCondition, hasPreviousDeploymentAvailableCondition := findOperatorCondition(ic.Status.Conditions, IngressControllerDeploymentAvailableConditionType)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, deploymentAvailableCondition)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeLoadBalancerStatus(ic, service, operandEvents, false)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig, false)...)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
+	availableCondition, err := computeIngressAvailableCondition(updated.Status.Conditions, updated.Status.AvailableReplicas)
+	errs = append(errs, err)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
@@ -132,6 +136,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
 		} else {
 			updatedIc = true
+			if hasPreviousDeploymentAvailableCondition {
+				RecordDeploymentAvailableTransition(ic.Name, previousDeploymentAvailableCondition, deploymentAvailableCondition)
+			}
 		}
 	}
 	//OCPBUGS-61508 set at every reconcile the ingress_controller_conditions metrics
@@ -181,6 +188,17 @@ func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 	}
 	conditions = append(conditions, additions...)
 	return conditions
+}
+
+// findOperatorCondition returns the condition of the given type from
+// conditions, and a Boolean indicating whether it was found.
+func findOperatorCondition(conditions []operatorv1.OperatorCondition, conditionType string) (operatorv1.OperatorCondition, bool) {
+	for _, c := range conditions {
+		if c.Type == conditionType {
+			return c, true
+		}
+	}
+	return operatorv1.OperatorCondition{}, false
 }
 
 // PruneConditions removes any conditions that are not currently supported.
@@ -299,11 +317,25 @@ func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev
 // 2) the DNSReady condition of the IngressController, and
 // 3) the LoadBalancerReady condition of the IngressController.
 // The ingresscontroller is judged Available only if all 3 conditions are true
-func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
+//
+// The DeploymentAvailable condition is granted a short grace period before it
+// can mark the ingresscontroller as unavailable, but only if at least one
+// replica is currently available (availableReplicas > 0). This tolerates the
+// case where deployment briefly reports Available=False while dropping below
+// the configured minimum availability threshold (e.g. during a node reboot or
+// pod eviction) but other replicas are still serving traffic. If zero
+// replicas are available, the ingresscontroller is a genuine outage and is
+// reported unavailable immediately, without any grace period.
+func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition, availableReplicas int32) (operatorv1.OperatorCondition, error) {
+	deploymentAvailableGracePeriod := time.Second * 60
+	if availableReplicas == 0 {
+		deploymentAvailableGracePeriod = 0
+	}
 	expected := []expectedCondition{
 		{
-			condition: IngressControllerDeploymentAvailableConditionType,
-			status:    operatorv1.ConditionTrue,
+			condition:   IngressControllerDeploymentAvailableConditionType,
+			status:      operatorv1.ConditionTrue,
+			gracePeriod: deploymentAvailableGracePeriod,
 		},
 		{
 			condition: operatorv1.DNSReadyIngressConditionType,
@@ -323,22 +355,33 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition)
 
 	// Cover the rare case of no conditions
 	if len(conditions) == 0 {
-		return operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse}
+		return operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse}, nil
 	}
-	_, unavailableConditions, _ := checkConditions(expected, conditions)
+	graceConditions, unavailableConditions, requeueAfter := checkConditions(expected, conditions)
 	if len(unavailableConditions) != 0 {
-		degraded := formatConditions(unavailableConditions)
-		return operatorv1.OperatorCondition{
+		unavailable := formatConditions(unavailableConditions)
+		condition := operatorv1.OperatorCondition{
 			Type:    operatorv1.IngressControllerAvailableConditionType,
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "IngressControllerUnavailable",
-			Message: "One or more status conditions indicate unavailable: " + degraded,
+			Message: "One or more status conditions indicate unavailable: " + unavailable,
 		}
+		return condition, retryableerror.New(errors.New("IngressController is unavailable: "+unavailable), time.Minute)
 	}
-	return operatorv1.OperatorCondition{
+	condition := operatorv1.OperatorCondition{
 		Type:   operatorv1.IngressControllerAvailableConditionType,
 		Status: operatorv1.ConditionTrue,
 	}
+	var err error
+	if len(graceConditions) != 0 {
+		var grace string
+		for _, cond := range graceConditions {
+			grace = grace + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
+		}
+		grace = grace[2:]
+		err = retryableerror.New(errors.New("IngressController may become unavailable soon: "+grace), requeueAfter)
+	}
+	return condition, err
 }
 
 // checkConditions compares expected operator conditions to existing operator
