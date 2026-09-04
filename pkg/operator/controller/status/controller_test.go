@@ -21,14 +21,16 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description            string
-		noNamespace            bool
-		allIngressesAvailable  bool
-		someIngressProgressing bool
-		reportedVersions       versions
-		oldVersions            versions
-		curVersions            versions
-		expectProgressing      configv1.ConditionStatus
+		description                          string
+		noNamespace                          bool
+		allIngressesAvailable                bool
+		someIngressProgressing               bool
+		deploymentRollingOutReason           string
+		additionalDeploymentRollingOutReason string
+		reportedVersions                     versions
+		oldVersions                          versions
+		curVersions                          versions
+		expectProgressing                    configv1.ConditionStatus
 	}{
 		{
 			description:           "all ingress controllers are available",
@@ -44,6 +46,27 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 		{
 			description:       "all ingress controllers are not available",
 			expectProgressing: configv1.ConditionTrue,
+		},
+		{
+			description:                "unavailable due to infrastructure-driven replicas stabilizing",
+			deploymentRollingOutReason: ingress.ReasonReplicasStabilizing,
+			expectProgressing:          configv1.ConditionFalse,
+		},
+		{
+			description:                "unavailable due to infrastructure-driven pods starting",
+			deploymentRollingOutReason: ingress.ReasonPodsStarting,
+			expectProgressing:          configv1.ConditionFalse,
+		},
+		{
+			description:                "unavailable due to genuine deployment rollout",
+			deploymentRollingOutReason: ingress.ReasonDeploymentRollingOut,
+			expectProgressing:          configv1.ConditionTrue,
+		},
+		{
+			description:                          "mixed infra and non-infra unavailability blocks suppression",
+			deploymentRollingOutReason:           ingress.ReasonReplicasStabilizing,
+			additionalDeploymentRollingOutReason: ingress.ReasonDeploymentRollingOut,
+			expectProgressing:                    configv1.ConditionTrue,
 		},
 		{
 			description:           "versions match",
@@ -156,9 +179,34 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 					}},
 				},
 			}
-			ingresscontrollers = append(ingresscontrollers, ic)
 			if tc.someIngressProgressing {
-				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
+				ic.Status.Conditions[0].Status = operatorv1.ConditionTrue
+			}
+			if len(tc.deploymentRollingOutReason) > 0 {
+				ic.Status.Conditions = append(ic.Status.Conditions, operatorv1.OperatorCondition{
+					Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
+					Status: operatorv1.ConditionTrue,
+					Reason: tc.deploymentRollingOutReason,
+				})
+			}
+			ingresscontrollers = append(ingresscontrollers, ic)
+			if len(tc.additionalDeploymentRollingOutReason) > 0 {
+				ic2 := operatorv1.IngressController{
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{
+							{
+								Type:   operatorv1.OperatorStatusTypeProgressing,
+								Status: operatorv1.ConditionFalse,
+							},
+							{
+								Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
+								Status: operatorv1.ConditionTrue,
+								Reason: tc.additionalDeploymentRollingOutReason,
+							},
+						},
+					},
+				}
+				ingresscontrollers = append(ingresscontrollers, ic2)
 			}
 
 			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
