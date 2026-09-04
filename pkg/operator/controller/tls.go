@@ -24,11 +24,13 @@ func copyTLSSpec(in *configv1.TLSProfileSpec) *configv1.TLSProfileSpec {
 // tlsGroupToCurveID maps a configv1.TLSGroup to a crypto/tls CurveID.
 // Groups not supported by the Go runtime are returned with ok=false.
 var tlsGroupToCurveID = map[configv1.TLSGroup]tls.CurveID{
-	configv1.TLSGroupX25519:         tls.X25519,
-	configv1.TLSGroupSecP256r1:      tls.CurveP256,
-	configv1.TLSGroupSecP384r1:      tls.CurveP384,
-	configv1.TLSGroupSecP521r1:      tls.CurveP521,
-	configv1.TLSGroupX25519MLKEM768: tls.X25519MLKEM768,
+	configv1.TLSGroupX25519:             tls.X25519,
+	configv1.TLSGroupSecP256r1:          tls.CurveP256,
+	configv1.TLSGroupSecP384r1:          tls.CurveP384,
+	configv1.TLSGroupSecP521r1:          tls.CurveP521,
+	configv1.TLSGroupX25519MLKEM768:     tls.X25519MLKEM768,
+	configv1.TLSGroupSecP256r1MLKEM768:  tls.SecP256r1MLKEM768,
+	configv1.TLSGroupSecP384r1MLKEM1024: tls.SecP384r1MLKEM1024,
 }
 
 // TLSGroupToCurveID converts a configv1.TLSGroup name to its crypto/tls

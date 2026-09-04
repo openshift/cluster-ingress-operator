@@ -3570,8 +3570,8 @@ func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 				configv1.TLSGroupX25519,
 			},
 			expectedEnv: []envData{
-				// Entire list is non-FIPS; must fall back to secp256r1:secp384r1:secp521r1.
-				{"ROUTER_CURVES", true, "secp256r1:secp384r1:secp521r1"},
+				// Entire list is non-FIPS; must fall back to secp256r1:secp384r1:secp521r1:SecP256r1MLKEM768:SecP384r1MLKEM1024.
+				{"ROUTER_CURVES", true, "secp256r1:secp384r1:secp521r1:SecP256r1MLKEM768:SecP384r1MLKEM1024"},
 			},
 		},
 		// ── Feature-gate disabled (Groups field absent) ──────────────────────
