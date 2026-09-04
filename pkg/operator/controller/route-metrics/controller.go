@@ -3,6 +3,7 @@ package routemetrics
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -117,7 +118,9 @@ func (r *reconciler) routeToIngressController(context context.Context, obj clien
 	}
 
 	// Get the previous set of Ingresses of the Route.
+	r.mu.RLock()
 	previousRouteIngresses := r.routeToIngresses[routeNamespacedName]
+	r.mu.RUnlock()
 
 	// Iterate through the previousRouteIngresses.
 	for routerName := range previousRouteIngresses {
@@ -138,7 +141,9 @@ func (r *reconciler) routeToIngressController(context context.Context, obj clien
 	}
 
 	// Map the currentRouteIngresses to Route's NamespacedName.
+	r.mu.Lock()
 	r.routeToIngresses[routeNamespacedName] = currentRouteIngresses
+	r.mu.Unlock()
 
 	return requests
 }
@@ -147,7 +152,10 @@ func (r *reconciler) routeToIngressController(context context.Context, obj clien
 type reconciler struct {
 	cache     cache.Cache
 	namespace string
-	// routeToIngresses stores the Ingress Controllers that have admitted a given route.
+	// mu protects routeToIngresses from concurrent access.
+	mu sync.RWMutex
+	// routeToIngresses stores the Ingress Controllers that have admitted
+	// a given route. Readers and writers must hold mu.
 	routeToIngresses map[types.NamespacedName]sets.String
 }
 
