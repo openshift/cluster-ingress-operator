@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
@@ -17,6 +18,9 @@ import (
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -342,6 +346,51 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
+	mutateForWaf := func(options *install.Options, host string, port uint32) *install.Options {
+		// At this moment, these options should be already set
+		if options == nil || options.Values == nil || options.Values.MeshConfig == nil {
+			return options
+		}
+		if len(options.Values.MeshConfig.ExtensionProviders) == 0 {
+			options.Values.MeshConfig.ExtensionProviders = make([]*sailv1.MeshConfigExtensionProvider, 0)
+		}
+		options.Values.MeshConfig.ExtensionProviders = append(options.Values.MeshConfig.ExtensionProviders,
+			&sailv1.MeshConfigExtensionProvider{
+				Name: new("waf-log-collector"),
+				EnvoyOtelAls: &sailv1.MeshConfigExtensionProviderEnvoyOpenTelemetryLogProvider{
+					Service: new(host),
+					Port:    new(uint32(port)),
+					// Define later if we really need it, or if OTEL can do parsing on its side
+					LogFormat: &sailv1.MeshConfigExtensionProviderEnvoyOpenTelemetryLogProviderLogFormat{
+						Labels: map[string]string{
+							"start_time":     "%START_TIME%",
+							"namespace":      "%ENVIRONMENT(POD_NAMESPACE)%",
+							"gateway":        "%ENVIRONMENT(ISTIO_META_WORKLOAD_NAME)%",
+							"pod_name":       "%ENVIRONMENT(POD_NAME)%",
+							"method":         "%REQ(:METHOD)%",
+							"path":           "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%",
+							"response_code":  "%RESPONSE_CODE%",
+							"response_flags": "%RESPONSE_FLAGS%",
+							"route_name":     "%ROUTE_NAME%",
+							"authority":      "%REQ(:AUTHORITY)%",
+							"duration":       "%DURATION%",
+							"client_ip":      "%REQ(X-FORWARDED-FOR)%",
+							"request_id":     "%REQ(X-REQUEST-ID)%",
+							"sni_hostname":   "%REQUESTED_SERVER_NAME%",
+							"waf_event":      "%FILTER_STATE(wasm.io.coraza.waf.event:PLAIN)%",
+							"rule_id":        "%FILTER_STATE(wasm.io.coraza.waf.rule_id:PLAIN)%",
+							"action":         "%FILTER_STATE(wasm.io.coraza.waf.action:PLAIN)%",
+							"phase":          "%FILTER_STATE(wasm.io.coraza.waf.phase:PLAIN)%",
+							"waf_status":     "%FILTER_STATE(wasm.io.coraza.waf.status:PLAIN)%",
+							"severity":       "%FILTER_STATE(wasm.io.coraza.waf.severity:PLAIN)%",
+							"category":       "%FILTER_STATE(wasm.io.coraza.waf.category:PLAIN)%",
+						},
+					},
+				},
+			})
+		return options
+	}
+
 	tests := []struct {
 		name                             string
 		request                          reconcile.Request
@@ -356,6 +405,7 @@ func Test_Reconcile(t *testing.T) {
 		expectError                      string
 		expectedSailLibraryOptions       *install.Options
 		expectSailLibraryUninstallCalled bool
+		expectedLogMessage               string
 	}{
 		{
 			name:            "OLM mode: Missing cluster infrastructure config and nonexistent gatewayclass",
@@ -906,6 +956,165 @@ func Test_Reconcile(t *testing.T) {
 				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
+		{
+			name:              "Sail Library/WAF: Set WAF collector when internal annotation is present",
+			fakeSailInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:4317",
+				}, nil, false),
+				apiserverConfig(&configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				}, configv1.TLSAdherencePolicyStrictAllComponents),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:4317",
+				}, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: mutateForWaf(expectedSailLibraryOptions(
+				"v1.24.4",
+				false,
+				nil,
+				gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"),
+				expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
+				"some.collector.tld", 4317),
+		},
+		{
+			name:               "Sail Library/WAF: Set WAF collector without a port does not mutate the configuration",
+			fakeSailInstaller:  &fakeSailInstaller{},
+			request:            req("openshift-default"),
+			expectedLogMessage: "invalid value for WAF collector host:port, skipping",
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld",
+				}, nil, false),
+				apiserverConfig(&configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				}, configv1.TLSAdherencePolicyStrictAllComponents),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld",
+				}, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions(
+				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
+		},
+		{
+			name:               "Sail Library/WAF: Set WAF collector with a invalid port does not mutate the configuration",
+			fakeSailInstaller:  &fakeSailInstaller{},
+			request:            req("openshift-default"),
+			expectedLogMessage: "invalid value for WAF collector port, skipping",
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:xxxxx",
+				}, nil, false),
+				apiserverConfig(&configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				}, configv1.TLSAdherencePolicyStrictAllComponents),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:xxxxx",
+				}, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions(
+				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
+		},
+		{
+			name:               "Sail Library/WAF: Set WAF collector with a port 0 does not mutate the configuration",
+			fakeSailInstaller:  &fakeSailInstaller{},
+			request:            req("openshift-default"),
+			expectedLogMessage: "invalid value for WAF collector port, skipping",
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:0",
+				}, nil, false),
+				apiserverConfig(&configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				}, configv1.TLSAdherencePolicyStrictAllComponents),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:0",
+				}, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions(
+				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
+		},
+		{
+			name:               "Sail Library/WAF: Set WAF collector with a port bigger than 65535 does not mutate the configuration",
+			fakeSailInstaller:  &fakeSailInstaller{},
+			request:            req("openshift-default"),
+			expectedLogMessage: "invalid value for WAF collector port, skipping",
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:65536",
+				}, nil, false),
+				apiserverConfig(&configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				}, configv1.TLSAdherencePolicyStrictAllComponents),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": "some.collector.tld:65536",
+				}, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions(
+				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
+		},
+		{
+			name:               "Sail Library/WAF: Set WAF collector with a port and no host does not mutate the configuration",
+			fakeSailInstaller:  &fakeSailInstaller{},
+			request:            req("openshift-default"),
+			expectedLogMessage: "WAF collector value does not contain a host, skipping",
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": ":65536",
+				}, nil, false),
+				apiserverConfig(&configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileModernType,
+				}, configv1.TLSAdherencePolicyStrictAllComponents),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, map[string]string{
+					"internal.do-not-use.openshift.io/waf-otel-collector": ":65536",
+				}, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions(
+				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
+		},
 	}
 
 	scheme := runtime.NewScheme()
@@ -924,6 +1133,18 @@ func Test_Reconcile(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+
+			coreLog, recorded := observer.New(zapcore.InfoLevel)
+			testZap := zap.New(coreLog)
+
+			origLogger := log
+			t.Cleanup(func() {
+				log = origLogger
+			})
+
+			// 3. Override global logger for the duration of this test
+			log = zapr.NewLogger(testZap).WithName("operator")
+
 			objects := tc.existingObjects
 			if tc.fakeSailInstaller != nil {
 				objects = append(objects, availableIstiodDeployment())
@@ -977,6 +1198,17 @@ func Test_Reconcile(t *testing.T) {
 				assert.Contains(t, err.Error(), tc.expectError)
 			} else {
 				assert.NoError(t, err)
+			}
+
+			if tc.expectedLogMessage != "" {
+				entries := recorded.All()
+				contains := false
+				for i := range entries {
+					if entries[i].Message == tc.expectedLogMessage {
+						contains = true
+					}
+				}
+				assert.True(t, contains, "the test does not contain the expected log message", entries)
 			}
 
 			assert.Equal(t, tc.expectedResult, res)
