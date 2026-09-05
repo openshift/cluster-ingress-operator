@@ -14,6 +14,7 @@ rules:
   - operator.openshift.io
   resources:
   - ingresscontrollers
+  - ingresscontrollers/finalizers
   - ingresscontrollers/status
   verbs:
   - create
