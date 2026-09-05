@@ -13,30 +13,58 @@ rules:
 - apiGroups:
   - operator.openshift.io
   resources:
-  - "*"
+  - ingresscontrollers
   verbs:
-  - "*"
+  - create
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - operator.openshift.io
+  resources:
+  - ingresscontrollers/status
+  verbs:
+  - update
 
 - apiGroups:
   - ""
   resources:
   - pods
   - services
-  - endpoints
-  - persistentvolumeclaims
-  - events
   - configmaps
   - secrets
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - watch
 
 - apiGroups:
   - apps
   resources:
   - deployments
-  - services
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 ---
 # Role for the operator to delete Role and RoleBindings
 # in the openshift-config namespace.
