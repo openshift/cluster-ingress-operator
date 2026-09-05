@@ -29,10 +29,27 @@ rules:
   - ""
   resources:
   - pods
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - list
+  - patch
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
   - services
   - endpoints
   - persistentvolumeclaims
-  - events
   - configmaps
   - secrets
   verbs:
