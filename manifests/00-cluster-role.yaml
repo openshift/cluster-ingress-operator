@@ -1,6 +1,4 @@
 # Cluster role for the operator itself.
-# TODO: A lot of these should be replaced by roles in the namespaces for which
-# the operator actually needs access.
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -20,10 +18,32 @@ rules:
   - endpoints
   - services
   - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
   - pods
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
-  - "*"
+  - create
+  - list
+  - patch
+  - watch
 
 - apiGroups:
   - ""
@@ -45,14 +65,24 @@ rules:
   - deployments
   - daemonsets
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - policy
   resources:
   - poddisruptionbudgets
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - monitoring.coreos.com
@@ -83,7 +113,13 @@ rules:
   - ingresscontrollers
   - ingresscontrollers/status
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 
 - apiGroups:
   - ingress.operator.openshift.io
@@ -91,7 +127,12 @@ rules:
   - dnsrecords
   - dnsrecords/status
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - config.openshift.io
@@ -156,7 +197,12 @@ rules:
   resources:
   - ingressclasses
   verbs:
-  - '*'
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - networking.k8s.io
@@ -183,7 +229,13 @@ rules:
   - listenersets
   - listenersets/status
   verbs:
-  - '*'
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 
 - apiGroups:
   - gateway.networking.k8s.io
@@ -210,7 +262,12 @@ rules:
   - subscriptions
   - installplans
   verbs:
-  - '*'
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - sailoperator.io
@@ -218,7 +275,12 @@ rules:
   - istios
   - istiorevisions
   verbs:
-  - '*'
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 # Mirrored from assets/router/metrics/cluster-role.yaml
 - apiGroups:
@@ -252,7 +314,12 @@ rules:
   - routes
   - routes/custom-host
   verbs:
-  - '*'
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
