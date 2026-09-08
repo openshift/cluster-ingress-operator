@@ -7,6 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -21,8 +22,8 @@ import (
 // ensureRouterPodDisruptionBudget ensures the pod disruption budget exists for
 // a given ingresscontroller.  Returns a Boolean indicating whether the PDB
 // exists, the PDB if it does exist, and an error value.
-func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *policyv1.PodDisruptionBudget, error) {
-	wantPDB, desired, err := desiredRouterPodDisruptionBudget(ic, deploymentRef)
+func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) (bool, *policyv1.PodDisruptionBudget, error) {
+	wantPDB, desired, err := desiredRouterPodDisruptionBudget(ic, deploymentRef, ingressConfig, infraConfig)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to build pod disruption budget: %v", err)
 	}
@@ -64,8 +65,9 @@ func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressContr
 // desiredRouterPodDisruptionBudget returns the desired router pod disruption
 // budget.  Returns a Boolean indicating whether a PDB is desired, as well as
 // the PDB if one is desired.
-func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *policyv1.PodDisruptionBudget, error) {
-	if ic.Spec.Replicas != nil && *ic.Spec.Replicas < int32(2) {
+func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) (bool, *policyv1.PodDisruptionBudget, error) {
+	replicas := determineDeploymentReplicas(ic, ingressConfig, infraConfig)
+	if replicas < int32(2) {
 		return false, nil, nil
 	}
 
@@ -75,7 +77,6 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 	//
 	// OCPBUGS-7546 - make sure number of available pods is always 2 when there are only 3 replicas.
 	var maxUnavailable intstr.IntOrString
-	replicas := ptr.Deref(ic.Spec.Replicas, 0)
 	switch {
 	case replicas == 2:
 		maxUnavailable = intstr.FromInt(1)
