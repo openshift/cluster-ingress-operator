@@ -370,6 +370,69 @@ hack/verify-gofmt.sh
 
 ## Contribution Conventions
 
-- Commit messages should reference the Jira ticket: `NE-XXXX: description`
-- PRs should have logical, atomic commits
-- Test coverage is expected for new features and bug fixes
+- PR titles must use the Jira-prefixed form `NE-XXXX: description` or
+  `OCPBUGS-XXXX: description`.
+- PRs should have logical, atomic commits.
+- Test coverage is expected for new features and bug fixes.
+
+### Commit Message Format
+
+Write the commit summary and the top-line description in imperative mood
+(e.g., "Add grace period" not "Added grace period" or "Adds grace period").
+
+Keep the summary line under 50 characters.  Wrap all remaining lines — including
+GNU changelog entries — at 72 characters.
+
+Structure the commit body as follows:
+
+1. **Top-line description** — one or more imperative-mood paragraphs explaining
+   what the commit does and why.
+
+2. **Jira resolution paragraph** — a standalone paragraph stating:
+
+   ```text
+   This commit resolves <JIRA-ID>.
+   ```
+
+3. **Tracker link paragraph** — immediately after, a standalone paragraph
+   with the full Jira URL:
+
+   ```text
+   https://redhat.atlassian.net/browse/<JIRA-ID>
+   ```
+
+4. **Follow-up paragraph** (when applicable) — if this commit follows up on
+   a previous commit, add before the changelog:
+
+   ```text
+   Follow-up to commit <SHA>.
+   ```
+
+   Include a link to the original commit when it lives in a different repository
+   or branch.
+
+5. **GNU changelog-style file summary** — list each changed file with a
+   parenthesized function or method name where applicable.  Keep the file,
+   function or method, and description on the same line when they fit within
+   72 characters.  Break only to wrap at 72 characters or to start a new entry
+   for a distinct file; continued description lines have no indentation.  Do
+   not repeat text that is identical across successive changelog entries; use
+   "Likewise." or describe only what differs.
+
+   Example:
+
+   ```text
+   * pkg/operator/controller/ingress/controller.go (ensureDeployment): Add
+   grace period check.
+   * pkg/operator/controller/ingress/status.go (computeAvailableCondition):
+   Likewise.
+   * pkg/operator/controller/ingress/controller_test.go (TestGracePeriod):
+   New test.
+   ```
+
+### Pre-Push Checklist
+
+- Transition the Jira issue to "In Progress" before starting work.
+- Run `gofmt` (or `hack/verify-gofmt.sh`) on every changed Go file.
+- Run `make verify` (or the repository equivalent) and confirm it passes
+  before pushing.
