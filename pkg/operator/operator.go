@@ -562,11 +562,24 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 		return err
 	}
 
+	// Count schedulable worker nodes to detect zero-worker HyperShift
+	// clusters where router pods would never be scheduled.
+	nodeList := &corev1.NodeList{}
+	if err := o.client.List(context.TODO(), nodeList); err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+	var workerCount int32
+	for i := range nodeList.Items {
+		if !nodeList.Items[i].Spec.Unschedulable {
+			workerCount++
+		}
+	}
+
 	// Set the replicas field to a non-nil value because otherwise its
 	// persisted value will be nil, which causes GETs on the /scale
 	// subresource to fail, which breaks the scaling client.  See also:
 	// https://github.com/kubernetes/kubernetes/pull/75210
-	replicas := ingress.DetermineReplicas(ingressConfig, infraConfig)
+	replicas := ingress.DetermineReplicas(ingressConfig, infraConfig, workerCount)
 
 	ic = &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{

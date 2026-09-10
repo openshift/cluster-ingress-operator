@@ -444,8 +444,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{Requeue: true}, nil
 	}
 
+	// Count schedulable worker nodes so that HyperShift hosted
+	// clusters with zero workers can avoid unschedulable replicas.
+	workerCount, err := r.countSchedulableWorkerNodes()
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to count schedulable worker nodes: %v", err)
+	}
+
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig, clusterProxyConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig, clusterProxyConfig, workerCount); err != nil {
 		switch e := err.(type) {
 		case retryable.Error:
 			log.Error(e, "got retryable error; requeueing", "after", e.After())
@@ -1261,7 +1268,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 // given ingresscontroller.  Any error values are collected into either a
 // retryable.Error value, if any of the error values are retryable, or else an
 // Aggregate error value.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, clusterProxyConfig *configv1.Proxy) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, clusterProxyConfig *configv1.Proxy, workerCount int32) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -1330,7 +1337,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return utilerrors.NewAggregate(errs)
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, currentLBService, proxyNeeded)
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, currentLBService, proxyNeeded, workerCount)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %w", err))
 		return utilerrors.NewAggregate(errs)
@@ -1542,6 +1549,24 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 	}
 
 	return true, nil
+}
+
+// countSchedulableWorkerNodes counts the number of schedulable worker nodes
+// in the cluster. A node is counted if it is not marked unschedulable. This
+// is used to detect zero-worker HyperShift hosted clusters where router pods
+// would never be scheduled.
+func (r *reconciler) countSchedulableWorkerNodes() (int32, error) {
+	nodeList := &corev1.NodeList{}
+	if err := r.cache.List(context.TODO(), nodeList); err != nil {
+		return 0, fmt.Errorf("failed to list nodes: %w", err)
+	}
+	var count int32
+	for i := range nodeList.Items {
+		if !nodeList.Items[i].Spec.Unschedulable {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // needsClusterHostedDNS checks if the platform is configured with ClusterHosted DNS type.

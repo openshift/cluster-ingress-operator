@@ -174,12 +174,12 @@ const (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, currentLBService *corev1.Service, proxyNeeded bool) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, currentLBService *corev1.Service, proxyNeeded bool, workerCount int32) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
 	}
-	desired, err := desiredRouterDeployment(ci, &r.config, ingressConfig, infraConfig, apiConfig, networkConfig, currentLBService, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig)
+	desired, err := desiredRouterDeployment(ci, &r.config, ingressConfig, infraConfig, apiConfig, networkConfig, currentLBService, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, workerCount)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -272,16 +272,26 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 }
 
 // determineDeploymentReplicas determines the number of replicas that should be
-// set in the Deployment for an IngressController. If the user explicitly set a
-// replica count in the IngressController resource, that value will be used.
-// Otherwise, if unset, we follow the choice algorithm as described in the
-// documentation for the IngressController replicas parameter.
-func determineDeploymentReplicas(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) int32 {
+// set in the Deployment for an IngressController. On HyperShift hosted
+// clusters (External control plane topology) with zero schedulable worker
+// nodes, the function returns 0 regardless of any explicit replica setting to
+// avoid creating pods that can never be scheduled. Otherwise, if the user
+// explicitly set a replica count in the IngressController resource, that
+// value will be used. If unset, we follow the choice algorithm as described
+// in the documentation for the IngressController replicas parameter.
+func determineDeploymentReplicas(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, workerCount int32) int32 {
+	// For External control plane topology (HyperShift) with zero
+	// schedulable workers, always return 0 to avoid unschedulable
+	// pods, regardless of any explicit replica setting.
+	if infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode && workerCount == 0 {
+		return 0
+	}
+
 	if ic.Spec.Replicas != nil {
 		return *ic.Spec.Replicas
 	}
 
-	return DetermineReplicas(ingressConfig, infraConfig)
+	return DetermineReplicas(ingressConfig, infraConfig, workerCount)
 }
 
 func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
@@ -304,7 +314,7 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 //
 // Methods hashableDeployment() and deploymentConfigChanged()
 // must be updated when adding new fields to this method.
-func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, currentLBService *corev1.Service, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, currentLBService *corev1.Service, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, workerCount int32) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -337,7 +347,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 	haproxyVolumeMounts := deployment.Spec.Template.Spec.InitContainers[1].VolumeMounts
 
-	desiredReplicas := determineDeploymentReplicas(ci, ingressConfig, infraConfig)
+	desiredReplicas := determineDeploymentReplicas(ci, ingressConfig, infraConfig, workerCount)
 	deployment.Spec.Replicas = &desiredReplicas
 
 	configureAffinity := false
