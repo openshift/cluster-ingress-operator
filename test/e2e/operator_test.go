@@ -43,6 +43,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -1269,6 +1270,13 @@ func TestInternalLoadBalancer(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	// Capture the deployment's state now so we can assert the Ingress Controller
+	// deployment wasn't updated during the lifetime of the test. 5s is a heuristic
+	// margin for the ingress controller to react after the last Service update.
+	captured, err := captureObject(context.Background(), &appsv1.Deployment{}, controller.RouterDeploymentName(ic))
+	require.NoError(t, err)
+	defer captured.verifyGeneration(context.Background(), t, 5*time.Second)
+
 	lbService := &corev1.Service{}
 	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
 		t.Fatalf("failed to get LoadBalancer service: %v", err)
@@ -1428,6 +1436,14 @@ func TestAWSResourceTagsChanged(t *testing.T) {
 			Name:      defaultName.Name,
 		},
 	}
+
+	// Capture the deployment's state now so we can assert the Ingress Controller
+	// deployment wasn't updated during the lifetime of the test. 5s is a heuristic
+	// margin for the ingress controller to react after the last infrastructure update.
+	captured, err := captureObject(context.Background(), &appsv1.Deployment{}, controller.RouterDeploymentName(defaultIC))
+	require.NoError(t, err)
+	defer captured.verifyGeneration(context.Background(), t, 5*time.Second)
+
 	awsLBAdditionalResourceTags := "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
 
 	// Save a copy of the original infraConfig, to revert changes before exiting.
@@ -1447,7 +1463,7 @@ func TestAWSResourceTagsChanged(t *testing.T) {
 		{Key: "Key2", Value: "Value2"},
 	}
 	t.Logf("Updating AWS ResourceTags in the cluster infrastructure config: %v", initialTags)
-	err := updateInfrastructureConfigStatusWithRetryOnConflict(t, 5*time.Minute, configClient, func(infra *configv1.Infrastructure) *configv1.Infrastructure {
+	err = updateInfrastructureConfigStatusWithRetryOnConflict(t, 5*time.Minute, configClient, func(infra *configv1.Infrastructure) *configv1.Infrastructure {
 		if infra.Status.PlatformStatus == nil {
 			infra.Status.PlatformStatus = &configv1.PlatformStatus{}
 		}
@@ -2119,8 +2135,15 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 	}
 	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
-		t.Errorf("failed to observe expected conditions: %v", err)
+		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+
+	// Capture the deployment's state now so we can assert the Ingress Controller
+	// deployment wasn't updated during the lifetime of the test. 5s is a heuristic
+	// margin for the ingress controller to react after the last Service update.
+	captured, err := captureObject(context.Background(), &appsv1.Deployment{}, controller.RouterDeploymentName(ing))
+	require.NoError(t, err)
+	defer captured.verifyGeneration(context.Background(), t, 5*time.Second)
 
 	// Make sure the ingresscontroller has a nodeport service
 	// with the expected ports.
@@ -5059,6 +5082,13 @@ func TestReconcileInternalService(t *testing.T) {
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+
+	// Capture the deployment's state now so we can assert the Ingress Controller
+	// deployment wasn't updated during the lifetime of the test. 5s is a heuristic
+	// margin for the ingress controller to react after the last Service update.
+	captured, err := captureObject(context.Background(), &appsv1.Deployment{}, controller.RouterDeploymentName(ic))
+	require.NoError(t, err)
+	defer captured.verifyGeneration(context.Background(), t, 5*time.Second)
 
 	serviceName := controller.InternalIngressControllerServiceName(ic)
 	service := &corev1.Service{}
