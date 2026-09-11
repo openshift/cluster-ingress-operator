@@ -562,17 +562,24 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 		return err
 	}
 
-	// Count schedulable worker nodes to detect zero-worker HyperShift
-	// clusters where router pods would never be scheduled.
+	// Count schedulable worker nodes that match the router deployment's
+	// placement constraints to detect zero-worker HyperShift clusters.
 	nodeList := &corev1.NodeList{}
-	if err := o.client.List(context.TODO(), nodeList); err != nil {
+	if err := o.client.List(context.TODO(), nodeList, client.MatchingLabels{
+		"kubernetes.io/os":               "linux",
+		"node-role.kubernetes.io/worker": "",
+	}); err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 	var workerCount int32
 	for i := range nodeList.Items {
-		if !nodeList.Items[i].Spec.Unschedulable {
-			workerCount++
+		if nodeList.Items[i].Spec.Unschedulable {
+			continue
 		}
+		if _, hasRemoteWorker := nodeList.Items[i].Labels[operatorcontroller.RemoteWorkerLabel]; hasRemoteWorker {
+			continue
+		}
+		workerCount++
 	}
 
 	// Set the replicas field to a non-nil value because otherwise its

@@ -1552,19 +1552,32 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 }
 
 // countSchedulableWorkerNodes counts the number of schedulable worker nodes
-// in the cluster. A node is counted if it is not marked unschedulable. This
-// is used to detect zero-worker HyperShift hosted clusters where router pods
-// would never be scheduled.
+// in the cluster that match the router deployment's placement constraints.
+// A node is counted only if it:
+//   - has the "kubernetes.io/os=linux" label,
+//   - has the "node-role.kubernetes.io/worker" label,
+//   - does NOT have the "node.openshift.io/remote-worker" label, and
+//   - is not marked unschedulable.
+//
+// This mirrors the default nodeSelector and nodeAffinity that the ingress
+// controller sets on router deployments (see desiredRouterDeployment).
 func (r *reconciler) countSchedulableWorkerNodes() (int32, error) {
 	nodeList := &corev1.NodeList{}
-	if err := r.cache.List(context.TODO(), nodeList); err != nil {
+	if err := r.cache.List(context.TODO(), nodeList, client.MatchingLabels{
+		"kubernetes.io/os":               "linux",
+		"node-role.kubernetes.io/worker": "",
+	}); err != nil {
 		return 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
 	var count int32
 	for i := range nodeList.Items {
-		if !nodeList.Items[i].Spec.Unschedulable {
-			count++
+		if nodeList.Items[i].Spec.Unschedulable {
+			continue
 		}
+		if _, hasRemoteWorker := nodeList.Items[i].Labels[operatorcontroller.RemoteWorkerLabel]; hasRemoteWorker {
+			continue
+		}
+		count++
 	}
 	return count, nil
 }
