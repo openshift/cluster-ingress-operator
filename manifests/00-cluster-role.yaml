@@ -15,22 +15,69 @@ rules:
   - ""
   resources:
   - configmaps
-  - namespaces
-  - serviceaccounts
-  - endpoints
   - services
   - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - create
+  - get
+  - update
+
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  verbs:
+  - list
+
+- apiGroups:
+  - ""
+  resources:
   - pods
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
-  - "*"
+  - create
+  - get
+  - list
+  - patch
+  - watch
 
 - apiGroups:
   - ""
   resources:
   - pods/eviction
   verbs:
-  - "create"
+  - create
 
 - apiGroups:
   - ""
@@ -43,16 +90,34 @@ rules:
   - apps
   resources:
   - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - apps
+  resources:
   - daemonsets
   verbs:
-  - "*"
+  - create
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - policy
   resources:
   - poddisruptionbudgets
   verbs:
-  - "*"
+  - create
+  - delete
+  - get
+  - update
 
 - apiGroups:
   - monitoring.coreos.com
@@ -81,17 +146,38 @@ rules:
   - operator.openshift.io
   resources:
   - ingresscontrollers
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - operator.openshift.io
+  resources:
   - ingresscontrollers/status
   verbs:
-  - "*"
+  - update
 
 - apiGroups:
   - ingress.operator.openshift.io
   resources:
   - dnsrecords
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - ingress.operator.openshift.io
+  resources:
   - dnsrecords/status
   verbs:
-  - "*"
+  - update
 
 - apiGroups:
   - config.openshift.io
@@ -156,7 +242,12 @@ rules:
   resources:
   - ingressclasses
   verbs:
-  - '*'
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - networking.k8s.io
@@ -174,16 +265,38 @@ rules:
   - gateway.networking.k8s.io
   resources:
   - gatewayclasses
-  - gatewayclasses/status
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
   - gateways
-  - httproutes
-  - grpcroutes
-  - referencegrants
-  - backendtlspolicies
+  verbs:
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
   - listenersets
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses/status
   - listenersets/status
   verbs:
-  - '*'
+  - patch
 
 - apiGroups:
   - gateway.networking.k8s.io
@@ -208,17 +321,42 @@ rules:
   - operators.coreos.com
   resources:
   - subscriptions
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - operators.coreos.com
+  resources:
   - installplans
   verbs:
-  - '*'
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - sailoperator.io
   resources:
   - istios
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - sailoperator.io
+  resources:
   - istiorevisions
   verbs:
-  - '*'
+  - get
+  - list
+  - watch
 
 # Mirrored from assets/router/metrics/cluster-role.yaml
 - apiGroups:
@@ -250,9 +388,21 @@ rules:
   - route.openshift.io
   resources:
   - routes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
+
+- apiGroups:
+  - route.openshift.io
+  resources:
   - routes/custom-host
   verbs:
-  - '*'
+  - create
+  - update
 
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
