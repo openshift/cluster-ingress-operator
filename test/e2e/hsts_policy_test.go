@@ -78,7 +78,7 @@ func TestHstsPolicyWorks(t *testing.T) {
 	}
 
 	// Create service
-	echoService := buildEchoService(echoPod.Name, ns.Name, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, ns.Name, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}

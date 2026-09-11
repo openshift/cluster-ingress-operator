@@ -3431,7 +3431,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), httpdPod, DefaultRetryTimeout) })
 
-	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels)
+	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), httpdService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
 	}
@@ -3659,7 +3659,7 @@ func TestConnectTimeout(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels)
+	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, ctx, httpdService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
 	}
@@ -3776,7 +3776,7 @@ func TestUniqueIdHeader(t *testing.T) {
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -4333,7 +4333,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 		Name:      "router-" + icName.Name,
 		Namespace: "openshift-ingress",
 	}
-	conflictingLoadBalancerService := buildEchoService(conflictingLoadBalancerServiceName.Name, conflictingLoadBalancerServiceName.Namespace, nil)
+	conflictingLoadBalancerService := buildEchoService(conflictingLoadBalancerServiceName.Name, conflictingLoadBalancerServiceName.Namespace, nil, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), conflictingLoadBalancerService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s: %v", conflictingLoadBalancerServiceName, err)
 	}
@@ -4345,7 +4345,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 		Name:      "router-nodeport-" + icName.Name,
 		Namespace: "openshift-ingress",
 	}
-	conflictingNodeportService := buildEchoService(conflictingNodeportServiceName.Name, conflictingNodeportServiceName.Namespace, nil)
+	conflictingNodeportService := buildEchoService(conflictingNodeportServiceName.Name, conflictingNodeportServiceName.Namespace, nil, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), conflictingNodeportService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s: %v", conflictingNodeportServiceName, err)
 	}
