@@ -215,12 +215,14 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client             client.Client
-	cache              cache.Cache
-	recorder           record.EventRecorder
-	fieldIndexer       client.FieldIndexer
-	mu                 sync.Mutex
-	controllersStarted bool
+	client              client.Client
+	cache               cache.Cache
+	recorder            record.EventRecorder
+	fieldIndexer        client.FieldIndexer
+	mu                  sync.Mutex
+	gatewayClassIndexed bool
+	listenerSetIndexed  bool
+	controllersStarted  bool
 
 	// dependentsBlockedLogged tracks whether we have already logged that
 	// dependent controllers are blocked, so that steady-state reconciles
@@ -481,9 +483,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	return reconcile.Result{}, nil
 }
 
-// ensureDependentControllers indexes GatewayClass resources and starts
-// dependent controllers exactly once. Returns an error if the GatewayClass
-// field indexer cannot be created, allowing the caller to retry.
+// ensureDependentControllers creates the required Gateway API field indexes
+// and starts dependent controllers exactly once. It returns an error if an
+// index cannot be created, allowing the caller to retry without re-registering
+// completed indexes.
 func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -492,37 +495,43 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 		return nil
 	}
 
-	// Index gateway classes based on their spec.controllerName
-	if err := r.fieldIndexer.IndexField(
-		context.Background(),
-		&gatewayapiv1.GatewayClass{},
-		operatorcontroller.GatewayClassIndexFieldName,
-		client.IndexerFunc(func(o client.Object) []string {
-			gatewayclass, ok := o.(*gatewayapiv1.GatewayClass)
-			if !ok {
-				return []string{}
-			}
-			return []string{string(gatewayclass.Spec.ControllerName)}
-		})); err != nil {
-		return fmt.Errorf("failed to add field indexer: %w", err)
+	if !r.gatewayClassIndexed {
+		// Index gateway classes based on their spec.controllerName.
+		if err := r.fieldIndexer.IndexField(
+			ctx,
+			&gatewayapiv1.GatewayClass{},
+			operatorcontroller.GatewayClassIndexFieldName,
+			client.IndexerFunc(func(o client.Object) []string {
+				gatewayclass, ok := o.(*gatewayapiv1.GatewayClass)
+				if !ok {
+					return []string{}
+				}
+				return []string{string(gatewayclass.Spec.ControllerName)}
+			})); err != nil {
+			return fmt.Errorf("failed to add field indexer: %w", err)
+		}
+		r.gatewayClassIndexed = true
 	}
-	// Index ListenerSets by parent Gateway after CRDs are installed.
-	if err := r.fieldIndexer.IndexField(
-		context.Background(),
-		&gatewayapiv1.ListenerSet{},
-		listenersetstatuscontroller.ListenerSetParentGatewayIndex,
-		client.IndexerFunc(func(o client.Object) []string {
-			ls, ok := o.(*gatewayapiv1.ListenerSet)
-			if !ok {
-				return []string{}
-			}
-			parentNS := ls.GetNamespace()
-			if ls.Spec.ParentRef.Namespace != nil {
-				parentNS = string(*ls.Spec.ParentRef.Namespace)
-			}
-			return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
-		})); err != nil {
-		return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
+	if !r.listenerSetIndexed {
+		// Index ListenerSets by parent Gateway after CRDs are installed.
+		if err := r.fieldIndexer.IndexField(
+			ctx,
+			&gatewayapiv1.ListenerSet{},
+			listenersetstatuscontroller.ListenerSetParentGatewayIndex,
+			client.IndexerFunc(func(o client.Object) []string {
+				ls, ok := o.(*gatewayapiv1.ListenerSet)
+				if !ok {
+					return []string{}
+				}
+				parentNS := ls.GetNamespace()
+				if ls.Spec.ParentRef.Namespace != nil {
+					parentNS = string(*ls.Spec.ParentRef.Namespace)
+				}
+				return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
+			})); err != nil {
+			return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
+		}
+		r.listenerSetIndexed = true
 	}
 
 	for i := range r.config.DependentControllers {
