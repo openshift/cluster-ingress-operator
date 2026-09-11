@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	netutils "k8s.io/utils/net"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -605,7 +606,16 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		if lb != nil && len(lb.AllowedSourceRanges) > 0 {
 			cidrs := make([]string, len(lb.AllowedSourceRanges))
 			for i, cidr := range lb.AllowedSourceRanges {
-				cidrs[i] = string(cidr)
+				_, ipNet, err := netutils.ParseCIDRSloppy(string(cidr)) // check if CIDR is valid
+				if err != nil {
+					// API validation should prevent any parsing errors, but as a safeguard, log
+					// the error and still add the CIDR to keep behavior unchanged.
+					log.Error(err, "invalid CIDR", "cidr", string(cidr))
+					cidrs[i] = string(cidr)
+				} else {
+					cidrs[i] = ipNet.String()
+				}
+
 			}
 			service.Spec.LoadBalancerSourceRanges = cidrs
 		}
@@ -796,6 +806,11 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 			if !changed {
 				changed = true
 				updated = current.DeepCopy()
+			}
+			for i, expectedCIDR := range expected.Spec.LoadBalancerSourceRanges {
+				if i < len(current.Spec.LoadBalancerSourceRanges) && current.Spec.LoadBalancerSourceRanges[i] != expectedCIDR {
+					log.Info("normalizing malformed CIDR", "original", current.Spec.LoadBalancerSourceRanges[i], "normalized", expectedCIDR)
+				}
 			}
 			updated.Spec.LoadBalancerSourceRanges = expected.Spec.LoadBalancerSourceRanges
 		}
