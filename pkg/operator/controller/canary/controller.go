@@ -256,7 +256,19 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 	}
 
-	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec)
+	// Fetch the default IngressController to propagate its node placement tolerations
+	// to the canary daemonset so canary pods can be scheduled on nodes with custom taints.
+	ic := &operatorv1.IngressController{}
+	if err := r.client.Get(ctx, request.NamespacedName, ic); err != nil {
+		return result, fmt.Errorf("failed to get ingress controller %s: %w", request.NamespacedName.Name, err)
+	}
+
+	var customTolerations []corev1.Toleration
+	if ic.Spec.NodePlacement != nil {
+		customTolerations = ic.Spec.NodePlacement.Tolerations
+	}
+
+	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec, customTolerations)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary daemonset: %w", err)
 	} else if !haveDs {
@@ -293,13 +305,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return result, fmt.Errorf("failed to get canary route: %w", err)
 	}
 
-	// Get the canary route rotation annotation value
-	// from the default ingress controller.
-	ic := &operatorv1.IngressController{}
-	if err := r.client.Get(ctx, request.NamespacedName, ic); err != nil {
-		return result, fmt.Errorf("failed to get ingress controller %s: %w", request.NamespacedName.Name, err)
-	}
-
+	// Get the canary route rotation annotation value from the default ingress controller.
 	val, ok := ic.Annotations[CanaryRouteRotationAnnotation]
 	v, _ := strconv.ParseBool(val)
 	r.mu.Lock()
