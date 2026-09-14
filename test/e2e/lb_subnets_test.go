@@ -464,7 +464,7 @@ func getClusterSubnets(t *testing.T) (public *operatorv1.AWSSubnets, private *op
 		return true, nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get cluster subnets: %w", err)
+		return nil, nil, fmt.Errorf("waiting for cluster subnets: %w", err)
 	}
 	return publicSubnets, privateSubnets, nil
 }
