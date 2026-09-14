@@ -16,7 +16,7 @@ reviews:
     enabled: true
     drafts: false
     base_branches:
-    - master
+    - main
   path_filters:
   - "!**/vendor/**"
   - "!vendor/**"
