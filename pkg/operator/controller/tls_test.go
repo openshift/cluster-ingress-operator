@@ -43,8 +43,8 @@ func TestTLSGroupToCurveID(t *testing.T) {
 		{configv1.TLSGroupSecP384r1, tls.CurveP384, true},
 		{configv1.TLSGroupSecP521r1, tls.CurveP521, true},
 		{configv1.TLSGroupX25519MLKEM768, tls.X25519MLKEM768, true},
-		{configv1.TLSGroupSecP256r1MLKEM768, 0, false},
-		{configv1.TLSGroupSecP384r1MLKEM1024, 0, false},
+		{configv1.TLSGroupSecP256r1MLKEM768, tls.SecP256r1MLKEM768, true},
+		{configv1.TLSGroupSecP384r1MLKEM1024, tls.SecP384r1MLKEM1024, true},
 		{configv1.TLSGroup("unknown"), 0, false},
 	}
 
@@ -101,7 +101,7 @@ func TestTLSConfigFromProfile(t *testing.T) {
 	t.Run("unsupported groups are skipped", func(t *testing.T) {
 		spec := &configv1.TLSProfileSpec{
 			Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
-			Groups:        []configv1.TLSGroup{configv1.TLSGroupSecP256r1MLKEM768, configv1.TLSGroupSecP256r1},
+			Groups:        []configv1.TLSGroup{configv1.TLSGroup("unknown"), configv1.TLSGroupSecP256r1},
 			MinTLSVersion: configv1.VersionTLS12,
 		}
 		cfg, err := TLSConfigFromProfile(log, spec)

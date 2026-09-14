@@ -1111,22 +1111,29 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		}
 	}
 
-	// If FIPS is enabled on this cluster, we cannot use ML-KEM or X25519 in
-	// the TLS supportedGroups (aka curves). ML-KEM and X25519 are not
-	// supported by OpenSSL FIPS 140-3.
+	// If FIPS is enabled on this cluster, we cannot use X25519-based groups
+	// (X25519, X25519MLKEM768) in the TLS supportedGroups (aka curves).
+	// These groups rely on Curve25519 arithmetic which is excluded from the
+	// FIPS-approved list. ML-KEM groups based on NIST P-curves
+	// (SecP256r1MLKEM768, SecP384r1MLKEM1024) are FIPS-approved as of Go 1.26.
 	// See https://redhat.atlassian.net/browse/TRT-2597 and Appendix D of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-56Ar3.pdf
-	// If filtering empties the list, fall back to the FIPS-compliant defaults
-	// (secp256r1:secp384r1:secp521r1) so the router always has at least one
-	// usable group.
+	// After filtering, the FIPS PQ hybrid groups are unconditionally prepended
+	// if not already present, so every FIPS cluster gets post-quantum
+	// protection regardless of profile. If filtering empties the list entirely
+	// (e.g. an all-X25519 custom profile), fall back to fipsApprovedTLSGroups.
 	if isFIPSEnabled {
 		tlsGroupList = slices.DeleteFunc(tlsGroupList, nonFIPSGroups.Has)
 		if len(tlsGroupList) == 0 {
-			tlsGroupList = []string{
-				string(configv1.TLSGroupSecP256r1),
-				string(configv1.TLSGroupSecP384r1),
-				string(configv1.TLSGroupSecP521r1),
+			tlsGroupList = append(tlsGroupList, fipsApprovedTLSGroups...)
+		} else {
+			var toAdd []string
+			for _, g := range fipsPQHybridGroups {
+				if !slices.Contains(tlsGroupList, g) {
+					toAdd = append(toAdd, g)
+				}
 			}
+			tlsGroupList = append(toAdd, tlsGroupList...)
 		}
 	}
 	env = append(env, corev1.EnvVar{
