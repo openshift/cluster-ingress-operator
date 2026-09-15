@@ -566,6 +566,11 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 			Name:      name.Name,
 			Namespace: name.Namespace,
 		},
+		Spec: operatorv1.IngressControllerSpec{
+			TLSSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileModernType,
+			},
+		},
 	}
 	if ingressConfig.Spec.LoadBalancer.Platform.Type == configv1.AWSPlatformType {
 		if ingressConfig.Spec.LoadBalancer.Platform.AWS != nil && ingressConfig.Spec.LoadBalancer.Platform.AWS.Type == configv1.NLB {
