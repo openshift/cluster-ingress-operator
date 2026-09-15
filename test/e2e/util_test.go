@@ -22,6 +22,7 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/stretchr/testify/require"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -848,6 +849,46 @@ func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout t
 		}
 		return true, nil
 	})
+}
+
+// capturedObject stores the state of an object. The stored state can be
+// verified later against the live one.
+type capturedObject struct {
+	previous client.Object
+}
+
+// captureObject records the current state of an object for a later check.
+func captureObject(ctx context.Context, typ client.Object, name types.NamespacedName) (*capturedObject, error) {
+	obj := typ.DeepCopyObject().(client.Object)
+	if err := kclient.Get(ctx, name, obj); err != nil {
+		return nil, fmt.Errorf("error reading current state: %w", err)
+	}
+	return &capturedObject{
+		previous: obj,
+	}, nil
+}
+
+// verifyGeneration verifies that the object's generation is unchanged. It waits
+// `verifyAfter` before checking, to give asynchronous writers (e.g. a controller
+// reconcile loop) a chance to persist a change.
+//
+// This is a best-effort check: it only detects a change happening within
+// `verifyAfter` of the method call. A write queued behind a longer requeue/backoff
+// will not be caught. Choose `verifyAfter` based on the reconcile path under test
+// (e.g. a multiple of its expected requeue delay), and treat a pass as "no churn
+// observed within N seconds", not "no churn is possible".
+func (g *capturedObject) verifyGeneration(ctx context.Context, t *testing.T, verifyAfter time.Duration) {
+	t.Helper()
+
+	// Allow asynchronous writers to persist their changes before checking.
+	time.Sleep(verifyAfter)
+
+	current := g.previous.DeepCopyObject().(client.Object)
+	err := kclient.Get(ctx, client.ObjectKeyFromObject(g.previous), current)
+	require.NoError(t, err, "error reading object for generation check")
+	require.Equal(t, g.previous.GetGeneration(), current.GetGeneration(),
+		"generation from %T %s/%s unexpectedly changed; previous: %+v; current: %+v",
+		current, current.GetNamespace(), current.GetName(), g.previous, current)
 }
 
 // createWithRetryOnError creates the given object. If there is an error on create

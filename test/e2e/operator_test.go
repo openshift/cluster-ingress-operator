@@ -42,6 +42,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -2111,8 +2112,15 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 	}
 	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
-		t.Errorf("failed to observe expected conditions: %v", err)
+		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+
+	// Capture the deployment's state now so we can assert the Ingress Controller
+	// deployment wasn't updated during the lifetime of the test. 5s is a heuristic
+	// margin for the ingress controller to react after the last Service update.
+	captured, err := captureObject(context.Background(), &appsv1.Deployment{}, controller.RouterDeploymentName(ing))
+	require.NoError(t, err)
+	defer captured.verifyGeneration(context.Background(), t, 5*time.Second)
 
 	// Make sure the ingresscontroller has a nodeport service
 	// with the expected ports.
