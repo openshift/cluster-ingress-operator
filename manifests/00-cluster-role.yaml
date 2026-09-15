@@ -248,6 +248,7 @@ rules:
   - backendtlspolicies
   - listenersets
   - listenersets/status
+  - tlsroutes
   verbs:
   - create
   - delete
