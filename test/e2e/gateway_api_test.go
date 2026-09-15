@@ -112,6 +112,16 @@ func TestGatewayAPI(t *testing.T) {
 		t.Fatalf("error checking without olm feature gate enabled status: %v", err)
 	}
 
+	gatewayAPIManagementModeEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
+	if err != nil {
+		t.Fatalf("error checking GatewayAPIManagementMode feature gate enabled status: %v", err)
+	}
+
+	ingressesAPIExists, err := crdExists(t, apiExtensionClient, "ingresses.operator.openshift.io")
+	if err != nil {
+		t.Fatalf("error verifying if ManagementMode CRD exists: %v", err)
+	}
+
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
 		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
@@ -124,7 +134,9 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
-	t.Run("testGatewayAPIResources", testGatewayAPIResources)
+	if !gatewayAPIManagementModeEnabled {
+		t.Run("testGatewayAPIResources", testGatewayAPIResources)
+	}
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -137,12 +149,23 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
-	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
+	if !gatewayAPIManagementModeEnabled {
+		t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
+	}
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
-	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
+	if !gatewayAPIManagementModeEnabled {
+		t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
+	}
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
+	if gatewayAPIManagementModeEnabled && ingressesAPIExists {
+		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
+		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
+		t.Run("testGatewayAPIManagementModeCRDCompliance", testGatewayAPIManagementModeCRDCompliance)
+		t.Run("testGatewayAPIManagementModeUnmanaged", testGatewayAPIManagementModeUnmanaged)
+		t.Run("testGatewayAPIManagementModeTakeover", testGatewayAPIManagementModeTakeover)
+	}
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
 	}

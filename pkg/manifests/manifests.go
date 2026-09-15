@@ -11,6 +11,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -48,18 +49,20 @@ const (
 	CanaryDenyAllNetworkPolicyAsset = "assets/canary/networkpolicy-deny-all.yaml"
 	CanaryAllowNetworkPolicyAsset   = "assets/canary/networkpolicy-allow.yaml"
 
-	GatewayClassCRDAsset              = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
-	GatewayCRDAsset                   = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
-	GRPCRouteCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
-	HTTPRouteCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
-	ReferenceGrantCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
-	BackendTLSPolicyCRDAsset          = "assets/gateway-api/gateway.networking.k8s.io_backendtlspolicies.yaml"
-	ListenerSetCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_listenersets.yaml"
-	TLSRouteCRDAsset                  = "assets/gateway-api/gateway.networking.k8s.io_tlsroutes.yaml"
-	GatewayAPIAdminClusterRoleAsset   = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
-	GatewayAPIViewClusterRoleAsset    = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
-	GatewayAPIAllowNetworkPolicyAsset = "assets/gateway-api/gateway-networkpolicy-allow.yaml"
-	IstiodAllowNetworkPolicyAsset     = "assets/gateway-api/istiod-networkpolicy-allow.yaml"
+	GatewayClassCRDAsset                     = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
+	GatewayCRDAsset                          = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
+	GRPCRouteCRDAsset                        = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
+	HTTPRouteCRDAsset                        = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
+	ReferenceGrantCRDAsset                   = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
+	BackendTLSPolicyCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_backendtlspolicies.yaml"
+	ListenerSetCRDAsset                      = "assets/gateway-api/gateway.networking.k8s.io_listenersets.yaml"
+	TLSRouteCRDAsset                         = "assets/gateway-api/gateway.networking.k8s.io_tlsroutes.yaml"
+	GatewayAPIAdminClusterRoleAsset          = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
+	GatewayAPIViewClusterRoleAsset           = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
+	GatewayAPIAllowNetworkPolicyAsset        = "assets/gateway-api/gateway-networkpolicy-allow.yaml"
+	IstiodAllowNetworkPolicyAsset            = "assets/gateway-api/istiod-networkpolicy-allow.yaml"
+	GatewayAPICRDAdmissionPolicyAsset        = "assets/gateway-api/validating-admission-policy.yaml"
+	GatewayAPICRDAdmissionPolicyBindingAsset = "assets/gateway-api/validating-admission-policy-binding.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -514,4 +517,36 @@ func NewCustomResourceDefinition(manifest io.Reader) (*apiextensionsv1.CustomRes
 	}
 
 	return &o, nil
+}
+
+func NewValidatingAdmissionPolicy(manifest io.Reader) (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
+	o := admissionregistrationv1.ValidatingAdmissionPolicy{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+func NewValidatingAdmissionPolicyBinding(manifest io.Reader) (*admissionregistrationv1.ValidatingAdmissionPolicyBinding, error) {
+	o := admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+func GatewayAPICRDAdmissionPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
+	vap, err := NewValidatingAdmissionPolicy(MustAssetReader(GatewayAPICRDAdmissionPolicyAsset))
+	if err != nil {
+		panic(err)
+	}
+	return vap
+}
+
+func GatewayAPICRDAdmissionPolicyBinding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
+	vapb, err := NewValidatingAdmissionPolicyBinding(MustAssetReader(GatewayAPICRDAdmissionPolicyBindingAsset))
+	if err != nil {
+		panic(err)
+	}
+	return vapb
 }

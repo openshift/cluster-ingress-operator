@@ -15,6 +15,7 @@ import (
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
@@ -65,6 +66,10 @@ import (
 
 var (
 	log = logf.Logger.WithName("init")
+)
+
+const (
+	ingressOperatorCRDName = "ingresses.operator.openshift.io"
 )
 
 func init() {
@@ -138,6 +143,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, err
 	}
 	gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
+	gatewayAPIManagementModeEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIManagementMode)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 	featureMultiHAProxyEnabled := featureGates.Enabled(features.FeatureGateIngressControllerMultipleHAProxyVersions)
 
@@ -230,6 +236,23 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create configurable-route controller: %v", err)
 	}
 
+	// Create the shared mode accessor early so the status controller
+	// can read transition state for ClusterOperator conditions. The
+	// gatewayapi controller is the sole writer.
+	// Verify if the CRD is already present as well, otherwise do not start the feature gate management.
+	// This is necessary for promotion, and can be removed after it.
+	apiExtClient, err := apiextensionsclient.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create the CRD client: %w", err)
+	}
+	ingressCRDExists, err := CRDExists(ctx, apiExtClient, ingressOperatorCRDName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify if CRD %s exists: %w", ingressOperatorCRDName, err)
+	}
+	enableGatewayAPIManagementMode := gatewayAPIManagementModeEnabled && ingressCRDExists
+
+	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(enableGatewayAPIManagementMode)
+
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
 		Namespace:                       config.Namespace,
@@ -242,6 +265,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
 		GatewayAPIOperatorVersion:       config.GatewayAPIOperatorVersion,
+		ModeAccessor:                    modeAccessor,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
@@ -337,7 +361,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Context:                         ctx,
 	}
 
-	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclassControllerConfig)
+	gatewayClassController, sailUninstaller, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclassControllerConfig, modeAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)
 	}
@@ -347,29 +371,29 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Gateway API CRDs.
 	gatewayServiceDNSController, err := gatewayservicednscontroller.NewUnmanaged(mgr, gatewayservicednscontroller.Config{
 		OperandNamespace: operatorcontroller.DefaultOperandNamespace,
-	})
+	}, modeAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-service-dns controller: %v", err)
 	}
 
 	// Set up the gateway-labeler controller.
-	gatewayLabelController, err := gatewaylabelercontroller.NewUnmanaged(mgr)
+	gatewayLabelController, err := gatewaylabelercontroller.NewUnmanaged(mgr, modeAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-labeler controller: %w", err)
 	}
 
 	// Set up the gateway-status controller.
-	gatewayStatusController, err := gatewaystatuscontroller.NewUnmanaged(mgr)
+	gatewayStatusController, err := gatewaystatuscontroller.NewUnmanaged(mgr, modeAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-status controller: %w", err)
 	}
 
-	gatewayNetworkPolicyController, err := gatewaynetworkpolicycontroller.NewUnmanaged(mgr)
+	gatewayNetworkPolicyController, err := gatewaynetworkpolicycontroller.NewUnmanaged(mgr, modeAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
 	}
 
-	listenerSetStatusController, err := listenersetstatuscontroller.NewUnmanaged(mgr)
+	listenerSetStatusController, err := listenersetstatuscontroller.NewUnmanaged(mgr, modeAccessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listenerset-status controller: %w", err)
 	}
@@ -379,6 +403,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
+		ModeAccessor:                    modeAccessor,
+		SailUninstaller:                 sailUninstaller,
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,
@@ -568,4 +594,19 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 	}
 	log.Info("created default ingresscontroller", "namespace", ic.Namespace, "name", ic.Name)
 	return nil
+}
+
+// CRDExists returns a Boolean value indicating whether the named CRD exists.
+func CRDExists(ctx context.Context, client *apiextensionsclient.Clientset, crdName string) (bool, error) {
+	if client == nil {
+		return false, fmt.Errorf("crd client cannot be null")
+	}
+
+	if _, err := client.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, crdName, metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get CRD %s: %w", crdName, err)
+	}
+	return true, nil
 }

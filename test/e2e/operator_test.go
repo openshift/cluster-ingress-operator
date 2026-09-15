@@ -36,6 +36,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 
@@ -116,15 +117,16 @@ var (
 )
 
 var (
-	kclient           client.Client
-	configClient      *configclientset.Clientset
-	dnsConfig         configv1.DNS
-	infraConfig       configv1.Infrastructure
-	operatorNamespace = operatorcontroller.DefaultOperatorNamespace
-	operandNamespace  = operatorcontroller.DefaultOperandNamespace
-	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
-	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
-	ccmDeploymentName = types.NamespacedName{Namespace: "openshift-cloud-controller-manager", Name: "aws-cloud-controller-manager"}
+	kclient            client.Client
+	configClient       *configclientset.Clientset
+	apiExtensionClient *apiextensionsclient.Clientset
+	dnsConfig          configv1.DNS
+	infraConfig        configv1.Infrastructure
+	operatorNamespace  = operatorcontroller.DefaultOperatorNamespace
+	operandNamespace   = operatorcontroller.DefaultOperandNamespace
+	defaultName        = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
+	clusterConfigName  = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+	ccmDeploymentName  = types.NamespacedName{Namespace: "openshift-cloud-controller-manager", Name: "aws-cloud-controller-manager"}
 
 	// Platforms that need a DNS "warmup" period for internal (inside the test cluster) DNS resolution.
 	// The warmup period is a period of delay before the first query is executed to avoid negative caching.
@@ -183,6 +185,12 @@ func TestMain(m *testing.M) {
 	configClient, err = configclientset.NewForConfig(kubeConfig)
 	if err != nil {
 		fmt.Printf("failed to create config client: %s\n", err)
+		os.Exit(1)
+	}
+
+	apiExtensionClient, err = apiextensionsclient.NewForConfig(kubeConfig)
+	if err != nil {
+		fmt.Printf("failed to create apiextensions client: %s\n", err)
 		os.Exit(1)
 	}
 

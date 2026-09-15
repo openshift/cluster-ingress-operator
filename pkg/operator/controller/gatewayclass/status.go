@@ -100,6 +100,21 @@ func mapStatusToConditions(status install.Status, generation int64, conditions *
 	return changed
 }
 
+// setControllerUninstalledCondition sets ControllerInstalled=False with
+// reason Unmanaged to reflect that the Istio control plane was intentionally
+// torn down because the Gateway API management mode moved to Unmanaged. It
+// returns true if the condition changed. CRDsReady is left untouched because
+// the Gateway API CRDs are preserved in Unmanaged mode.
+func setControllerUninstalledCondition(conditions *[]metav1.Condition, generation int64) bool {
+	return meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               ControllerInstalledConditionType,
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: generation,
+		Reason:             "Unmanaged",
+		Message:            "istiod uninstalled because Gateway API management mode is Unmanaged",
+	})
+}
+
 // removeSailInstallConditions removes conditions that track Sail Library installation state.
 func removeSailInstallConditions(conditions *[]metav1.Condition) {
 	meta.RemoveStatusCondition(conditions, ControllerInstalledConditionType)

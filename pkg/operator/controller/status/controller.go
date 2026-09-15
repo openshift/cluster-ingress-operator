@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -16,6 +17,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -162,6 +164,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	)); err != nil {
 		return nil, err
 	}
+	if err := registerGatewayAPIIngressWatch(c, operatorCache, config, toDefaultIngressController); err != nil {
+		return nil, err
+	}
+	if err := registerGatewayAPIModeTransitionWatch(c, config, toDefaultIngressController); err != nil {
+		return nil, err
+	}
 
 	// If the "GatewayAPI" and "GatewayAPIController" featuregates are
 	// enabled, watch subscriptions so that this controller can update
@@ -218,6 +226,37 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	return c, nil
 }
 
+// registerGatewayAPIIngressWatch watches the operator Ingress singleton so
+// status reconciliation observes Gateway API management-mode changes and the
+// gatewayapi controller's status updates. The watch must remain gated because
+// the Ingress CRD is absent when GatewayAPIManagementMode is disabled.
+func registerGatewayAPIIngressWatch(c controller.Controller, operatorCache cache.Cache, config Config, toDefaultIngressController handler.MapFunc) error {
+	if config.ModeAccessor == nil || !config.ModeAccessor.GateEnabled() {
+		return nil
+	}
+	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isClusterIngress)); err != nil {
+		return fmt.Errorf("failed to watch operator Ingress resource: %w", err)
+	}
+	return nil
+}
+
+// registerGatewayAPIModeTransitionWatch wakes the status controller whenever
+// the gatewayapi controller changes the in-memory transition state. It is
+// gated because ModeAccessor only carries management-mode transitions when the
+// GatewayAPIManagementMode feature gate is enabled.
+func registerGatewayAPIModeTransitionWatch(c controller.Controller, config Config, toDefaultIngressController handler.MapFunc) error {
+	if config.ModeAccessor == nil || !config.ModeAccessor.GateEnabled() {
+		return nil
+	}
+	if err := c.Watch(source.Channel(config.ModeAccessor.TransitionEvents(), handler.EnqueueRequestsFromMapFunc(toDefaultIngressController))); err != nil {
+		return fmt.Errorf("failed to watch Gateway API management-mode transitions: %w", err)
+	}
+	return nil
+}
+
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	// MarketplaceEnabled indicates whether the "marketplace" capability is
@@ -234,6 +273,10 @@ type Config struct {
 	OperatorReleaseVersion          string
 	Namespace                       string
 	GatewayAPIOperatorVersion       string
+	// ModeAccessor provides read-only access to the Gateway API
+	// management mode transition state. May be nil when the
+	// management mode feature gate is disabled.
+	ModeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
@@ -413,6 +456,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			r.config.OperatorReleaseVersion,
 			r.config.IngressControllerImage,
 			r.config.CanaryImage,
+			state.modeTransition,
 		),
 		computeOperatorDegradedCondition(state),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
@@ -423,6 +467,16 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if err := r.client.Status().Update(ctx, co); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 		}
+	}
+
+	// Requeue faster during Gateway API mode transitions to keep
+	// ClusterOperator Progressing/Degraded conditions up-to-date.
+	// This requeue happens AFTER updating status so that the transition
+	// state is reflected in the ClusterOperator conditions.
+	if state.modeTransition.InProgress {
+		log.Info("Gateway API mode transition in progress, will requeue to refresh ClusterOperator status",
+			"target", state.modeTransition.Target)
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	return reconcile.Result{}, nil
@@ -488,6 +542,12 @@ type operatorState struct {
 	// shouldInstallOSSM reflects whether the ingress operator should install OSSM. Currently, this happens when a
 	// gateway class with Spec.ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName is created.
 	shouldInstallOSSM bool
+	// modeTransition holds the current Gateway API management mode
+	// transition state, populated from the shared ModeAccessor.
+	modeTransition operatorcontroller.TransitionState
+	// gatewayAPIManagementModeEnabled defines if the featuregate for ManagementMode
+	// is enabled. In this case, the state should not calculate degraded state
+	gatewayAPIManagementModeEnabled bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -606,6 +666,11 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 	// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
 	// the ingress operator should try to install OSSM.
 	state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
+
+	if r.config.ModeAccessor != nil {
+		state.modeTransition = r.config.ModeAccessor.GetTransitionState()
+		state.gatewayAPIManagementModeEnabled = r.config.ModeAccessor.GateEnabled()
+	}
 
 	return state, nil
 }
@@ -755,8 +820,13 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 }
 
 // computeGatewayAPICRDsDegradedCondition computes the degraded condition for Gateway API CRDs.
+// it is used just when the feature GatewayAPIManagementMode is disabled
 func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+	// if the feature gate is enabled, we should not add degraded conditions to Gateway API anymore
+	if state.gatewayAPIManagementModeEnabled {
+		return degradedCondition
+	}
 
 	if len(state.unmanagedGatewayAPICRDNames) > 0 {
 		degradedCondition.Status = configv1.ConditionTrue
@@ -930,7 +1000,7 @@ func computeOperatorEvaluationConditionsDetectedCondition(ingresses []operatorv1
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string, modeTransition operatorcontroller.TransitionState) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -938,6 +1008,19 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 	progressing := false
 
 	var messages []string
+
+	// Check for an in-progress Gateway API management mode transition. A
+	// failed transition operation (e.g., VAP delete, Sail uninstall) keeps
+	// reporting Progressing rather than Degraded, since it is retried on
+	// subsequent reconciles.
+	if modeTransition.InProgress {
+		msg := fmt.Sprintf("Transitioning Gateway API management mode to %s", modeTransition.Target)
+		if modeTransition.Error != nil {
+			msg = fmt.Sprintf("Failed to transition Gateway API management mode to %s, retrying: %v", modeTransition.Target, modeTransition.Error)
+		}
+		messages = append(messages, msg)
+		progressing = true
+	}
 
 	for _, ic := range ingresscontrollers {
 		for _, c := range ic.Status.Conditions {
