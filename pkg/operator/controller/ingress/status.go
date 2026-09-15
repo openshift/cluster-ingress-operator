@@ -70,7 +70,7 @@ const (
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress) (error, bool) {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, workerCount int32) (error, bool) {
 	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
@@ -111,6 +111,23 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.EffectiveHAProxyVersion = haproxyVersion
 
 	deploymentAvailableCondition := computeDeploymentAvailableCondition(deployment)
+	// On HyperShift hosted clusters (External control plane topology)
+	// with zero schedulable worker nodes and zero replicas, report the
+	// deployment as available so the ingress operator does not block
+	// CVO CompletedUpdate.  Both conditions are checked to avoid a
+	// false positive when someone explicitly sets replicas to 0 while
+	// workers exist.
+	if infraConfig != nil &&
+		infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode &&
+		workerCount == 0 &&
+		deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
+		deploymentAvailableCondition = operatorv1.OperatorCondition{
+			Type:    IngressControllerDeploymentAvailableConditionType,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "NoWorkerNodes",
+			Message: "Zero replicas configured because no schedulable worker nodes are available on this HyperShift hosted cluster",
+		}
+	}
 	previousDeploymentAvailableCondition, hasPreviousDeploymentAvailableCondition := findOperatorCondition(ic.Status.Conditions, IngressControllerDeploymentAvailableConditionType)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, deploymentAvailableCondition)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
