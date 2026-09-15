@@ -45,7 +45,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	}
 
 	// First, let's get the list of public subnets to use for the LB.
-	publicSubnets, _, err := getClusterSubnets()
+	publicSubnets, _, err := getClusterSubnets(t)
 	if err != nil {
 		t.Fatalf("failed to get cluster subnets: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 	}
 
 	// First, let's get the list of public subnets to use for the LB.
-	publicSubnets, _, err := getClusterSubnets()
+	publicSubnets, _, err := getClusterSubnets(t)
 	if err != nil {
 		t.Fatalf("failed to get cluster subnets: %v", err)
 	}
@@ -426,32 +426,45 @@ func effectuateIngressControllerSubnets(t *testing.T, ic *operatorv1.IngressCont
 // the public and private cluster subnets names. Unfortunately these subnets aren't
 // easily accessible in any K8S API objects. However, by using the installer-created subnet
 // naming convention, we can generate the names of the public and private subnets.
-func getClusterSubnets() (public *operatorv1.AWSSubnets, private *operatorv1.AWSSubnets, err error) {
+// A bounded wait is used because MachineSets may not be immediately available
+// when the test starts.
+func getClusterSubnets(t *testing.T) (public *operatorv1.AWSSubnets, private *operatorv1.AWSSubnets, err error) {
+	t.Helper()
 	// Subnet Naming Convention: <clusterName>-subnet-[public|private]-<availabilityZone>
-	machineSets := &machinev1.MachineSetList{}
-	listOpts := []client.ListOption{
-		client.InNamespace("openshift-machine-api"),
-	}
-	if err := kclient.List(context.Background(), machineSets, listOpts...); err != nil {
-		return nil, nil, fmt.Errorf("failed to get machineSets: %w", err)
-	}
-	// The availability zones can be derived from the providerSpec on MachineSet object.
-	publicSubnets := &operatorv1.AWSSubnets{}
-	privateSubnets := &operatorv1.AWSSubnets{}
-	for _, machineset := range machineSets.Items {
-		providerSpec := &machinev1.AWSMachineProviderConfig{}
-		if err := unmarshalInto(&machineset, providerSpec); err != nil {
-			return nil, nil, fmt.Errorf("failure to unmarshal machineset %q provider spec: %w", machineset.Name, err)
+	var publicSubnets, privateSubnets *operatorv1.AWSSubnets
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+		machineSets := &machinev1.MachineSetList{}
+		if err := kclient.List(ctx, machineSets, client.InNamespace("openshift-machine-api")); err != nil {
+			t.Logf("failed to list MachineSets in openshift-machine-api: %v, retrying...", err)
+			return false, nil
 		}
-
-		if len(providerSpec.Placement.AvailabilityZone) == 0 {
-			return nil, nil, fmt.Errorf("machineset %q availability zone is empty", machineset.Name)
+		if len(machineSets.Items) == 0 {
+			t.Logf("no MachineSets found in openshift-machine-api, retrying...")
+			return false, nil
 		}
-		// Build the public and private subnet name according to the installer naming convention.
-		publicSubnet := infraConfig.Status.InfrastructureName + "-subnet-public-" + providerSpec.Placement.AvailabilityZone
-		publicSubnets.Names = append(publicSubnets.Names, operatorv1.AWSSubnetName(publicSubnet))
-		privateSubnet := infraConfig.Status.InfrastructureName + "-subnet-private-" + providerSpec.Placement.AvailabilityZone
-		privateSubnets.Names = append(privateSubnets.Names, operatorv1.AWSSubnetName(privateSubnet))
+		// The availability zones can be derived from the providerSpec on MachineSet object.
+		pub := &operatorv1.AWSSubnets{}
+		priv := &operatorv1.AWSSubnets{}
+		for _, machineset := range machineSets.Items {
+			providerSpec := &machinev1.AWSMachineProviderConfig{}
+			if err := unmarshalInto(&machineset, providerSpec); err != nil {
+				return false, fmt.Errorf("failure to unmarshal machineset %q provider spec: %w", machineset.Name, err)
+			}
+			if len(providerSpec.Placement.AvailabilityZone) == 0 {
+				return false, fmt.Errorf("machineset %q availability zone is empty", machineset.Name)
+			}
+			// Build the public and private subnet name according to the installer naming convention.
+			publicSubnet := infraConfig.Status.InfrastructureName + "-subnet-public-" + providerSpec.Placement.AvailabilityZone
+			pub.Names = append(pub.Names, operatorv1.AWSSubnetName(publicSubnet))
+			privateSubnet := infraConfig.Status.InfrastructureName + "-subnet-private-" + providerSpec.Placement.AvailabilityZone
+			priv.Names = append(priv.Names, operatorv1.AWSSubnetName(privateSubnet))
+		}
+		publicSubnets = pub
+		privateSubnets = priv
+		return true, nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("waiting for cluster subnets: %w", err)
 	}
 	return publicSubnets, privateSubnets, nil
 }
