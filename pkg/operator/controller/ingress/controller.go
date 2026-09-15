@@ -1368,7 +1368,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, err)
 	}
 
-	if _, _, err := r.ensureRouterPodDisruptionBudget(ci, deploymentRef); err != nil {
+	if _, _, err := r.ensureRouterPodDisruptionBudget(ci, deploymentRef, ingressConfig, infraConfig); err != nil {
 		errs = append(errs, err)
 	}
 
