@@ -1044,7 +1044,8 @@ var (
 
 // validateTLSSecurityProfile validates the effective TLS security profile used
 // for the given ingresscontroller's deployment. The effective profile may be
-// specified by the ingresscontroller or inherited from the APIServer config.
+// specified by the ingresscontroller or inherited from the APIServer config. If
+// neither specifies a profile, the Intermediate profile is used.
 func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) error {
 	var errs []error
 
