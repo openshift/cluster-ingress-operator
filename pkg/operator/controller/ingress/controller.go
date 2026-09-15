@@ -1042,9 +1042,10 @@ var (
 	isValidCipher = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]+$`).MatchString
 )
 
-// validateTLSSecurityProfile validates the given ingresscontroller's TLS
-// security profile. It resolves the effective profile (which may be inherited
-// from the APIServer config) and ensures it is properly configured and FIPS-compliant.
+// validateTLSSecurityProfile validates the effective TLS security profile used
+// for the given ingresscontroller's deployment. The effective profile may be
+// specified by the ingresscontroller or inherited from the APIServer config. If
+// neither specifies a profile, the Intermediate profile is used.
 func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) error {
 	var errs []error
 
@@ -1052,26 +1053,26 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 		apiConfig = &configv1.APIServer{}
 	}
 
-	// 1. Figure out which profile is in effect.
+	// Resolve the effective profile before validating it.
 	var effectiveProfile *configv1.TLSSecurityProfile
 	if hasTLSSecurityProfile(ic) {
 		effectiveProfile = ic.Spec.TLSSecurityProfile
 	} else {
 		effectiveProfile = apiConfig.Spec.TLSSecurityProfile
 	}
+	effectiveProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(effectiveProfile)
 
-	// 2. Validate the effective profile.
+	// Validate the effective profile.
 	if effectiveProfile != nil && effectiveProfile.Type == configv1.TLSProfileCustomType {
-		spec := effectiveProfile.Custom
-		if spec == nil {
+		if effectiveProfile.Custom == nil {
 			return fmt.Errorf("security profile is not defined")
 		}
 
-		if len(spec.Ciphers) == 0 {
+		if len(effectiveProfileSpec.Ciphers) == 0 {
 			errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
 		} else {
 			invalidCiphers := []string{}
-			for _, cipher := range spec.Ciphers {
+			for _, cipher := range effectiveProfileSpec.Ciphers {
 				if !isValidCipher(strings.TrimPrefix(cipher, "!")) {
 					invalidCiphers = append(invalidCiphers, cipher)
 				}
@@ -1079,20 +1080,20 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 			if len(invalidCiphers) != 0 {
 				errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
 			}
-			switch spec.MinTLSVersion {
+			switch effectiveProfileSpec.MinTLSVersion {
 			case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
-				if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
-					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
+				if tlsVersion13Ciphers.HasAll(effectiveProfileSpec.Ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", effectiveProfileSpec.MinTLSVersion))
 				}
 			case configv1.VersionTLS13:
-				if !tlsVersion13Ciphers.HasAny(spec.Ciphers...) {
-					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
+				if !tlsVersion13Ciphers.HasAny(effectiveProfileSpec.Ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", effectiveProfileSpec.MinTLSVersion))
 				}
 			}
 		}
 
-		if _, ok := validTLSVersions[spec.MinTLSVersion]; !ok {
-			errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", spec.MinTLSVersion))
+		if _, ok := validTLSVersions[effectiveProfileSpec.MinTLSVersion]; !ok {
+			errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", effectiveProfileSpec.MinTLSVersion))
 		}
 	}
 
@@ -1101,8 +1102,7 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 	// are non-FIPS, they would all be removed, leaving no TLS 1.3 ciphers
 	// configured. Reject such profiles with a clear error message.
 	if isFIPSEnabled {
-		resolvedSpec := tlsProfileSpecForIngressController(ic, apiConfig)
-		tls13InProfile := tlsVersion13Ciphers.Intersection(sets.NewString(resolvedSpec.Ciphers...))
+		tls13InProfile := tlsVersion13Ciphers.Intersection(sets.NewString(effectiveProfileSpec.Ciphers...))
 		if tls13InProfile.Len() > 0 && !tls13InProfile.HasAny(fipsApprovedTLS13Ciphers.UnsortedList()...) {
 			errs = append(errs, fmt.Errorf(
 				"security profile's TLS 1.3 cipher suites (%s) are not FIPS-compliant"+

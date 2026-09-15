@@ -1311,6 +1311,80 @@ func Test_validateTLSSecurityProfileFIPS(t *testing.T) {
 	}
 }
 
+// Test_validateTLSSecurityProfileInheritedCustom verifies that custom profile
+// validation uses the effective profile inherited from the APIServer config.
+func Test_validateTLSSecurityProfileInheritedCustom(t *testing.T) {
+	testCases := []struct {
+		description string
+		profile     *configv1.TLSSecurityProfile
+		expectError bool
+	}{
+		{
+			description: "inherited custom profile without configuration is rejected",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+			},
+			expectError: true,
+		},
+		{
+			description: "inherited custom profile with invalid cipher is rejected",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       []string{"invalid cipher"},
+						MinTLSVersion: configv1.VersionTLS12,
+					},
+				},
+			},
+			expectError: true,
+		},
+		{
+			description: "inherited custom profile without TLS 1.3 cipher and minimum TLS 1.3 is rejected",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+						MinTLSVersion: configv1.VersionTLS13,
+					},
+				},
+			},
+			expectError: true,
+		},
+		{
+			description: "valid inherited custom profile is accepted",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+						MinTLSVersion: configv1.VersionTLS12,
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			apiConfig := &configv1.APIServer{
+				Spec: configv1.APIServerSpec{
+					TLSSecurityProfile: tc.profile,
+				},
+			}
+			err := validateTLSSecurityProfile(&operatorv1.IngressController{}, apiConfig)
+			if tc.expectError && err == nil {
+				t.Error("expected error for invalid inherited custom profile, got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func Test_tlsProfileSpecForIngressController(t *testing.T) {
 	testCases := []struct {
 		description  string
