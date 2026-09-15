@@ -798,7 +798,6 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
-		"tmp",
 		routerServiceAccountVolumeName,
 		routerHAProxyConfigVolume,
 	}
@@ -830,7 +829,6 @@ func TestDesiredRouterDeploymentSpecTemplateSidecar(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
-		"tmp",
 		routerServiceAccountVolumeName, // available in the pod but not mounted in the container
 		routerHAProxyConfigVolume,
 	}
@@ -875,7 +873,6 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 		case routerServiceAccountVolumeName:
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
-		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -1128,7 +1125,6 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
-		"tmp",
 		"error-pages",
 		"rsyslog-config",
 		"rsyslog-socket",
@@ -1146,7 +1142,6 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
 		case "rsyslog-socket":
-		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -1370,7 +1365,6 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
-		"tmp",
 		routerServiceAccountVolumeName,
 		routerHAProxyConfigVolume,
 	}
@@ -1389,7 +1383,6 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		case routerServiceAccountVolumeName:
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
-		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -1592,7 +1585,6 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
-		"tmp",
 		"client-ca",
 		routerServiceAccountVolumeName,
 		routerHAProxyConfigVolume,
@@ -1610,7 +1602,6 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		case routerServiceAccountVolumeName:
 			assertVolumeHasServiceAccount(t, volume)
 		case routerHAProxyConfigVolume:
-		case "tmp":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
