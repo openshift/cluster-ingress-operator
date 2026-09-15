@@ -137,7 +137,13 @@ func (m *crdManager) isCRDReady(crd *apiextensionsv1.CustomResourceDefinition) b
 	return false
 }
 
+type crdGroupFilter func(*apiextensionsv1.CustomResourceDefinition) bool
+
 func (m *crdManager) loadCRDs(opts Options) ([]*apiextensionsv1.CustomResourceDefinition, error) {
+	return m.loadCRDsMatching(opts, istioCRD)
+}
+
+func (m *crdManager) loadCRDsMatching(opts Options, groupAccept crdGroupFilter) ([]*apiextensionsv1.CustomResourceDefinition, error) {
 	targetKinds := targetCRDKinds(opts.IncludeAllCRDs, opts.Values)
 
 	var crds []*apiextensionsv1.CustomResourceDefinition
@@ -163,7 +169,7 @@ func (m *crdManager) loadCRDs(opts Options) ([]*apiextensionsv1.CustomResourceDe
 			if crd.Kind != "CustomResourceDefinition" {
 				continue
 			}
-			if !istioCRD(&crd) {
+			if !groupAccept(&crd) {
 				continue
 			}
 			if opts.IncludeAllCRDs || matchesCRDFilter(&crd, targetKinds) {
@@ -198,6 +204,14 @@ func AggregateState(infos []CRDInfo) (CRDManagementState, string) {
 
 func istioCRD(crd *apiextensionsv1.CustomResourceDefinition) bool {
 	return strings.HasSuffix(crd.Spec.Group, ".istio.io")
+}
+
+func sailCRD(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	return strings.HasSuffix(crd.Spec.Group, "sailoperator.io")
+}
+
+func aggregatableCRD(crd *apiextensionsv1.CustomResourceDefinition) bool {
+	return istioCRD(crd) || sailCRD(crd)
 }
 
 func matchesCRDFilter(crd *apiextensionsv1.CustomResourceDefinition, targetKinds map[string]bool) bool {
