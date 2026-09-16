@@ -492,9 +492,6 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, installed.Status)
 	assert.Equal(t, "Unmanaged", installed.Reason)
 
-	// A Gateway created while management is Unmanaged must not be touched by
-	// the dependent gateway-labeler controller. Once all Managed prerequisites
-	// converge, the Ingress wake-up path must reconcile it normally.
 	pausedGateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "management-mode-paused", Namespace: operatorcontroller.DefaultOperandNamespace},
 		Spec: gatewayapiv1.GatewaySpec{
@@ -508,6 +505,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 			t.Errorf("failed to delete Gateway %q: %v", pausedGateway.Name, err)
 		}
 	})
+	// Gateway labeler behavior is the observable proxy for dependent-controller inactivity.
 	assert.Never(t, func() bool {
 		current := &gatewayapiv1.Gateway{}
 		if err := kclient.Get(context.Background(), types.NamespacedName{Namespace: pausedGateway.Namespace, Name: pausedGateway.Name}, current); err != nil {
@@ -552,6 +550,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 
 	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeManaged)
 	waitForGatewayAPIManagedCondition(t, metav1.ConditionTrue, "ManagedByIngressOperator")
+	// Gateway labeler behavior is the observable proxy for dependent-controller recovery.
 	assert.Eventually(t, func() bool {
 		current := &gatewayapiv1.Gateway{}
 		if err := kclient.Get(context.Background(), types.NamespacedName{Namespace: pausedGateway.Namespace, Name: pausedGateway.Name}, current); err != nil {

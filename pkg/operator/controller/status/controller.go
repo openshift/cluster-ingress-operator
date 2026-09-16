@@ -763,6 +763,7 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 
 	for _, fn := range []func(state operatorState) configv1.ClusterOperatorStatusCondition{
 		computeIngressControllerDegradedCondition,
+		computeGatewayAPICRDsDegradedCondition,
 		computeGatewayAPIInstallDegradedCondition,
 		computeOrphanedSubscriptionCondition,
 	} {
@@ -813,6 +814,25 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 		degradedCondition.Status = configv1.ConditionTrue
 		degradedCondition.Reason = "IngressDoesNotExist"
 		degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+	}
+
+	return degradedCondition
+}
+
+// computeGatewayAPICRDsDegradedCondition computes the degraded condition for Gateway API CRDs.
+// It preserves the legacy behavior while the GatewayAPIManagementMode feature gate is disabled.
+func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+	// Gateway API CRD management reports its status through the Ingress CR and
+	// must not contribute Degraded=True when the management-mode gate is enabled.
+	if state.gatewayAPIManagementModeEnabled {
+		return degradedCondition
+	}
+
+	if len(state.unmanagedGatewayAPICRDNames) > 0 {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "GatewayAPICRDsDegraded"
+		degradedCondition.Message = fmt.Sprintf("Unmanaged Gateway API CRDs found: %s.", state.unmanagedGatewayAPICRDNames)
 	}
 
 	return degradedCondition
