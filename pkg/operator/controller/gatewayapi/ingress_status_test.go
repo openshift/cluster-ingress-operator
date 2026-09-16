@@ -551,8 +551,8 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 // non-compliant without being confused with an Unmanaged-to-Managed takeover.
 func TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
-	apiextensionsv1.AddToScheme(scheme)
+	require.NoError(t, operatorv1alpha1.Install(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
 
 	crds := allManagedCRDObjects()
 	firstCRD := crds[0].(*apiextensionsv1.CustomResourceDefinition)

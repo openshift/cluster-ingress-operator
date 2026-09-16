@@ -901,7 +901,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
-			description: "legacy gate-off: unmanaged gateway api crds degrade the operator",
+			description: "unmanaged gateway api crds degrade the operator when management mode is disabled",
 			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
@@ -918,7 +918,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
-			description: "legacy gate-off: unmanaged gateway api crds retain their degraded contribution",
+			description: "unmanaged gateway api crds contribute to degradation when management mode is disabled",
 			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
@@ -1118,7 +1118,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
-			description: "legacy gate-off: unmanaged CRDs still degrade when OSSM conflicts are ignored",
+			description: "unmanaged CRDs degrade when management mode is disabled and OSSM conflicts are ignored",
 			modes:       sailLibraryMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{

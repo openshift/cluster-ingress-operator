@@ -201,11 +201,13 @@ func Test_Reconcile(t *testing.T) {
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
-			expectUpdate:       []client.Object{},
-			expectDelete:       []client.Object{},
-			expectStatusUpdate: []client.Object{},
-			expectStartCtrl:    false,
-			expectRequeue:      true,
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectStatusUpdate: []client.Object{
+				coWithExtension("ingress", `{}`),
+			},
+			expectStartCtrl: false,
+			expectRequeue:   true,
 		},
 		{
 			name:               "third party CRDs",
