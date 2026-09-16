@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -15,12 +16,14 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
-	daemonset := desiredCanaryDaemonSet(canaryImageName, "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
+	daemonset := desiredCanaryDaemonSet(canaryImageName, "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType], nil)
 
 	expectedDaemonSetName := controller.CanaryDaemonSetName()
 
@@ -257,7 +260,7 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			original := desiredCanaryDaemonSet("", "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
+			original := desiredCanaryDaemonSet("", "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType], nil)
 			mutated := original.DeepCopy()
 			tc.mutate(mutated)
 			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
@@ -269,6 +272,160 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 				if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
 					t.Error("canaryDaemonSetChanged does not behave as a fixed point function")
 				}
+			}
+		})
+	}
+}
+
+func Test_mergeTolerationsWithDedup(t *testing.T) {
+	infraToleration := corev1.Toleration{
+		Key:      "node-role.kubernetes.io/infra",
+		Operator: corev1.TolerationOpExists,
+	}
+	customA := corev1.Toleration{
+		Key:      "custom.io/workload",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "infra",
+		Effect:   corev1.TaintEffectNoSchedule,
+	}
+	customB := corev1.Toleration{
+		Key:      "gpu.io/type",
+		Operator: corev1.TolerationOpExists,
+	}
+
+	testCases := []struct {
+		description string
+		base        []corev1.Toleration
+		custom      []corev1.Toleration
+		expect      []corev1.Toleration
+	}{
+		{
+			description: "no custom tolerations returns base unchanged",
+			base:        []corev1.Toleration{infraToleration},
+			custom:      nil,
+			expect:      []corev1.Toleration{infraToleration},
+		},
+		{
+			description: "empty custom tolerations returns base unchanged",
+			base:        []corev1.Toleration{infraToleration},
+			custom:      []corev1.Toleration{},
+			expect:      []corev1.Toleration{infraToleration},
+		},
+		{
+			description: "custom toleration identical to base is not duplicated",
+			base:        []corev1.Toleration{infraToleration},
+			custom:      []corev1.Toleration{infraToleration},
+			expect:      []corev1.Toleration{infraToleration},
+		},
+		{
+			description: "distinct custom toleration is appended",
+			base:        []corev1.Toleration{infraToleration},
+			custom:      []corev1.Toleration{customA},
+			expect:      []corev1.Toleration{infraToleration, customA},
+		},
+		{
+			description: "multiple custom tolerations, some duplicate, some unique",
+			base:        []corev1.Toleration{infraToleration},
+			custom:      []corev1.Toleration{infraToleration, customA, customB},
+			expect:      []corev1.Toleration{infraToleration, customA, customB},
+		},
+		{
+			description: "duplicate custom tolerations preserve first occurrence order",
+			base:        []corev1.Toleration{infraToleration},
+			custom:      []corev1.Toleration{customA, customA, customB, infraToleration, customA, customB},
+			expect:      []corev1.Toleration{infraToleration, customA, customB},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			got := mergeTolerationsWithDedup(tc.base, tc.custom)
+			if diff := cmp.Diff(tc.expect, got); diff != "" {
+				t.Errorf("mergeTolerationsWithDedup mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func Test_ensureCanaryDaemonSet_duplicateCustomTolerations(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	initial := desiredCanaryDaemonSet("test-image", "", nil, nil)
+	r := &reconciler{
+		config: Config{CanaryImage: "test-image"},
+		client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(initial).Build(),
+	}
+	custom := corev1.Toleration{
+		Key:      "custom.io/workload",
+		Operator: corev1.TolerationOpExists,
+		Effect:   corev1.TaintEffectNoSchedule,
+	}
+	want := append(initial.Spec.Template.Spec.Tolerations, custom)
+	var resourceVersion string
+	for i := 0; i < 2; i++ {
+		// Reconcile an existing DaemonSet, then repeat to verify the merged
+		// tolerations do not cause a panic or an unnecessary update.
+		haveDS, ds, err := r.ensureCanaryDaemonSet(context.Background(), nil, []corev1.Toleration{custom, custom})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !haveDS || ds == nil {
+			t.Fatal("expected the canary daemonset to exist")
+		}
+		if diff := cmp.Diff(want, ds.Spec.Template.Spec.Tolerations); diff != "" {
+			t.Errorf("tolerations mismatch (-want +got):\n%s", diff)
+		}
+		if i > 0 && ds.ResourceVersion != resourceVersion {
+			t.Error("repeated reconciliation unnecessarily updated the daemonset")
+		}
+		resourceVersion = ds.ResourceVersion
+	}
+}
+
+func Test_desiredCanaryDaemonSet_customTolerations(t *testing.T) {
+	baseToleration := corev1.Toleration{
+		Key:      "node-role.kubernetes.io/infra",
+		Operator: corev1.TolerationOpExists,
+	}
+	customToleration := corev1.Toleration{
+		Key:      "custom.io/workload",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "infra",
+		Effect:   corev1.TaintEffectNoSchedule,
+	}
+
+	testCases := []struct {
+		description         string
+		customTolerations   []corev1.Toleration
+		expectedTolerations []corev1.Toleration
+	}{
+		{
+			description:         "nil custom tolerations preserves only base toleration",
+			customTolerations:   nil,
+			expectedTolerations: []corev1.Toleration{baseToleration},
+		},
+		{
+			description:         "custom toleration identical to base is not duplicated",
+			customTolerations:   []corev1.Toleration{baseToleration},
+			expectedTolerations: []corev1.Toleration{baseToleration},
+		},
+		{
+			description:         "distinct custom toleration is appended after base",
+			customTolerations:   []corev1.Toleration{customToleration},
+			expectedTolerations: []corev1.Toleration{baseToleration, customToleration},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ds := desiredCanaryDaemonSet("test-image", "", nil, tc.customTolerations)
+			if diff := cmp.Diff(tc.expectedTolerations, ds.Spec.Template.Spec.Tolerations); diff != "" {
+				t.Errorf("tolerations mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -350,7 +507,7 @@ func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := desiredCanaryDaemonSet(canaryImageName, "", tc.tlsProfile)
+			ds := desiredCanaryDaemonSet(canaryImageName, "", tc.tlsProfile, nil)
 
 			actualCiphers := getEnvVar(ds, "TLS_CIPHERS")
 			if diff := cmp.Diff(tc.expectCiphers, actualCiphers); diff != "" {
