@@ -18,6 +18,12 @@ import (
 // setUnmanagedGatewayAPICRDNamesStatus sets the status of the "ingress" cluster operator
 // with the names of the unmanaged Gateway CRDs.
 func (r *reconciler) setUnmanagedGatewayAPICRDNamesStatus(ctx context.Context, crdNames []string) error {
+	// This extension is part of the management-mode contract.  Do not
+	// publish it while the gate is disabled (including the promotion window
+	// where the feature gate can be Default before the Ingress CRD exists).
+	if !r.managementModeEnabled() {
+		return nil
+	}
 	return r.setClusterOperatorStatusExtension(ctx, &status.IngressOperatorStatusExtension{
 		UnmanagedGatewayAPICRDNames: strings.Join(crdNames, ","),
 	})

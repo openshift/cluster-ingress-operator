@@ -272,12 +272,26 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 			ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName,
 		},
 		Status: gatewayapiv1.GatewayClassStatus{
-			Conditions: []metav1.Condition{{
-				Type:    ControllerInstalledConditionType,
-				Status:  metav1.ConditionTrue,
-				Reason:  "Installed",
-				Message: "istiod installed",
-			}},
+			Conditions: []metav1.Condition{
+				{
+					Type:    ControllerInstalledConditionType,
+					Status:  metav1.ConditionTrue,
+					Reason:  "Installed",
+					Message: "istiod installed",
+				},
+				{
+					Type:    CRDsReadyConditionType,
+					Status:  metav1.ConditionTrue,
+					Reason:  "ManagedByCIO",
+					Message: "CRDs installed by cluster-ingress-operator",
+				},
+				{
+					Type:    "Accepted",
+					Status:  metav1.ConditionTrue,
+					Reason:  "Accepted",
+					Message: "owned by another controller",
+				},
+			},
 		},
 	}
 
@@ -307,6 +321,11 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 	require.NotNil(t, cond, "ControllerInstalled condition must be present")
 	assert.Equal(t, metav1.ConditionFalse, cond.Status, "ControllerInstalled must be False after uninstall")
 	assert.Equal(t, "Unmanaged", cond.Reason, "ControllerInstalled reason must be Unmanaged")
+	assert.Nil(t, meta.FindStatusCondition(got.Status.Conditions, CRDsReadyConditionType),
+		"the stale CIO-owned CRDsReady condition must be removed after uninstall")
+	accepted := meta.FindStatusCondition(got.Status.Conditions, "Accepted")
+	require.NotNil(t, accepted, "conditions owned by other controllers must be preserved")
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
 }
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {

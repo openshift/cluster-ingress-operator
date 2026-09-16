@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -275,6 +277,19 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 	}, 2*time.Minute, 5*time.Second,
 		"Expected Compliant condition to become False after bundle-version mismatch")
 
+	// CRD drift is observable through the Ingress conditions, but it must not
+	// turn ClusterOperator/ingress Degraded=True and block an upgrade.
+	clusterOperator := &configv1.ClusterOperator{}
+	require.NoError(t, kclient.Get(context.Background(), types.NamespacedName{Name: "ingress"}, clusterOperator))
+	degraded := configv1.ConditionUnknown
+	for _, condition := range clusterOperator.Status.Conditions {
+		if condition.Type == configv1.OperatorDegraded {
+			degraded = condition.Status
+			break
+		}
+	}
+	assert.NotEqual(t, configv1.ConditionTrue, degraded, "Gateway API CRD drift must not degrade the operator")
+
 	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged)
 	waitForGatewayAPIManagedCondition(t, metav1.ConditionFalse, "Unmanaged")
 
@@ -472,6 +487,36 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	}, 30*time.Second, 2*time.Second,
 		"Expected GatewayClass to still exist in Unmanaged mode")
 
+	installed := condutils.FindStatusCondition(gwc.Status.Conditions, "ControllerInstalled")
+	require.NotNil(t, installed, "GatewayClass must report the CIO-owned control-plane status")
+	assert.Equal(t, metav1.ConditionFalse, installed.Status)
+	assert.Equal(t, "Unmanaged", installed.Reason)
+
+	// A Gateway created while management is Unmanaged must not be touched by
+	// the dependent gateway-labeler controller. Once all Managed prerequisites
+	// converge, the Ingress wake-up path must reconcile it normally.
+	pausedGateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "management-mode-paused", Namespace: operatorcontroller.DefaultOperandNamespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName("openshift-default"),
+			Listeners:        []gatewayapiv1.Listener{{Name: "http", Port: 80, Protocol: "HTTP"}},
+		},
+	}
+	require.NoError(t, createWithRetryOnError(t, context.Background(), pausedGateway, DefaultRetryTimeout))
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), pausedGateway); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete Gateway %q: %v", pausedGateway.Name, err)
+		}
+	})
+	assert.Never(t, func() bool {
+		current := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(context.Background(), types.NamespacedName{Namespace: pausedGateway.Namespace, Name: pausedGateway.Name}, current); err != nil {
+			t.Logf("failed to get paused Gateway: %v", err)
+			return false
+		}
+		return current.Labels[operatorcontroller.IstioRevLabelKey] == operatorcontroller.IstioName("").Name
+	}, 20*time.Second, 2*time.Second, "dependent controllers must not modify Gateways while Unmanaged")
+
 	// Verify we can modify a Gateway API CRD (no VAP protection)
 	t.Log("Verifying CRDs can be modified without VAP protection")
 	testCRDName := crdNames[0]
@@ -504,6 +549,17 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	unmanagedQuery := `ingress_controller_gateway_api_management_mode{mode="Unmanaged"}`
 	assertMetricValue(t, prometheusClient, unmanagedQuery, 1,
 		"Expected ingress_controller_gateway_api_management_mode{mode=\"Unmanaged\"}=1")
+
+	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeManaged)
+	waitForGatewayAPIManagedCondition(t, metav1.ConditionTrue, "ManagedByIngressOperator")
+	assert.Eventually(t, func() bool {
+		current := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(context.Background(), types.NamespacedName{Namespace: pausedGateway.Namespace, Name: pausedGateway.Name}, current); err != nil {
+			t.Logf("failed to get Gateway after returning to Managed: %v", err)
+			return false
+		}
+		return current.Labels[operatorcontroller.IstioRevLabelKey] == operatorcontroller.IstioName("").Name
+	}, 3*time.Minute, 5*time.Second, "dependent controllers must resume after Managed prerequisites converge")
 
 }
 

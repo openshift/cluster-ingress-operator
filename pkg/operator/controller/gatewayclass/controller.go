@@ -836,7 +836,7 @@ func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
 	for i := range gatewayclasses.Items {
 		current := &gatewayclasses.Items[i]
 		updated := current.DeepCopy()
-		if setControllerUninstalledCondition(&updated.Status.Conditions, current.Generation) {
+		if resetSailInstallConditionsForUnmanaged(&updated.Status.Conditions, current.Generation) {
 			if err := r.client.Status().Patch(ctx, updated, client.MergeFrom(current)); err != nil {
 				errs = append(errs, fmt.Errorf("failed to patch gatewayclass %q status: %w", current.Name, err))
 			}
