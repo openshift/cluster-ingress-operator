@@ -639,8 +639,8 @@ go.uber.org/zap/internal/exit
 go.uber.org/zap/internal/pool
 go.uber.org/zap/internal/stacktrace
 go.uber.org/zap/zapcore
-# golang.org/x/crypto v0.24.0
-## explicit; go 1.18
+# golang.org/x/crypto v0.33.0
+## explicit; go 1.20
 golang.org/x/crypto/chacha20
 golang.org/x/crypto/chacha20poly1305
 golang.org/x/crypto/cryptobyte
@@ -654,7 +654,7 @@ golang.org/x/crypto/sha3
 # golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 ## explicit; go 1.20
 golang.org/x/exp/maps
-# golang.org/x/net v0.26.0
+# golang.org/x/net v0.26.0 => github.com/openshift-sustaining/net v0.35.0-sec.3
 ## explicit; go 1.18
 golang.org/x/net/bpf
 golang.org/x/net/html
@@ -663,6 +663,7 @@ golang.org/x/net/http/httpguts
 golang.org/x/net/http2
 golang.org/x/net/http2/hpack
 golang.org/x/net/idna
+golang.org/x/net/internal/httpcommon
 golang.org/x/net/internal/socks
 golang.org/x/net/internal/timeseries
 golang.org/x/net/proxy
@@ -680,19 +681,19 @@ golang.org/x/oauth2/google/internal/stsexchange
 golang.org/x/oauth2/internal
 golang.org/x/oauth2/jws
 golang.org/x/oauth2/jwt
-# golang.org/x/sync v0.7.0
+# golang.org/x/sync v0.11.0
 ## explicit; go 1.18
 golang.org/x/sync/errgroup
-# golang.org/x/sys v0.21.0
+# golang.org/x/sys v0.30.0
 ## explicit; go 1.18
 golang.org/x/sys/cpu
 golang.org/x/sys/plan9
 golang.org/x/sys/unix
 golang.org/x/sys/windows
-# golang.org/x/term v0.21.0
+# golang.org/x/term v0.29.0
 ## explicit; go 1.18
 golang.org/x/term
-# golang.org/x/text v0.16.0
+# golang.org/x/text v0.22.0
 ## explicit; go 1.18
 golang.org/x/text/internal/language
 golang.org/x/text/internal/language/compact
@@ -1397,3 +1398,4 @@ sigs.k8s.io/yaml/goyaml.v2
 # bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
 # github.com/openshift/api => github.com/openshift/api v0.0.0-20260105154426-319dc2e49203
 # k8s.io/client-go => k8s.io/client-go v0.31.1
+# golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.3
