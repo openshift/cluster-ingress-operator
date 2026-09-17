@@ -40,8 +40,8 @@ type Config struct {
 	// if Azure workload identity is not used.
 	ClientSecret string
 	// FederatedTokenFile is the path to a file containing a workload
-	// identity token. If no client secret is available, Azure workload
-	// identity is used instead.
+	// identity token. If no client secret is available, this token file is
+	// used for Azure workload identity.
 	FederatedTokenFile string
 	// TenantID is the Azure tenant ID.
 	TenantID string
