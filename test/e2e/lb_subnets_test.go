@@ -13,12 +13,15 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	machinev1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -28,8 +31,16 @@ import (
 )
 
 const (
-	awsLBSubnetAnnotation = "service.beta.kubernetes.io/aws-load-balancer-subnets"
+	awsLBSubnetAnnotation   = "service.beta.kubernetes.io/aws-load-balancer-subnets"
+	capiMachineSetNamespace = "openshift-cluster-api"
+	mapiMachineSetNamespace = "openshift-machine-api"
 )
+
+var capiMachineSetListGVK = schema.GroupVersionKind{
+	Group:   "cluster.x-k8s.io",
+	Version: "v1beta2",
+	Kind:    "MachineSetList",
+}
 
 // TestAWSLBSubnets creates an IngressController with various subnets in AWS.
 // The test verifies the provisioning of the LB-type Service, confirms ingress connectivity, and
@@ -45,7 +56,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	}
 
 	// First, let's get the list of public subnets to use for the LB.
-	publicSubnets, _, err := getClusterSubnets()
+	publicSubnets, _, err := getClusterSubnets(t)
 	if err != nil {
 		t.Fatalf("failed to get cluster subnets: %v", err)
 	}
@@ -190,7 +201,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 	}
 
 	// First, let's get the list of public subnets to use for the LB.
-	publicSubnets, _, err := getClusterSubnets()
+	publicSubnets, _, err := getClusterSubnets(t)
 	if err != nil {
 		t.Fatalf("failed to get cluster subnets: %v", err)
 	}
@@ -426,34 +437,131 @@ func effectuateIngressControllerSubnets(t *testing.T, ic *operatorv1.IngressCont
 // the public and private cluster subnets names. Unfortunately these subnets aren't
 // easily accessible in any K8S API objects. However, by using the installer-created subnet
 // naming convention, we can generate the names of the public and private subnets.
-func getClusterSubnets() (public *operatorv1.AWSSubnets, private *operatorv1.AWSSubnets, err error) {
+// A bounded wait is used because MachineSets may not be immediately available
+// when the test starts.
+func getClusterSubnets(t *testing.T) (public *operatorv1.AWSSubnets, private *operatorv1.AWSSubnets, err error) {
+	t.Helper()
+	machineAPIMigrationEnabled, err := isFeatureGateEnabled(features.FeatureGateMachineAPIMigration)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to determine whether MachineAPIMigration is enabled: %w", err)
+	}
+	machineAPIMigrationAWSEnabled, err := isFeatureGateEnabled(features.FeatureGateMachineAPIMigrationAWS)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to determine whether MachineAPIMigrationAWS is enabled: %w", err)
+	}
+	capiMachineManagementAWSEnabled, err := isFeatureGateEnabled(features.FeatureGateClusterAPIMachineManagementAWS)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to determine whether ClusterAPIMachineManagementAWS is enabled: %w", err)
+	}
+
+	if machineAPIMigrationEnabled && machineAPIMigrationAWSEnabled && capiMachineManagementAWSEnabled {
+		t.Logf("MachineAPIMigration, MachineAPIMigrationAWS, and ClusterAPIMachineManagementAWS are enabled; discovering subnets from CAPI MachineSets in %q", capiMachineSetNamespace)
+		return getClusterSubnetsFromCAPI(t)
+	}
+
+	t.Logf("CAPI AWS machine management is not enabled; discovering subnets from MAPI MachineSets in %q", mapiMachineSetNamespace)
+	return getClusterSubnetsFromMAPI(t)
+}
+
+func getClusterSubnetsFromCAPI(t *testing.T) (public *operatorv1.AWSSubnets, private *operatorv1.AWSSubnets, err error) {
+	t.Helper()
 	// Subnet Naming Convention: <clusterName>-subnet-[public|private]-<availabilityZone>
-	machineSets := &machinev1.MachineSetList{}
-	listOpts := []client.ListOption{
-		client.InNamespace("openshift-machine-api"),
-	}
-	if err := kclient.List(context.Background(), machineSets, listOpts...); err != nil {
-		return nil, nil, fmt.Errorf("failed to get machineSets: %w", err)
-	}
-	// The availability zones can be derived from the providerSpec on MachineSet object.
-	publicSubnets := &operatorv1.AWSSubnets{}
-	privateSubnets := &operatorv1.AWSSubnets{}
-	for _, machineset := range machineSets.Items {
-		providerSpec := &machinev1.AWSMachineProviderConfig{}
-		if err := unmarshalInto(&machineset, providerSpec); err != nil {
-			return nil, nil, fmt.Errorf("failure to unmarshal machineset %q provider spec: %w", machineset.Name, err)
+	var publicSubnets, privateSubnets *operatorv1.AWSSubnets
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+		machineSets := &unstructured.UnstructuredList{}
+		machineSets.SetGroupVersionKind(capiMachineSetListGVK)
+		if err := kclient.List(ctx, machineSets, client.InNamespace(capiMachineSetNamespace)); err != nil {
+			t.Logf("failed to list CAPI MachineSets in %s: %v, retrying...", capiMachineSetNamespace, err)
+			return false, nil
+		}
+		if len(machineSets.Items) == 0 {
+			t.Logf("no CAPI MachineSets found in %s, retrying...", capiMachineSetNamespace)
+			return false, nil
 		}
 
-		if len(providerSpec.Placement.AvailabilityZone) == 0 {
-			return nil, nil, fmt.Errorf("machineset %q availability zone is empty", machineset.Name)
+		availabilityZones, err := capiMachineSetAvailabilityZones(machineSets)
+		if err != nil {
+			return false, err
 		}
-		// Build the public and private subnet name according to the installer naming convention.
-		publicSubnet := infraConfig.Status.InfrastructureName + "-subnet-public-" + providerSpec.Placement.AvailabilityZone
-		publicSubnets.Names = append(publicSubnets.Names, operatorv1.AWSSubnetName(publicSubnet))
-		privateSubnet := infraConfig.Status.InfrastructureName + "-subnet-private-" + providerSpec.Placement.AvailabilityZone
-		privateSubnets.Names = append(privateSubnets.Names, operatorv1.AWSSubnetName(privateSubnet))
+		publicSubnets, privateSubnets = subnetsForAvailabilityZones(availabilityZones)
+		return true, nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("waiting for CAPI cluster subnets: %w", err)
 	}
 	return publicSubnets, privateSubnets, nil
+}
+
+func getClusterSubnetsFromMAPI(t *testing.T) (public *operatorv1.AWSSubnets, private *operatorv1.AWSSubnets, err error) {
+	t.Helper()
+	// Subnet Naming Convention: <clusterName>-subnet-[public|private]-<availabilityZone>
+	var publicSubnets, privateSubnets *operatorv1.AWSSubnets
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+		machineSets := &machinev1.MachineSetList{}
+		if err := kclient.List(ctx, machineSets, client.InNamespace(mapiMachineSetNamespace)); err != nil {
+			t.Logf("failed to list MAPI MachineSets in %s: %v, retrying...", mapiMachineSetNamespace, err)
+			return false, nil
+		}
+		if len(machineSets.Items) == 0 {
+			t.Logf("no MAPI MachineSets found in %s, retrying...", mapiMachineSetNamespace)
+			return false, nil
+		}
+		// The availability zones can be derived from the providerSpec on MachineSet object.
+		pub := &operatorv1.AWSSubnets{}
+		priv := &operatorv1.AWSSubnets{}
+		for _, machineset := range machineSets.Items {
+			providerSpec := &machinev1.AWSMachineProviderConfig{}
+			if err := unmarshalInto(&machineset, providerSpec); err != nil {
+				return false, fmt.Errorf("failure to unmarshal machineset %q provider spec: %w", machineset.Name, err)
+			}
+			if len(providerSpec.Placement.AvailabilityZone) == 0 {
+				return false, fmt.Errorf("machineset %q availability zone is empty", machineset.Name)
+			}
+			appendSubnetNames(pub, priv, providerSpec.Placement.AvailabilityZone)
+		}
+		publicSubnets = pub
+		privateSubnets = priv
+		return true, nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("waiting for cluster subnets: %w", err)
+	}
+	return publicSubnets, privateSubnets, nil
+}
+
+func capiMachineSetAvailabilityZones(machineSets *unstructured.UnstructuredList) ([]string, error) {
+	availabilityZones := make([]string, 0, len(machineSets.Items))
+	for _, machineSet := range machineSets.Items {
+		availabilityZone, found, err := unstructured.NestedString(machineSet.Object, "spec", "template", "spec", "failureDomain")
+		if err != nil {
+			return nil, fmt.Errorf("CAPI machineset %q has invalid failureDomain: %w", machineSet.GetName(), err)
+		}
+		if !found || len(availabilityZone) == 0 {
+			return nil, fmt.Errorf("CAPI machineset %q failureDomain is empty", machineSet.GetName())
+		}
+		availabilityZones = append(availabilityZones, availabilityZone)
+	}
+	if len(availabilityZones) == 0 {
+		return nil, fmt.Errorf("no CAPI worker MachineSet availability zones found")
+	}
+	return availabilityZones, nil
+}
+
+func subnetsForAvailabilityZones(availabilityZones []string) (public, private *operatorv1.AWSSubnets) {
+	public = &operatorv1.AWSSubnets{}
+	private = &operatorv1.AWSSubnets{}
+	for _, availabilityZone := range availabilityZones {
+		appendSubnetNames(public, private, availabilityZone)
+	}
+	return public, private
+}
+
+func appendSubnetNames(public, private *operatorv1.AWSSubnets, availabilityZone string) {
+	// Build the public and private subnet names according to the installer naming convention.
+	publicSubnet := infraConfig.Status.InfrastructureName + "-subnet-public-" + availabilityZone
+	public.Names = append(public.Names, operatorv1.AWSSubnetName(publicSubnet))
+	privateSubnet := infraConfig.Status.InfrastructureName + "-subnet-private-" + availabilityZone
+	private.Names = append(private.Names, operatorv1.AWSSubnetName(privateSubnet))
 }
 
 // unmarshalInto unmarshals a MachineSet's ProviderSpec into the provided providerSpec parameter.
