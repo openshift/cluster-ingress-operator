@@ -14,6 +14,7 @@ approvers:
   - bentito
   - jcmoraisjr
   - aswinsuryan
+  - pedjak
 reviewers:
   - knobunc
   - Miciah
@@ -30,6 +31,7 @@ reviewers:
   - bentito
   - jcmoraisjr
   - aswinsuryan
+  - pedjak
 emeritus_approvers:
   - ironcladlou
   - pravisankar
