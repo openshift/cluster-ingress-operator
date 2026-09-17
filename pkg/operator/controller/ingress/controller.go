@@ -1067,12 +1067,13 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 		if effectiveProfile.Custom == nil {
 			return fmt.Errorf("security profile is not defined")
 		}
+		spec := effectiveProfile.Custom
 
-		if len(effectiveProfileSpec.Ciphers) == 0 {
+		if len(spec.Ciphers) == 0 {
 			errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
 		} else {
 			invalidCiphers := []string{}
-			for _, cipher := range effectiveProfileSpec.Ciphers {
+			for _, cipher := range spec.Ciphers {
 				if !isValidCipher(strings.TrimPrefix(cipher, "!")) {
 					invalidCiphers = append(invalidCiphers, cipher)
 				}
@@ -1080,20 +1081,20 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 			if len(invalidCiphers) != 0 {
 				errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
 			}
-			switch effectiveProfileSpec.MinTLSVersion {
+			switch spec.MinTLSVersion {
 			case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
-				if tlsVersion13Ciphers.HasAll(effectiveProfileSpec.Ciphers...) {
-					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", effectiveProfileSpec.MinTLSVersion))
+				if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
 				}
 			case configv1.VersionTLS13:
-				if !tlsVersion13Ciphers.HasAny(effectiveProfileSpec.Ciphers...) {
-					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", effectiveProfileSpec.MinTLSVersion))
+				if !tlsVersion13Ciphers.HasAny(spec.Ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
 				}
 			}
 		}
 
-		if _, ok := validTLSVersions[effectiveProfileSpec.MinTLSVersion]; !ok {
-			errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", effectiveProfileSpec.MinTLSVersion))
+		if _, ok := validTLSVersions[spec.MinTLSVersion]; !ok {
+			errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", spec.MinTLSVersion))
 		}
 	}
 
