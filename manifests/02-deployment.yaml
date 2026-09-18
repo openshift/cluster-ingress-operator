@@ -61,8 +61,6 @@ spec:
           - --image
           - "$(IMAGE)"
           - --haproxy-image
-          - "2.8=$(HAPROXY_28_IMAGE)"
-          - --haproxy-image
           - "3.2=$(HAPROXY_32_IMAGE)"
           - --default-haproxy-version
           - "$(DEFAULT_HAPROXY_VERSION)"
@@ -93,14 +91,12 @@ spec:
                   fieldPath: metadata.namespace
             - name: IMAGE
               value: openshift/origin-haproxy-router:v4.0
-            - name: HAPROXY_28_IMAGE
-              value: openshift/origin-haproxy:v2.8
             - name: HAPROXY_32_IMAGE
               value: openshift/origin-haproxy:v3.2
             - name: DEFAULT_HAPROXY_VERSION
               value: "3.2"
             - name: DEPRECATED_HAPROXY_VERSION
-              value: "2.8"
+              value: ""
             - name: CANARY_IMAGE
               value: openshift/origin-cluster-ingress-operator:latest
             - name: GATEWAY_API_OPERATOR_CATALOG
