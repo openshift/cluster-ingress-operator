@@ -12,8 +12,8 @@ with one coupling:
    - For OSSM 3.4+ (Sail Library), supported versions and image references are defined
      in [`versions.ossm.yaml`](../../vendor/github.com/istio-ecosystem/sail-operator/pkg/istioversion/versions.ossm.yaml)
      (this has changed across OSSM major versions).
-   - Since we always use the latest Istio z-stream available in an OSSM release,
-     bumping the Istio z-stream requires an OSSM bump.
+   - Since we always use the latest Istio z-stream available in an OSSM release
+     (the floating tag `x.y-latest`), bumping the Istio z-stream requires an OSSM bump.
 
 3. **Gateway API CRDs** — managed by the operator; manifests live in
    [`pkg/manifests/assets/gateway-api/`](../../pkg/manifests/assets/gateway-api).
@@ -21,14 +21,14 @@ with one coupling:
      specific Gateway API version.
    - Istio *minor* bumps bring support for newer Gateway API CRD versions.
 
-This chains for minor bumps: a Gateway API CRD minor bump generally requires an
-Istio minor bump, which in turn requires an OSSM minor bump.
+This is a dependency chain for minor bumps: a Gateway API CRD minor bump generally
+requires an Istio minor bump, which in turn requires an OSSM minor bump.
 
 ## When
 
 **Default: keep every supported release current on z-streams.** Backport the latest
-OSSM z-stream, Istio z-stream, and Gateway API patch as they become available. These
-carry CVE and bug fixes and are low risk.
+OSSM z-stream, Istio z-stream, and Gateway API CRD z-stream as they become available.
+These carry CVE and bug fixes and are low risk.
 
 **Bump OSSM, Istio, or Gateway API minor only when:**
 - an EUS/ELC release would otherwise carry a version past EOL, or
@@ -48,10 +48,9 @@ OSSM carries support for approximately 3 Istio minor versions at a time. When OS
 drops an Istio minor, any OCP EUS/ELC release still on that version loses a supported
 OSSM/Istio path — forcing an Istio minor-version backport into an OCP z-stream.
 
-**Timing.** Do the minor bump an EUS/ELC release will eventually need *during its
-full-support phase*, not after it enters the extended window — bumping in the extended
-window is harder to test and riskier. Watch the OSSM lifecycle and initiate the bump
-early.
+**Timing.** Complete any necessary minor bump while the EUS/ELC release is still in
+full support. Do not wait until it enters extended support, when testing is harder
+and the change carries more risk. Monitor the OSSM lifecycle and start early.
 
 ## How
 
@@ -61,7 +60,7 @@ Standard OCP rule: **upgrading OCP must never downgrade a component or lose a CV
 bug fix.** For every component (OSSM, Istio, Gateway API), a newer OCP release must
 be at least as new as every older one — in both version *and* fix content.
 
-- **Cascade newest → oldest.** Land a bump in master / the newest supported release
+- **Cascade newest → oldest.** Land a bump in main / the newest supported release
   first, then cherry-pick down. You cannot put a version or fix in an older z-stream
   that isn't already in every newer one.
 - Each older backport target's Istio version must be **no newer** — in version
