@@ -19,8 +19,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
-	current, err := r.currentRouterCASecret()
+func (r *reconciler) ensureRouterCASecret(ctx context.Context) (*corev1.Secret, error) {
+	current, err := r.currentRouterCASecret(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -31,10 +31,10 @@ func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 	if err != nil {
 		return nil, err
 	}
-	if created, err := r.createRouterCASecret(desired); err != nil {
+	if created, err := r.createRouterCASecret(ctx, desired); err != nil {
 		return nil, fmt.Errorf("failed to create CA secret: %v", err)
 	} else if created {
-		new, err := r.currentRouterCASecret()
+		new, err := r.currentRouterCASecret(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -43,14 +43,14 @@ func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 		return new, nil
 
 	}
-	return r.currentRouterCASecret()
+	return r.currentRouterCASecret(ctx)
 }
 
 // currentRouterCASecret returns the current router CA secret.
-func (r *reconciler) currentRouterCASecret() (*corev1.Secret, error) {
+func (r *reconciler) currentRouterCASecret(ctx context.Context) (*corev1.Secret, error) {
 	name := controller.RouterCASecretName(r.operatorNamespace)
 	secret := &corev1.Secret{}
-	if err := r.client.Get(context.TODO(), name, secret); err != nil {
+	if err := r.client.Get(ctx, name, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -137,8 +137,8 @@ func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
 }
 
 // createRouterCASecret creates the router CA secret.
-func (r *reconciler) createRouterCASecret(secret *corev1.Secret) (bool, error) {
-	if err := r.client.Create(context.TODO(), secret); err != nil {
+func (r *reconciler) createRouterCASecret(ctx context.Context, secret *corev1.Secret) (bool, error) {
+	if err := r.client.Create(ctx, secret); err != nil {
 		if errors.IsAlreadyExists(err) {
 			return false, nil
 		}
