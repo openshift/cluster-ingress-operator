@@ -18,7 +18,7 @@ import (
 // ensureDefaultCertificateForIngress creates or deletes an operator-generated
 // default certificate for a given IngressController as appropriate.  Returns true
 // if it the secret exists, or false if it does not, as well as any errors.
-func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, namespace string, deploymentRef metav1.OwnerReference, ci *operatorv1.IngressController) (bool, error) {
+func (r *reconciler) ensureDefaultCertificateForIngress(ctx context.Context, caSecret *corev1.Secret, namespace string, deploymentRef metav1.OwnerReference, ci *operatorv1.IngressController) (bool, error) {
 	ca, err := crypto.GetCAFromBytes(caSecret.Data["tls.crt"], caSecret.Data["tls.key"])
 	if err != nil {
 		return false, fmt.Errorf("failed to get CA from secret %s/%s: %v", caSecret.Namespace, caSecret.Name, err)
@@ -31,13 +31,13 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 		// If the operator generated certificate is not being used, ensure that the ingress controller's
 		// Spec.DefaultCertificate secret exists before deleting the operator generated secret.
 		// See https://bugzilla.redhat.com/show_bug.cgi?id=1887441
-		err := r.lookupUserSpecifiedRouterDefaultCertificate(ci, namespace)
+		err := r.lookupUserSpecifiedRouterDefaultCertificate(ctx, ci, namespace)
 		if err != nil {
 			return false, fmt.Errorf("failed to lookup user specified default certificate: %v", err)
 		}
 	}
 
-	haveCert, current, err := r.currentRouterDefaultCertificate(ci, namespace)
+	haveCert, current, err := r.currentRouterDefaultCertificate(ctx, ci, namespace)
 	if err != nil {
 		return false, err
 	}
@@ -45,7 +45,7 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 	case !wantCert && !haveCert:
 		// Nothing to do.
 	case !wantCert && haveCert:
-		if deleted, err := r.deleteRouterDefaultCertificate(current); err != nil {
+		if deleted, err := r.deleteRouterDefaultCertificate(ctx, current); err != nil {
 			return true, fmt.Errorf("failed to delete default certificate: %v", err)
 		} else if deleted {
 			log.Info("Deleted default wildcard certificate secret", "namespace", current.Namespace, "name", current.Name)
@@ -53,7 +53,7 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 			return false, nil
 		}
 	case wantCert && !haveCert:
-		if created, err := r.createRouterDefaultCertificate(desired); err != nil {
+		if created, err := r.createRouterDefaultCertificate(ctx, desired); err != nil {
 			return false, fmt.Errorf("failed to create default certificate: %v", err)
 		} else if created {
 			log.Info("Created default wildcard certificate secret", "namespace", desired.Namespace, "name", desired.Name)
@@ -112,10 +112,10 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 
 // currentRouterDefaultCertificate returns the current router default
 // certificate secret.
-func (r *reconciler) currentRouterDefaultCertificate(ci *operatorv1.IngressController, namespace string) (bool, *corev1.Secret, error) {
+func (r *reconciler) currentRouterDefaultCertificate(ctx context.Context, ci *operatorv1.IngressController, namespace string) (bool, *corev1.Secret, error) {
 	name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{}
-	if err := r.client.Get(context.TODO(), name, secret); err != nil {
+	if err := r.client.Get(ctx, name, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
 		}
@@ -126,8 +126,8 @@ func (r *reconciler) currentRouterDefaultCertificate(ci *operatorv1.IngressContr
 
 // createRouterDefaultCertificate creates a router default certificate secret.
 // Returns true if the secret was newly created, otherwise returns false.
-func (r *reconciler) createRouterDefaultCertificate(secret *corev1.Secret) (bool, error) {
-	if err := r.client.Create(context.TODO(), secret); err != nil {
+func (r *reconciler) createRouterDefaultCertificate(ctx context.Context, secret *corev1.Secret) (bool, error) {
+	if err := r.client.Create(ctx, secret); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -135,8 +135,8 @@ func (r *reconciler) createRouterDefaultCertificate(secret *corev1.Secret) (bool
 
 // deleteRouterDefaultCertificate deletes the router default certificate secret.
 // Returns true if the secret was deleted, otherwise returns false.
-func (r *reconciler) deleteRouterDefaultCertificate(secret *corev1.Secret) (bool, error) {
-	if err := r.client.Delete(context.TODO(), secret); err != nil {
+func (r *reconciler) deleteRouterDefaultCertificate(ctx context.Context, secret *corev1.Secret) (bool, error) {
+	if err := r.client.Delete(ctx, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil
 		}
@@ -148,10 +148,10 @@ func (r *reconciler) deleteRouterDefaultCertificate(secret *corev1.Secret) (bool
 // lookupUserSpecifiedRouterDefaultCertificate checks to see if the given ingress controller's
 // Spec.DefaultCertificate field corresponds to an existing secret. This function assumes that
 // ci.Spec.DefaultCertificate is not nil.
-func (r *reconciler) lookupUserSpecifiedRouterDefaultCertificate(ci *operatorv1.IngressController, namespace string) error {
+func (r *reconciler) lookupUserSpecifiedRouterDefaultCertificate(ctx context.Context, ci *operatorv1.IngressController, namespace string) error {
 	secret := &corev1.Secret{}
 	name := controller.RouterEffectiveDefaultCertificateSecretName(ci, namespace)
-	if err := r.client.Get(context.TODO(), name, secret); err != nil {
+	if err := r.client.Get(ctx, name, secret); err != nil {
 		return err
 	}
 	return nil
