@@ -901,13 +901,14 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
-			description: "default ingresscontroller not degraded but unmanaged gateway api crds exist",
+			description: "unmanaged gateway api crds degrade the operator when management mode is disabled",
 			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
 				},
-				unmanagedGatewayAPICRDNames: "notvalid.gateway.networking.k8s.io",
+				unmanagedGatewayAPICRDNames:     "notvalid.gateway.networking.k8s.io",
+				gatewayAPIManagementModeEnabled: false,
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -917,13 +918,14 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
-			description: "default ingresscontroller degraded and unmanaged gateway api crds exist",
+			description: "unmanaged gateway api crds contribute to degradation when management mode is disabled",
 			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", true),
 				},
-				unmanagedGatewayAPICRDNames: "notvalid.gateway.networking.k8s.io",
+				unmanagedGatewayAPICRDNames:     "notvalid.gateway.networking.k8s.io",
+				gatewayAPIManagementModeEnabled: false,
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -1116,7 +1118,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
-			description: "OSSM conflicts ignored but unmanaged CRDs still degrade",
+			description: "unmanaged CRDs degrade when management mode is disabled and OSSM conflicts are ignored",
 			modes:       sailLibraryMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
@@ -1128,6 +1130,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				shouldInstallOSSM:                 true,
 				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
 				unmanagedGatewayAPICRDNames:       "httproutes.gateway.networking.k8s.io",
+				gatewayAPIManagementModeEnabled:   false,
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -1143,7 +1146,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			// TakeoverBlocked reason on the Ingress CR, but must never
 			// set ClusterOperator Degraded: see
 			// ingress_controller_gateway_api_unmanaged_crds and its alert.
-			description: "default ingresscontroller not degraded, unmanaged gateway api crds do not degrade",
+			description: "management gate-on: unmanaged gateway api crds use the alert instead of degraded",
 			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{

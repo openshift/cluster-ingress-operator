@@ -546,6 +546,65 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	assert.Contains(t, compliantCond.Message, "bundle-version annotation mismatch")
 }
 
+// TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch verifies that
+// bundle-version drift on a CRD that CIO was already managing is reported as
+// non-compliant without being confused with an Unmanaged-to-Managed takeover.
+func TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, operatorv1alpha1.Install(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+
+	crds := allManagedCRDObjects()
+	firstCRD := crds[0].(*apiextensionsv1.CustomResourceDefinition)
+	if firstCRD.Annotations == nil {
+		firstCRD.Annotations = map[string]string{}
+	}
+	firstCRD.Annotations[bundleVersionAnnotation] = "v0.0.0-upgrade-drift"
+
+	ingressObj := &operatorv1alpha1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec: operatorv1alpha1.IngressSpec{GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
+			ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		}},
+		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+			Type:   conditionTypeGatewayAPICRDsManaged,
+			Status: metav1.ConditionTrue,
+			Reason: reasonManagedByIngressOperator,
+		}}},
+	}
+
+	objs := append(crds, ingressObj)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(objs...).
+		WithStatusSubresource(ingressObj.DeepCopy()).
+		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string { return []string{} })).
+		Build()
+	informer := informertest.FakeInformers{Scheme: scheme}
+	r := &reconciler{
+		client: fakeClient,
+		cache:  &testutil.FakeCache{Informers: &informer, Reader: fakeClient},
+		config: Config{ModeAccessor: operatorcontroller.NewGatewayAPIModeAccessor(true)},
+	}
+
+	err := r.reconcileIngressStatus(context.Background(), ingressModeSnapshot{
+		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		ingress:     ingressObj,
+		found:       true,
+	}, true)
+	require.NoError(t, err)
+
+	var updated operatorv1alpha1.Ingress
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated))
+	managed := findCondition(updated.Status.Conditions, conditionTypeGatewayAPICRDsManaged)
+	require.NotNil(t, managed)
+	assert.Equal(t, metav1.ConditionTrue, managed.Status, "an already-managed upgrade must not be takeover-blocked")
+	compliant := findCondition(updated.Status.Conditions, conditionTypeGatewayAPICRDsCompliant)
+	require.NotNil(t, compliant)
+	assert.Equal(t, metav1.ConditionFalse, compliant.Status)
+	assert.Equal(t, reasonVersionMismatch, compliant.Reason)
+}
+
 // TestReconcileIngressStatus_PartialPresenceNonCompliant verifies that
 // when some CRDs are missing and at least one existing CRD is
 // non-compliant, TakeoverBlocked is triggered (the Phase 2 takeover hole).

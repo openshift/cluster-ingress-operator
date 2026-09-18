@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/client-go/util/retry"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -730,12 +731,20 @@ func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
 	}
 	var errs []error
 	for i := range gatewayclasses.Items {
-		current := &gatewayclasses.Items[i]
-		updated := current.DeepCopy()
-		if setControllerUninstalledCondition(&updated.Status.Conditions, current.Generation) {
-			if err := r.client.Status().Patch(ctx, updated, client.MergeFrom(current)); err != nil {
-				errs = append(errs, fmt.Errorf("failed to patch gatewayclass %q status: %w", current.Name, err))
+		name := gatewayclasses.Items[i].Name
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			current := &gatewayapiv1.GatewayClass{}
+			if err := r.client.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+				return err
 			}
+
+			updated := current.DeepCopy()
+			if !resetSailInstallConditionsForUnmanaged(&updated.Status.Conditions, current.Generation) {
+				return nil
+			}
+			return r.client.Status().Patch(ctx, updated, client.MergeFromWithOptions(current, client.MergeFromWithOptimisticLock{}))
+		}); err != nil {
+			errs = append(errs, fmt.Errorf("failed to patch gatewayclass %q status: %w", name, err))
 		}
 	}
 	return utilerrors.NewAggregate(errs)

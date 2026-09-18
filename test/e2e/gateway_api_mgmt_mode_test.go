@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -30,13 +32,13 @@ const (
 	ingressCRName = "cluster"
 )
 
-func setGatewayAPIManagementMode(t *testing.T, mode operatorv1alpha1.GatewayAPIManagementMode) {
+func setGatewayAPIManagementMode(ctx context.Context, t *testing.T, mode operatorv1alpha1.GatewayAPIManagementMode) {
 	t.Helper()
 	ingressName := types.NamespacedName{Name: ingressCRName}
 	ingress := &operatorv1alpha1.Ingress{}
 
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -45,7 +47,7 @@ func setGatewayAPIManagementMode(t *testing.T, mode operatorv1alpha1.GatewayAPIM
 		}
 
 		ingress.Spec.GatewayAPI.ManagementMode = mode
-		if err := kclient.Update(context.Background(), ingress); err != nil {
+		if err := kclient.Update(ctx, ingress); err != nil {
 			t.Logf("Failed to set Gateway API management mode to %s: %v; retrying...", mode, err)
 			return false
 		}
@@ -53,13 +55,13 @@ func setGatewayAPIManagementMode(t *testing.T, mode operatorv1alpha1.GatewayAPIM
 	}, 30*time.Second, 2*time.Second, "Failed to set Gateway API management mode to %s", mode)
 }
 
-func waitForGatewayAPIManagedCondition(t *testing.T, status metav1.ConditionStatus, reason string) {
+func waitForGatewayAPIManagedCondition(ctx context.Context, t *testing.T, status metav1.ConditionStatus, reason string) {
 	t.Helper()
 	ingressName := types.NamespacedName{Name: ingressCRName}
 	ingress := &operatorv1alpha1.Ingress{}
 
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -79,12 +81,13 @@ func waitForGatewayAPIManagedCondition(t *testing.T, status metav1.ConditionStat
 // - Istio/Sail is running
 // - Status conditions: Managed/Present/Compliant all True
 func testGatewayAPIManagementModeDefault(t *testing.T) {
+	ctx := t.Context()
 	t.Log("Verifying Ingress CR exists with Managed mode")
 	ingress := &operatorv1alpha1.Ingress{}
 	ingressName := types.NamespacedName{Name: ingressCRName}
 
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -109,7 +112,7 @@ func testGatewayAPIManagementModeDefault(t *testing.T) {
 		name := types.NamespacedName{Name: crdName}
 
 		require.Eventually(t, func() bool {
-			if err := kclient.Get(context.Background(), name, crd); err != nil {
+			if err := kclient.Get(ctx, name, crd); err != nil {
 				t.Logf("Failed to get CRD %s: %v", crdName, err)
 				return false
 			}
@@ -136,7 +139,7 @@ func testGatewayAPIManagementModeDefault(t *testing.T) {
 
 	t.Log("Verifying Ingress status conditions")
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -186,6 +189,7 @@ func testGatewayAPIManagementModeMetrics(t *testing.T) {
 // - Modifying a CRD's bundle-version annotation causes Compliant=False
 // - Restoring the annotation causes Compliant=True
 func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
+	ctx := t.Context()
 	// Pick the first CRD to test with
 	testCRDName := crdNames[0]
 	t.Logf("Testing CRD compliance with %s", testCRDName)
@@ -198,7 +202,7 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 	crdName := types.NamespacedName{Name: testCRDName}
 
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+		if err := kclient.Get(ctx, crdName, crd); err != nil {
 			t.Logf("Failed to get CRD: %v", err)
 			return false
 		}
@@ -215,12 +219,12 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 				t.Errorf("Cleanup: failed to restore CRD bundle-version: %v", err)
 			}
 		}
-		setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeManaged)
-		waitForGatewayAPIManagedCondition(t, metav1.ConditionTrue, "ManagedByIngressOperator")
+		setGatewayAPIManagementMode(context.Background(), t, operatorv1alpha1.GatewayAPIManagementModeManaged)
+		waitForGatewayAPIManagedCondition(context.Background(), t, metav1.ConditionTrue, "ManagedByIngressOperator")
 	})
 
-	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged)
-	waitForGatewayAPIManagedCondition(t, metav1.ConditionFalse, "Unmanaged")
+	setGatewayAPIManagementMode(ctx, t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged)
+	waitForGatewayAPIManagedCondition(ctx, t, metav1.ConditionFalse, "Unmanaged")
 
 	// Unmanaged mode removes the VAP, allowing the CRD to be modified.
 	t.Run("make CRD non-compliant", func(t *testing.T) {
@@ -228,14 +232,14 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 
 		require.Eventually(t, func() bool {
 			// Re-fetch to get latest resourceVersion
-			if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+			if err := kclient.Get(ctx, crdName, crd); err != nil {
 				t.Logf("Failed to get CRD: %v", err)
 				return false
 			}
 
 			crd.Annotations[bundleVersionAnnotation] = "v0.0.0-test-mismatch"
 
-			if err := kclient.Update(context.Background(), crd); err != nil {
+			if err := kclient.Update(ctx, crd); err != nil {
 				t.Logf("Failed to update CRD: %v; retrying...", err)
 				return false
 			}
@@ -244,12 +248,12 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 		}, 30*time.Second, 2*time.Second, "Failed to modify CRD")
 	})
 
-	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeManaged)
+	setGatewayAPIManagementMode(ctx, t, operatorv1alpha1.GatewayAPIManagementModeManaged)
 
 	// Verify Compliant condition becomes False
 	t.Log("Waiting for Compliant condition to become False")
 	assert.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -275,8 +279,21 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 	}, 2*time.Minute, 5*time.Second,
 		"Expected Compliant condition to become False after bundle-version mismatch")
 
-	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged)
-	waitForGatewayAPIManagedCondition(t, metav1.ConditionFalse, "Unmanaged")
+	// CRD drift is observable through the Ingress conditions, but it must not
+	// turn ClusterOperator/ingress Degraded=True and block an upgrade.
+	clusterOperator := &configv1.ClusterOperator{}
+	require.NoError(t, kclient.Get(ctx, types.NamespacedName{Name: "ingress"}, clusterOperator))
+	degraded := configv1.ConditionUnknown
+	for _, condition := range clusterOperator.Status.Conditions {
+		if condition.Type == configv1.OperatorDegraded {
+			degraded = condition.Status
+			break
+		}
+	}
+	assert.NotEqual(t, configv1.ConditionTrue, degraded, "Gateway API CRD drift must not degrade the operator")
+
+	setGatewayAPIManagementMode(ctx, t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged)
+	waitForGatewayAPIManagedCondition(ctx, t, metav1.ConditionFalse, "Unmanaged")
 
 	// Unmanaged mode removes the VAP, allowing the CRD to be restored.
 	t.Run("restore CRD compliance", func(t *testing.T) {
@@ -284,14 +301,14 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 
 		require.Eventually(t, func() bool {
 			// Re-fetch to get latest resourceVersion
-			if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+			if err := kclient.Get(ctx, crdName, crd); err != nil {
 				t.Logf("Failed to get CRD: %v", err)
 				return false
 			}
 
 			crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
 
-			if err := kclient.Update(context.Background(), crd); err != nil {
+			if err := kclient.Update(ctx, crd); err != nil {
 				t.Logf("Failed to restore CRD: %v; retrying...", err)
 				return false
 			}
@@ -300,12 +317,12 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 		}, 30*time.Second, 2*time.Second, "Failed to restore CRD")
 	})
 
-	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeManaged)
+	setGatewayAPIManagementMode(ctx, t, operatorv1alpha1.GatewayAPIManagementModeManaged)
 
 	// Verify Compliant condition becomes True again
 	t.Log("Waiting for Compliant condition to become True")
 	assert.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -330,6 +347,7 @@ func testGatewayAPIManagementModeCRDCompliance(t *testing.T) {
 // - Managed=False with reason "Unmanaged"
 // - Can modify Gateway API CRDs (no VAP protection)
 func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
+	ctx := t.Context()
 	ingress := &operatorv1alpha1.Ingress{}
 	ingressName := types.NamespacedName{Name: ingressCRName}
 
@@ -381,14 +399,14 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 
 	t.Log("Transitioning to Unmanaged mode")
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
 
 		ingress.Spec.GatewayAPI.ManagementMode = operatorv1alpha1.GatewayAPIManagementModeUnmanaged
 
-		if err := kclient.Update(context.Background(), ingress); err != nil {
+		if err := kclient.Update(ctx, ingress); err != nil {
 			t.Logf("Failed to update Ingress CR to Unmanaged: %v; retrying...", err)
 			return false
 		}
@@ -400,7 +418,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	// Verify Managed condition becomes False with reason Unmanaged
 	t.Log("Waiting for Managed condition to become False")
 	assert.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -427,7 +445,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 		vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
 		vapName := types.NamespacedName{Name: gwapiCRDVAPName}
 
-		err := kclient.Get(context.Background(), vapName, vap)
+		err := kclient.Get(ctx, vapName, vap)
 		if err != nil && errors.IsNotFound(err) {
 			t.Log("VAP successfully deleted")
 			return true
@@ -463,7 +481,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	gwc := &gatewayapiv1.GatewayClass{}
 	gwcName := types.NamespacedName{Name: "openshift-default"}
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), gwcName, gwc); err != nil {
+		if err := kclient.Get(ctx, gwcName, gwc); err != nil {
 			t.Logf("GatewayClass not found: %v", err)
 			return false
 		}
@@ -472,13 +490,41 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	}, 30*time.Second, 2*time.Second,
 		"Expected GatewayClass to still exist in Unmanaged mode")
 
+	installed := condutils.FindStatusCondition(gwc.Status.Conditions, "ControllerInstalled")
+	require.NotNil(t, installed, "GatewayClass must report the CIO-owned control-plane status")
+	assert.Equal(t, metav1.ConditionFalse, installed.Status)
+	assert.Equal(t, "Unmanaged", installed.Reason)
+
+	pausedGateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "management-mode-paused", Namespace: operatorcontroller.DefaultOperandNamespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName("openshift-default"),
+			Listeners:        []gatewayapiv1.Listener{{Name: "http", Port: 80, Protocol: "HTTP"}},
+		},
+	}
+	require.NoError(t, createWithRetryOnError(t, ctx, pausedGateway, DefaultRetryTimeout))
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), pausedGateway); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete Gateway %q: %v", pausedGateway.Name, err)
+		}
+	})
+	// Gateway labeler behavior is the observable proxy for dependent-controller inactivity.
+	assert.Never(t, func() bool {
+		current := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(ctx, types.NamespacedName{Namespace: pausedGateway.Namespace, Name: pausedGateway.Name}, current); err != nil {
+			t.Logf("failed to get paused Gateway: %v", err)
+			return false
+		}
+		return current.Labels[operatorcontroller.IstioRevLabelKey] == operatorcontroller.IstioName("").Name
+	}, 20*time.Second, 2*time.Second, "dependent controllers must not modify Gateways while Unmanaged")
+
 	// Verify we can modify a Gateway API CRD (no VAP protection)
 	t.Log("Verifying CRDs can be modified without VAP protection")
 	testCRDName := crdNames[0]
 	crdName = types.NamespacedName{Name: testCRDName}
 
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+		if err := kclient.Get(ctx, crdName, crd); err != nil {
 			t.Logf("Failed to get CRD: %v", err)
 			return false
 		}
@@ -489,7 +535,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 		}
 		crd.Annotations["test.openshift.io/unmanaged"] = "true"
 
-		if err := kclient.Update(context.Background(), crd); err != nil {
+		if err := kclient.Update(ctx, crd); err != nil {
 			t.Logf("Failed to modify CRD: %v; retrying...", err)
 			return false
 		}
@@ -505,6 +551,18 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	assertMetricValue(t, prometheusClient, unmanagedQuery, 1,
 		"Expected ingress_controller_gateway_api_management_mode{mode=\"Unmanaged\"}=1")
 
+	setGatewayAPIManagementMode(ctx, t, operatorv1alpha1.GatewayAPIManagementModeManaged)
+	waitForGatewayAPIManagedCondition(ctx, t, metav1.ConditionTrue, "ManagedByIngressOperator")
+	// Gateway labeler behavior is the observable proxy for dependent-controller recovery.
+	assert.Eventually(t, func() bool {
+		current := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(ctx, types.NamespacedName{Namespace: pausedGateway.Namespace, Name: pausedGateway.Name}, current); err != nil {
+			t.Logf("failed to get Gateway after returning to Managed: %v", err)
+			return false
+		}
+		return current.Labels[operatorcontroller.IstioRevLabelKey] == operatorcontroller.IstioName("").Name
+	}, 3*time.Minute, 5*time.Second, "dependent controllers must resume after Managed prerequisites converge")
+
 }
 
 // testGatewayAPIManagementModeTakeover verifies takeover behavior:
@@ -512,6 +570,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 // - Managed=False with reason "TakeoverBlocked"
 // - Restoring CRD compliance allows takeover
 func testGatewayAPIManagementModeTakeover(t *testing.T) {
+	ctx := t.Context()
 	ingress := &operatorv1alpha1.Ingress{}
 	ingressName := types.NamespacedName{Name: ingressCRName}
 
@@ -525,19 +584,27 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// original bundle-version so takeover can proceed.
 	t.Cleanup(func() {
 		t.Log("Cleanup: Ensuring CRD has its original bundle-version")
-		if originalBundleVersion == "" {
-			return
-		}
-		if err := kclient.Get(context.Background(), crdName, crd); err == nil {
-			if bundleVer := crd.Annotations[bundleVersionAnnotation]; bundleVer == "v0.0.0-takeover-blocked" {
-				crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
-				if err := kclient.Update(context.Background(), crd); err != nil {
-					t.Errorf("Cleanup: failed to restore CRD bundle-version: %v", err)
+		if originalBundleVersion != "" {
+			require.Eventually(t, func() bool {
+				if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+					t.Logf("Cleanup: failed to get CRD: %v", err)
+					return false
 				}
-			}
+				if bundleVer := crd.Annotations[bundleVersionAnnotation]; bundleVer == "v0.0.0-takeover-blocked" {
+					crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
+					if err := kclient.Update(context.Background(), crd); err != nil {
+						t.Logf("Cleanup: failed to restore CRD bundle-version: %v", err)
+						return false
+					}
+				}
+				return true
+			}, 30*time.Second, 2*time.Second,
+				"Cleanup: failed to restore CRD bundle-version")
 		}
 
-		// Restore Managed mode with retry
+		// Restore Managed mode regardless of whether the CRD mutation was
+		// reached. The test can fail after switching modes but before it has
+		// recorded the original bundle version.
 		t.Log("Cleanup: Transitioning back to Managed mode")
 		require.Eventually(t, func() bool {
 			if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
@@ -570,14 +637,14 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// Ensure we're in Unmanaged mode first
 	t.Log("Ensuring Unmanaged mode for takeover test")
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
 
 		if ingress.Spec.GatewayAPI.ManagementMode != operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
 			ingress.Spec.GatewayAPI.ManagementMode = operatorv1alpha1.GatewayAPIManagementModeUnmanaged
-			if err := kclient.Update(context.Background(), ingress); err != nil {
+			if err := kclient.Update(ctx, ingress); err != nil {
 				t.Logf("Failed to set Unmanaged: %v; retrying...", err)
 				return false
 			}
@@ -591,7 +658,7 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// Modify a CRD to make it non-compliant
 	t.Logf("Making CRD %s non-compliant", testCRDName)
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+		if err := kclient.Get(ctx, crdName, crd); err != nil {
 			t.Logf("Failed to get CRD: %v", err)
 			return false
 		}
@@ -604,7 +671,7 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 
 		crd.Annotations[bundleVersionAnnotation] = "v0.0.0-takeover-blocked"
 
-		if err := kclient.Update(context.Background(), crd); err != nil {
+		if err := kclient.Update(ctx, crd); err != nil {
 			t.Logf("Failed to make CRD non-compliant: %v; retrying...", err)
 			return false
 		}
@@ -616,14 +683,14 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// Try to switch to Managed mode
 	t.Log("Attempting to switch to Managed mode (should be blocked)")
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
 
 		ingress.Spec.GatewayAPI.ManagementMode = operatorv1alpha1.GatewayAPIManagementModeManaged
 
-		if err := kclient.Update(context.Background(), ingress); err != nil {
+		if err := kclient.Update(ctx, ingress); err != nil {
 			t.Logf("Failed to set Managed mode: %v; retrying...", err)
 			return false
 		}
@@ -635,7 +702,7 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// Verify takeover is blocked
 	t.Log("Verifying takeover is blocked (Managed=False, reason=TakeoverBlocked)")
 	assert.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}
@@ -668,12 +735,12 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// so deletion can leave it terminating and cannot unblock takeover.
 	t.Log("Restoring the original CRD bundle-version to allow takeover")
 	require.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+		if err := kclient.Get(ctx, crdName, crd); err != nil {
 			t.Logf("Failed to get CRD: %v; retrying...", err)
 			return false
 		}
 		crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
-		if err := kclient.Update(context.Background(), crd); err != nil {
+		if err := kclient.Update(ctx, crd); err != nil {
 			t.Logf("Failed to restore CRD bundle-version: %v; retrying...", err)
 			return false
 		}
@@ -685,7 +752,7 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// Verify takeover succeeds
 	t.Log("Verifying takeover succeeds after restoring compliance")
 	assert.Eventually(t, func() bool {
-		if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
+		if err := kclient.Get(ctx, ingressName, ingress); err != nil {
 			t.Logf("Failed to get Ingress CR: %v", err)
 			return false
 		}

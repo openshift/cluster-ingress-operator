@@ -115,10 +115,26 @@ func setControllerUninstalledCondition(conditions *[]metav1.Condition, generatio
 	})
 }
 
-// removeSailInstallConditions removes conditions that track Sail Library installation state.
+// removeSailInstallConditions removes the complete allowlist of conditions
+// written by CIO's Sail Library path. GatewayClass Accepted, SupportedVersion,
+// and any other condition are intentionally not listed here: they are owned by
+// other controllers and must survive CIO management-mode transitions.
 func removeSailInstallConditions(conditions *[]metav1.Condition) {
 	meta.RemoveStatusCondition(conditions, ControllerInstalledConditionType)
 	meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
+}
+
+// resetSailInstallConditionsForUnmanaged resets the CIO-owned condition that
+// communicates the intentional istiod teardown and removes the stale CRD
+// installation condition. It only touches the allowlist in
+// removeSailInstallConditions.
+func resetSailInstallConditionsForUnmanaged(conditions *[]metav1.Condition, generation int64) bool {
+	changed := setControllerUninstalledCondition(conditions, generation)
+	if meta.FindStatusCondition(*conditions, CRDsReadyConditionType) != nil {
+		meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
+		changed = true
+	}
+	return changed
 }
 
 func countManagedCRDs(crds []install.CRDInfo) int {

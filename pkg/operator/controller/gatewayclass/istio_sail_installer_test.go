@@ -92,6 +92,46 @@ func (i *fakeSailInstaller) Status() install.Status {
 
 func (i *fakeSailInstaller) Enqueue() {}
 
+// updateGatewayClassStatusBeforeFirstPatchWriter simulates another controller
+// updating an externally-owned GatewayClass condition between the live read
+// and the first status patch.
+type updateGatewayClassStatusBeforeFirstPatchWriter struct {
+	client.StatusWriter
+	client     client.Client
+	updated    bool
+	patchCalls int
+}
+
+func (w *updateGatewayClassStatusBeforeFirstPatchWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	w.patchCalls++
+	if !w.updated {
+		w.updated = true
+		gatewayClass := &gatewayapiv1.GatewayClass{}
+		if err := w.client.Get(ctx, client.ObjectKeyFromObject(obj), gatewayClass); err != nil {
+			return err
+		}
+		meta.SetStatusCondition(&gatewayClass.Status.Conditions, metav1.Condition{
+			Type:    "Accepted",
+			Status:  metav1.ConditionFalse,
+			Reason:  "ExternalControllerUpdate",
+			Message: "updated by another controller",
+		})
+		if err := w.StatusWriter.Update(ctx, gatewayClass); err != nil {
+			return err
+		}
+	}
+	return w.StatusWriter.Patch(ctx, obj, patch, opts...)
+}
+
+type statusWriterClient struct {
+	client.Client
+	statusWriter client.StatusWriter
+}
+
+func (c *statusWriterClient) Status() client.StatusWriter {
+	return c.statusWriter
+}
+
 // TestEnsureIstio_UninstallSail_ConcurrentSafety is a regression test for
 // a race between ensureIstio's Apply() call (driven by the gatewayclass
 // controller's own watches) and UninstallSail's Uninstall() call (driven
@@ -272,12 +312,26 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 			ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName,
 		},
 		Status: gatewayapiv1.GatewayClassStatus{
-			Conditions: []metav1.Condition{{
-				Type:    ControllerInstalledConditionType,
-				Status:  metav1.ConditionTrue,
-				Reason:  "Installed",
-				Message: "istiod installed",
-			}},
+			Conditions: []metav1.Condition{
+				{
+					Type:    ControllerInstalledConditionType,
+					Status:  metav1.ConditionTrue,
+					Reason:  "Installed",
+					Message: "istiod installed",
+				},
+				{
+					Type:    CRDsReadyConditionType,
+					Status:  metav1.ConditionTrue,
+					Reason:  "ManagedByCIO",
+					Message: "CRDs installed by cluster-ingress-operator",
+				},
+				{
+					Type:    "Accepted",
+					Status:  metav1.ConditionTrue,
+					Reason:  "Accepted",
+					Message: "owned by another controller",
+				},
+			},
 		},
 	}
 
@@ -307,6 +361,60 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 	require.NotNil(t, cond, "ControllerInstalled condition must be present")
 	assert.Equal(t, metav1.ConditionFalse, cond.Status, "ControllerInstalled must be False after uninstall")
 	assert.Equal(t, "Unmanaged", cond.Reason, "ControllerInstalled reason must be Unmanaged")
+	assert.Nil(t, meta.FindStatusCondition(got.Status.Conditions, CRDsReadyConditionType),
+		"the stale CIO-owned CRDsReady condition must be removed after uninstall")
+	accepted := meta.FindStatusCondition(got.Status.Conditions, "Accepted")
+	require.NotNil(t, accepted, "conditions owned by other controllers must be preserved")
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+}
+
+func TestMarkControllerUninstalled_RetriesAndPreservesConcurrentExternalConditions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
+
+	gwc := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "openshift-default"},
+		Spec: gatewayapiv1.GatewayClassSpec{
+			ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		},
+		Status: gatewayapiv1.GatewayClassStatus{
+			Conditions: []metav1.Condition{
+				{Type: ControllerInstalledConditionType, Status: metav1.ConditionTrue, Reason: "Installed"},
+				{Type: CRDsReadyConditionType, Status: metav1.ConditionTrue, Reason: "ManagedByCIO"},
+				{Type: "Accepted", Status: metav1.ConditionTrue, Reason: "Accepted", Message: "owned by another controller"},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(gwc).
+		WithStatusSubresource(gwc).
+		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
+			return []string{string(o.(*gatewayapiv1.GatewayClass).Spec.ControllerName)}
+		}).
+		Build()
+	statusWriter := &updateGatewayClassStatusBeforeFirstPatchWriter{StatusWriter: fakeClient.Status(), client: fakeClient}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	r := &reconciler{
+		client: &statusWriterClient{Client: fakeClient, statusWriter: statusWriter},
+		cache:  &testutil.FakeCache{Informers: &informer, Reader: fakeClient},
+	}
+
+	require.NoError(t, r.markControllerUninstalled(context.Background()))
+	assert.Equal(t, 2, statusWriter.patchCalls, "the stale patch must conflict and retry")
+
+	got := &gatewayapiv1.GatewayClass{}
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: gwc.Name}, got))
+	accepted := meta.FindStatusCondition(got.Status.Conditions, "Accepted")
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, "ExternalControllerUpdate", accepted.Reason)
+	assert.Equal(t, "updated by another controller", accepted.Message)
+	assert.Nil(t, meta.FindStatusCondition(got.Status.Conditions, CRDsReadyConditionType))
+	installed := meta.FindStatusCondition(got.Status.Conditions, ControllerInstalledConditionType)
+	require.NotNil(t, installed)
+	assert.Equal(t, metav1.ConditionFalse, installed.Status)
+	assert.Equal(t, "Unmanaged", installed.Reason)
 }
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
