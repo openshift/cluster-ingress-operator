@@ -30,10 +30,12 @@ func TestMultiHAProxyUpgradeableCondition(t *testing.T) {
 	testCases := map[string]struct {
 		haproxyVersion operatorv1.HAProxyVersion
 		expectedStatus bool
+		skip           string
 	}{
 		"should block upgrade on deprecated version": {
-			haproxyVersion: operatorv1.HAProxyVersion28,
+			haproxyVersion: "new version here",
 			expectedStatus: false,
+			skip:           "waiting for the next deprecated HAProxy version",
 		},
 		"should allow upgrade on supported version": {
 			haproxyVersion: operatorv1.HAProxyVersion32,
@@ -50,6 +52,9 @@ func TestMultiHAProxyUpgradeableCondition(t *testing.T) {
 
 	for name, test := range testCases {
 		t.Run(name, func(t *testing.T) {
+			if test.skip != "" {
+				t.Skip(test.skip)
+			}
 			name := types.NamespacedName{
 				Namespace: defaultName.Namespace,
 				Name:      names.SimpleNameGenerator.GenerateName("e2e-multi-haproxy-"),
