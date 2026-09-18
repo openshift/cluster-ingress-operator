@@ -820,11 +820,12 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 }
 
 // computeGatewayAPICRDsDegradedCondition computes the degraded condition for Gateway API CRDs.
-// It preserves the legacy behavior while the GatewayAPIManagementMode feature gate is disabled.
+// When the GatewayAPIManagementMode feature gate is enabled, unmanaged CRD
+// status is intentionally converted from the legacy ClusterOperator Degraded
+// contributor to the GatewayAPIUnmanagedCRDsFound alert. With the gate
+// disabled, this preserves the legacy Degraded behavior.
 func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{}
-	// Gateway API CRD management reports its status through the Ingress CR and
-	// must not contribute Degraded=True when the management-mode gate is enabled.
 	if state.gatewayAPIManagementModeEnabled {
 		return degradedCondition
 	}

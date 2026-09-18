@@ -1146,7 +1146,7 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			// TakeoverBlocked reason on the Ingress CR, but must never
 			// set ClusterOperator Degraded: see
 			// ingress_controller_gateway_api_unmanaged_crds and its alert.
-			description: "management gate-on: unmanaged gateway api crds do not set degraded",
+			description: "management gate-on: unmanaged gateway api crds use the alert instead of degraded",
 			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
