@@ -1042,9 +1042,10 @@ var (
 	isValidCipher = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]+$`).MatchString
 )
 
-// validateTLSSecurityProfile validates the given ingresscontroller's TLS
-// security profile. It resolves the effective profile (which may be inherited
-// from the APIServer config) and ensures it is properly configured and FIPS-compliant.
+// validateTLSSecurityProfile validates the effective TLS security profile used
+// for the given ingresscontroller's deployment. The effective profile may be
+// specified by the ingresscontroller or inherited from the APIServer config. If
+// neither specifies a profile, the Intermediate profile is used.
 func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) error {
 	var errs []error
 
@@ -1052,20 +1053,21 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 		apiConfig = &configv1.APIServer{}
 	}
 
-	// 1. Figure out which profile is in effect.
+	// Resolve the effective profile before validating it.
 	var effectiveProfile *configv1.TLSSecurityProfile
 	if hasTLSSecurityProfile(ic) {
 		effectiveProfile = ic.Spec.TLSSecurityProfile
 	} else {
 		effectiveProfile = apiConfig.Spec.TLSSecurityProfile
 	}
+	effectiveProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(effectiveProfile)
 
-	// 2. Validate the effective profile.
+	// Validate the effective profile.
 	if effectiveProfile != nil && effectiveProfile.Type == configv1.TLSProfileCustomType {
-		spec := effectiveProfile.Custom
-		if spec == nil {
+		if effectiveProfile.Custom == nil {
 			return fmt.Errorf("security profile is not defined")
 		}
+		spec := effectiveProfile.Custom
 
 		if len(spec.Ciphers) == 0 {
 			errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
@@ -1101,8 +1103,7 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 	// are non-FIPS, they would all be removed, leaving no TLS 1.3 ciphers
 	// configured. Reject such profiles with a clear error message.
 	if isFIPSEnabled {
-		resolvedSpec := tlsProfileSpecForIngressController(ic, apiConfig)
-		tls13InProfile := tlsVersion13Ciphers.Intersection(sets.NewString(resolvedSpec.Ciphers...))
+		tls13InProfile := tlsVersion13Ciphers.Intersection(sets.NewString(effectiveProfileSpec.Ciphers...))
 		if tls13InProfile.Len() > 0 && !tls13InProfile.HasAny(fipsApprovedTLS13Ciphers.UnsortedList()...) {
 			errs = append(errs, fmt.Errorf(
 				"security profile's TLS 1.3 cipher suites (%s) are not FIPS-compliant"+
