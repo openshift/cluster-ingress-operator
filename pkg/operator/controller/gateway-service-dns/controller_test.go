@@ -11,6 +11,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -370,6 +371,63 @@ func Test_gatewayListenersHostnamesChanged(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expect, gatewayListenersHostnamesChanged(tc.old, tc.new))
+		})
+	}
+}
+
+func Test_dnsPolicyForGatewayDomain(t *testing.T) {
+	dnsConfig := &configv1.DNS{Spec: configv1.DNSSpec{BaseDomain: "example.com"}}
+	infraConfig := &configv1.Infrastructure{Status: configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: configv1.AWSPlatformType}}}
+
+	gatewayWithAnnotation := func(value string) *gatewayapiv1.Gateway {
+		gateway := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gwapi-internal"}}
+		if len(value) != 0 {
+			gateway.Annotations = map[string]string{operatorcontroller.GatewayDNSManagementPolicyAnnotation: value}
+		}
+		return gateway
+	}
+
+	tests := []struct {
+		name       string
+		domain     string
+		annotation string
+		expect     iov1.DNSManagementPolicy
+	}{
+		{
+			name:       "in-cluster domain with no annotation is managed",
+			domain:     "gwapi.internal.mycluster.example.com.",
+			annotation: "",
+			expect:     iov1.ManagedDNS,
+		},
+		{
+			name:       "in-cluster domain with Unmanaged annotation is unmanaged",
+			domain:     "gwapi.internal.mycluster.example.com.",
+			annotation: string(operatorv1.UnmanagedLoadBalancerDNS),
+			expect:     iov1.UnmanagedDNS,
+		},
+		{
+			name:       "in-cluster domain with Managed annotation is still managed",
+			domain:     "gwapi.internal.mycluster.example.com.",
+			annotation: string(operatorv1.ManagedLoadBalancerDNS),
+			expect:     iov1.ManagedDNS,
+		},
+		{
+			name:       "in-cluster domain with unrecognized annotation value is still managed",
+			domain:     "gwapi.internal.mycluster.example.com.",
+			annotation: "bogus",
+			expect:     iov1.ManagedDNS,
+		},
+		{
+			name:       "out-of-cluster domain is unmanaged regardless of annotation",
+			domain:     "gwapi.internal.mycluster.unrelated.io.",
+			annotation: string(operatorv1.ManagedLoadBalancerDNS),
+			expect:     iov1.UnmanagedDNS,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := dnsPolicyForGatewayDomain(gatewayWithAnnotation(tc.annotation), tc.domain, infraConfig, dnsConfig)
+			assert.Equal(t, tc.expect, policy)
 		})
 	}
 }

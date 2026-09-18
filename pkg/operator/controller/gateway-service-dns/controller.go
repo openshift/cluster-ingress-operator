@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -69,14 +70,18 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	})
 	gatewayListenersChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec.Listeners
-			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec.Listeners
-			// A DNSRecord CR needs to be updated if, and only if,
-			// the hostname has changed (a listener's port and
-			// protocol have no bearing on the DNS record).
-			changed := gatewayListenersHostnamesChanged(old, new)
+			oldGateway := e.ObjectOld.(*gatewayapiv1.Gateway)
+			newGateway := e.ObjectNew.(*gatewayapiv1.Gateway)
+			// A DNSRecord CR needs to be updated if the hostname
+			// has changed (a listener's port and protocol have
+			// no bearing on the DNS record), or if the annotation
+			// that overrides the DNS management policy has
+			// changed.
+			hostnamesChanged := gatewayListenersHostnamesChanged(oldGateway.Spec.Listeners, newGateway.Spec.Listeners)
+			dnsPolicyAnnotationChanged := oldGateway.Annotations[operatorcontroller.GatewayDNSManagementPolicyAnnotation] != newGateway.Annotations[operatorcontroller.GatewayDNSManagementPolicyAnnotation]
+			changed := hostnamesChanged || dnsPolicyAnnotationChanged
 			if changed {
-				log.Info("Listener hostname changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+				log.Info("Listener hostname or DNS management policy annotation changed", "gateway", newGateway.Name)
 			}
 			return changed
 		},
@@ -263,14 +268,43 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
-		dnsPolicy := iov1.UnmanagedDNS
-		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
-			dnsPolicy = iov1.ManagedDNS
-		}
+		dnsPolicy := dnsPolicyForGatewayDomain(gateway, domain, infraConfig, dnsConfig)
 		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service)
 		errs = append(errs, err)
 	}
 	return errs
+}
+
+// dnsPolicyForGatewayDomain determines the DNSManagementPolicy to apply to
+// the DNSRecord for the given gateway listener domain.
+//
+// By default, this is Managed whenever dnsrecord.ManageDNSForDomain reports
+// that the domain is a subdomain of the cluster's base domain, and Unmanaged
+// otherwise -- this is the pre-existing, automatic behavior and cannot be
+// overridden to be more permissive.
+//
+// However, an operator or cluster admin can force the policy to Unmanaged
+// (even for a domain that would otherwise be Managed) by setting
+// operatorcontroller.GatewayDNSManagementPolicyAnnotation to "Unmanaged" on
+// the gateway. This mirrors how an IngressController with an Internal scope
+// sets spec.endpointPublishingStrategy.loadBalancer.dnsManagementPolicy to
+// "Unmanaged" (see the "router-internal" IngressController pattern): the
+// operator then creates no DNSRecord at all for the affected hostname, and
+// publishing that hostname into any zone (typically only the private zone)
+// becomes the responsibility of a separately-configured ExternalDNS CR.
+//
+// Setting the annotation to "Managed" is accepted but has no effect beyond
+// the default behavior, since a domain that fails ManageDNSForDomain is not
+// one that the platform can safely publish (it is not resolvable via the
+// zones defined on dns.config.openshift.io/cluster).
+func dnsPolicyForGatewayDomain(gateway *gatewayapiv1.Gateway, domain string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) iov1.DNSManagementPolicy {
+	if !dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
+		return iov1.UnmanagedDNS
+	}
+	if gateway.Annotations[operatorcontroller.GatewayDNSManagementPolicyAnnotation] == string(operatorv1.UnmanagedLoadBalancerDNS) {
+		return iov1.UnmanagedDNS
+	}
+	return iov1.ManagedDNS
 }
 
 // deleteStaleDNSRecordsForGateway deletes any DNSRecord CRs that are associated
