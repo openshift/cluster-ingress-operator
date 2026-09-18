@@ -41,7 +41,6 @@ import (
 	gatewaystatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-status"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
 	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
-	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
@@ -557,19 +556,10 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 		return err
 	}
 
-	// Set the replicas field to a non-nil value because otherwise its
-	// persisted value will be nil, which causes GETs on the /scale
-	// subresource to fail, which breaks the scaling client.  See also:
-	// https://github.com/kubernetes/kubernetes/pull/75210
-	replicas := ingress.DetermineReplicas(ingressConfig, infraConfig)
-
 	ic = &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
 			Namespace: name.Namespace,
-		},
-		Spec: operatorv1.IngressControllerSpec{
-			Replicas: &replicas,
 		},
 	}
 	if ingressConfig.Spec.LoadBalancer.Platform.Type == configv1.AWSPlatformType {
