@@ -584,19 +584,20 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	// original bundle-version so takeover can proceed.
 	t.Cleanup(func() {
 		t.Log("Cleanup: Ensuring CRD has its original bundle-version")
-		if originalBundleVersion == "" {
-			return
-		}
-		if err := kclient.Get(context.Background(), crdName, crd); err == nil {
-			if bundleVer := crd.Annotations[bundleVersionAnnotation]; bundleVer == "v0.0.0-takeover-blocked" {
-				crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
-				if err := kclient.Update(context.Background(), crd); err != nil {
-					t.Errorf("Cleanup: failed to restore CRD bundle-version: %v", err)
+		if originalBundleVersion != "" {
+			if err := kclient.Get(context.Background(), crdName, crd); err == nil {
+				if bundleVer := crd.Annotations[bundleVersionAnnotation]; bundleVer == "v0.0.0-takeover-blocked" {
+					crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
+					if err := kclient.Update(context.Background(), crd); err != nil {
+						t.Errorf("Cleanup: failed to restore CRD bundle-version: %v", err)
+					}
 				}
 			}
 		}
 
-		// Restore Managed mode with retry
+		// Restore Managed mode regardless of whether the CRD mutation was
+		// reached. The test can fail after switching modes but before it has
+		// recorded the original bundle version.
 		t.Log("Cleanup: Transitioning back to Managed mode")
 		require.Eventually(t, func() bool {
 			if err := kclient.Get(context.Background(), ingressName, ingress); err != nil {
