@@ -585,14 +585,21 @@ func testGatewayAPIManagementModeTakeover(t *testing.T) {
 	t.Cleanup(func() {
 		t.Log("Cleanup: Ensuring CRD has its original bundle-version")
 		if originalBundleVersion != "" {
-			if err := kclient.Get(context.Background(), crdName, crd); err == nil {
+			require.Eventually(t, func() bool {
+				if err := kclient.Get(context.Background(), crdName, crd); err != nil {
+					t.Logf("Cleanup: failed to get CRD: %v", err)
+					return false
+				}
 				if bundleVer := crd.Annotations[bundleVersionAnnotation]; bundleVer == "v0.0.0-takeover-blocked" {
 					crd.Annotations[bundleVersionAnnotation] = originalBundleVersion
 					if err := kclient.Update(context.Background(), crd); err != nil {
-						t.Errorf("Cleanup: failed to restore CRD bundle-version: %v", err)
+						t.Logf("Cleanup: failed to restore CRD bundle-version: %v", err)
+						return false
 					}
 				}
-			}
+				return true
+			}, 30*time.Second, 2*time.Second,
+				"Cleanup: failed to restore CRD bundle-version")
 		}
 
 		// Restore Managed mode regardless of whether the CRD mutation was
