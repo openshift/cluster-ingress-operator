@@ -269,6 +269,33 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 		dnsPolicy := dnsPolicyForGatewayDomain(gateway, domain, infraConfig, dnsConfig)
+
+		// A domain that is Unmanaged only because the annotation forces it
+		// (i.e. it would otherwise be Managed) may already have a DNSRecord
+		// published to a zone from before the annotation was set. Simply
+		// updating the DNSRecord's DNSManagementPolicy to Unmanaged does not
+		// retract any records that are already published to a zone -- only
+		// deleting the DNSRecord does that, since deletion runs the DNS
+		// provider's cleanup logic. So instead of calling EnsureDNSRecord
+		// (which would leave a stale, never-cleaned-up DNSRecord behind),
+		// delete any existing DNSRecord for the domain and skip creating a
+		// new one.
+		//
+		// This does not apply to a domain that is Unmanaged because it's
+		// out-of-cluster: such a domain is never published to any zone, so
+		// its DNSRecord (if any) is safe to leave as-is, matching the
+		// pre-existing behavior for out-of-cluster domains.
+		if dnsPolicy == iov1.UnmanagedDNS && dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
+			if haveWC, _, err := dnsrecord.CurrentDNSRecord(r.client, name); err != nil {
+				errs = append(errs, err)
+			} else if haveWC {
+				if err := dnsrecord.DeleteDNSRecord(r.client, name); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			continue
+		}
+
 		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service)
 		errs = append(errs, err)
 	}

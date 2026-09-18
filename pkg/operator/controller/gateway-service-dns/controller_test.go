@@ -243,6 +243,45 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
 		},
+		{
+			name: "gateway with in-cluster domain forced unmanaged by annotation, no existing dnsrecord",
+			existingObjects: []runtime.Object{
+				dnsConfig, infraConfig,
+				func() *gatewayapiv1.Gateway {
+					g := gw("example-gateway", l("stage-http", "*.stage.example.com", 80))
+					g.Annotations = map[string]string{
+						operatorcontroller.GatewayDNSManagementPolicyAnnotation: string(operatorv1.UnmanagedLoadBalancerDNS),
+					}
+					return g
+				}(),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate:     []client.Object{},
+			expectUpdate:     []client.Object{},
+			expectDelete:     []client.Object{},
+		},
+		{
+			name: "gateway with in-cluster domain forced unmanaged by annotation deletes a previously-published dnsrecord",
+			existingObjects: []runtime.Object{
+				dnsConfig, infraConfig,
+				func() *gatewayapiv1.Gateway {
+					g := gw("example-gateway", l("stage-http", "*.stage.example.com", 80))
+					g.Annotations = map[string]string{
+						operatorcontroller.GatewayDNSManagementPolicyAnnotation: string(operatorv1.UnmanagedLoadBalancerDNS),
+					}
+					return g
+				}(),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate:     []client.Object{},
+			expectUpdate:     []client.Object{},
+			expectDelete: []client.Object{
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
+			},
+		},
 	}
 
 	scheme := runtime.NewScheme()
