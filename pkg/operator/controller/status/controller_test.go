@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"github.com/stretchr/testify/assert"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -94,6 +95,8 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 		noNamespace                          bool
 		allIngressesAvailable                bool
 		someIngressProgressing               bool
+		externalTopologyMode                 bool
+		noIngressControllers                 bool
 		deploymentRollingOutReason           string
 		additionalDeploymentRollingOutReason string
 		reportedVersions                     versions
@@ -136,6 +139,12 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			deploymentRollingOutReason:           ingress.ReasonReplicasStabilizing,
 			additionalDeploymentRollingOutReason: ingress.ReasonDeploymentRollingOut,
 			expectProgressing:                    configv1.ConditionTrue,
+		},
+		{
+			description:          "external topology with no ingress controllers",
+			externalTopologyMode: true,
+			noIngressControllers: true,
+			expectProgressing:    configv1.ConditionFalse,
 		},
 		{
 			description:           "versions match",
@@ -240,51 +249,51 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			}
 
 			var ingresscontrollers []operatorv1.IngressController
-			ic := operatorv1.IngressController{
-				Status: operatorv1.IngressControllerStatus{
-					Conditions: []operatorv1.OperatorCondition{{
-						Type:   operatorv1.OperatorStatusTypeProgressing,
-						Status: operatorv1.ConditionFalse,
-					}},
-				},
-			}
-			if tc.someIngressProgressing {
-				ic.Status.Conditions[0].Status = operatorv1.ConditionTrue
-			}
-			if len(tc.deploymentRollingOutReason) > 0 {
-				ic.Status.Conditions = append(ic.Status.Conditions, operatorv1.OperatorCondition{
-					Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
-					Status: operatorv1.ConditionTrue,
-					Reason: tc.deploymentRollingOutReason,
-				})
-			}
-			ingresscontrollers = append(ingresscontrollers, ic)
-			if len(tc.additionalDeploymentRollingOutReason) > 0 {
-				ic2 := operatorv1.IngressController{
+			if !tc.noIngressControllers {
+				ic := operatorv1.IngressController{
 					Status: operatorv1.IngressControllerStatus{
-						Conditions: []operatorv1.OperatorCondition{
-							{
-								Type:   operatorv1.OperatorStatusTypeProgressing,
-								Status: operatorv1.ConditionFalse,
-							},
-							{
-								Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
-								Status: operatorv1.ConditionTrue,
-								Reason: tc.additionalDeploymentRollingOutReason,
-							},
-						},
+						Conditions: []operatorv1.OperatorCondition{{
+							Type:   operatorv1.OperatorStatusTypeProgressing,
+							Status: operatorv1.ConditionFalse,
+						}},
 					},
 				}
-				ingresscontrollers = append(ingresscontrollers, ic2)
+				if tc.someIngressProgressing {
+					ic.Status.Conditions[0].Status = operatorv1.ConditionTrue
+				}
+				if len(tc.deploymentRollingOutReason) > 0 {
+					ic.Status.Conditions = append(ic.Status.Conditions, operatorv1.OperatorCondition{
+						Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
+						Status: operatorv1.ConditionTrue,
+						Reason: tc.deploymentRollingOutReason,
+					})
+				}
+				ingresscontrollers = append(ingresscontrollers, ic)
+				if len(tc.additionalDeploymentRollingOutReason) > 0 {
+					ic2 := operatorv1.IngressController{
+						Status: operatorv1.IngressControllerStatus{
+							Conditions: []operatorv1.OperatorCondition{
+								{
+									Type:   operatorv1.OperatorStatusTypeProgressing,
+									Status: operatorv1.ConditionFalse,
+								},
+								{
+									Type:   ingress.IngressControllerDeploymentRollingOutConditionType,
+									Status: operatorv1.ConditionTrue,
+									Reason: tc.additionalDeploymentRollingOutReason,
+								},
+							},
+						},
+					}
+					ingresscontrollers = append(ingresscontrollers, ic2)
+				}
 			}
 
-			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2, operatorcontroller.TransitionState{})
+			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2, operatorcontroller.TransitionState{}, tc.externalTopologyMode)
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 			}
-			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
-				t.Fatalf("expected %#v, got %#v", expected, actual)
-			}
+			assert.Empty(t, cmp.Diff(expected, actual, conditionsCmpOpts...))
 		})
 	}
 }
@@ -508,6 +517,82 @@ func Test_operatorStatusesEqual(t *testing.T) {
 					},
 					{
 						Type: configv1.OperatorProgressing,
+					},
+				},
+			},
+		},
+		{
+			description: "related objects same name different group should not be equal",
+			expected:    false,
+			a: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "apps",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+				},
+			},
+			b: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "extensions",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+				},
+			},
+		},
+		{
+			description: "related objects same name different namespace should not be equal",
+			expected:    false,
+			a: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Resource:  "services",
+						Namespace: "openshift-ingress",
+						Name:      "router-default",
+					},
+				},
+			},
+			b: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Resource:  "services",
+						Namespace: "openshift-ingress-operator",
+						Name:      "router-default",
+					},
+				},
+			},
+		},
+		{
+			description: "related objects same name different order should be equal",
+			expected:    true,
+			a: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "apps",
+						Resource: "deployments",
+						Name:     "router-default",
+					},
+					{
+						Group:    "operator.openshift.io",
+						Resource: "ingresscontrollers",
+						Name:     "router-default",
+					},
+				},
+			},
+			b: configv1.ClusterOperatorStatus{
+				RelatedObjects: []configv1.ObjectReference{
+					{
+						Group:    "operator.openshift.io",
+						Resource: "ingresscontrollers",
+						Name:     "router-default",
+					},
+					{
+						Group:    "apps",
+						Resource: "deployments",
+						Name:     "router-default",
 					},
 				},
 			},
@@ -1212,6 +1297,112 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 	}
 }
 
+func Test_computeOperatorAvailableCondition(t *testing.T) {
+	testCases := []struct {
+		description          string
+		ingresses            []operatorv1.IngressController
+		externalTopologyMode bool
+		expectCondition      configv1.ClusterOperatorStatusCondition
+	}{
+		{
+			description: "no ingresscontrollers, not external topology",
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorAvailable,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressDoesNotExist",
+				Message: `The "default" ingress controller does not exist.`,
+			},
+		},
+		{
+			description:          "no ingresscontrollers, external topology mode",
+			externalTopologyMode: true,
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorAvailable,
+				Status:  configv1.ConditionTrue,
+				Reason:  "ExternalTopologyMode",
+				Message: "External topology mode is active; no default ingress controller is expected.",
+			},
+		},
+		{
+			description: "default ingresscontroller available",
+			ingresses: []operatorv1.IngressController{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "default"},
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{
+							{
+								Type:   operatorv1.IngressControllerAvailableConditionType,
+								Status: operatorv1.ConditionTrue,
+							},
+						},
+					},
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorAvailable,
+				Status:  configv1.ConditionTrue,
+				Reason:  "IngressAvailable",
+				Message: `The "default" ingress controller reports Available=True.`,
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := computeOperatorAvailableCondition(tc.ingresses, tc.externalTopologyMode)
+			assert.Empty(t, cmp.Diff(tc.expectCondition, actual))
+		})
+	}
+}
+
+func Test_computeIngressControllerDegradedCondition_ExternalTopologyMode(t *testing.T) {
+	testCases := []struct {
+		description     string
+		state           operatorState
+		expectCondition configv1.ClusterOperatorStatusCondition
+	}{
+		{
+			description: "no ingresscontrollers, external topology mode",
+			state: operatorState{
+				externalTopologyMode: true,
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Status:  configv1.ConditionFalse,
+				Reason:  "ExternalTopologyMode",
+				Message: "External topology mode is active; no default ingress controller is expected.",
+			},
+		},
+		{
+			description: "no default ingresscontroller, external topology mode",
+			state: operatorState{
+				externalTopologyMode: true,
+				IngressControllers: []operatorv1.IngressController{
+					{ObjectMeta: metav1.ObjectMeta{Name: "custom"}},
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Status:  configv1.ConditionFalse,
+				Reason:  "ExternalTopologyMode",
+				Message: "External topology mode is active; no default ingress controller is expected.",
+			},
+		},
+		{
+			description: "no ingresscontrollers, not external topology mode",
+			state:       operatorState{},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Status:  configv1.ConditionTrue,
+				Reason:  "IngressDoesNotExist",
+				Message: `The "default" ingress controller does not exist.`,
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := computeIngressControllerDegradedCondition(tc.state)
+			assert.Empty(t, cmp.Diff(tc.expectCondition, actual))
+		})
+	}
+}
+
 func sub(name, pack, version string, cioOwned bool) operatorsv1alpha1.Subscription {
 	subscription := operatorsv1alpha1.Subscription{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1375,6 +1566,7 @@ func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
 				versions, versions,
 				"v1", "ic-v1", "c-v1",
 				tc.modeTransition,
+				false,
 			)
 			if actual.Status != tc.expectProgressing {
 				t.Errorf("expected status %q, got %q", tc.expectProgressing, actual.Status)
