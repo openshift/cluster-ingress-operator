@@ -248,6 +248,7 @@ rules:
   - backendtlspolicies
   - listenersets
   - listenersets/status
+  - tlsroutes
   verbs:
   - create
   - delete
@@ -256,6 +257,7 @@ rules:
   - patch
   - update
   - watch
+  - deletecollection
 
 - apiGroups:
   - gateway.networking.k8s.io
