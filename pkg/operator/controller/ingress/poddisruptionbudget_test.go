@@ -3,6 +3,7 @@ package ingress
 import (
 	"testing"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,13 +15,22 @@ func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 	testCases := []struct {
 		description          string
 		replicas             *int32
+		infraTopology        configv1.TopologyMode
 		expectPDB            bool
 		expectMaxUnavailable intstr.IntOrString
 	}{
 		{
-			description:          "if replicas is not set, PDB should be 50%",
+			description:          "if replicas is not set and infrastructure is HighlyAvailable, PDB should be 1",
 			replicas:             nil,
+			infraTopology:        configv1.HighlyAvailableTopologyMode,
 			expectPDB:            true,
+			expectMaxUnavailable: intstr.FromInt(1),
+		},
+		{
+			description:          "if replicas is not set and infrastructure is SingleReplica, PDB should be absent",
+			replicas:             nil,
+			infraTopology:        configv1.SingleReplicaTopologyMode,
+			expectPDB:            false,
 			expectMaxUnavailable: intstr.FromString("50%"),
 		},
 		{
@@ -66,7 +76,13 @@ func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 				UID:        "1",
 				Controller: &trueVar,
 			}
-			wantPDB, pdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef)
+			ingressConfig := &configv1.Ingress{}
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: tc.infraTopology,
+				},
+			}
+			wantPDB, pdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef, ingressConfig, infraConfig)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -126,8 +142,14 @@ func Test_podDisruptionBudgetChange(t *testing.T) {
 		UID:        "1",
 		Controller: &trueVar,
 	}
+	ingressConfig := &configv1.Ingress{}
+	infraConfig := &configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+		},
+	}
 	// Get the original pdb based on the ingress controller and deployment
-	_, originalPdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef)
+	_, originalPdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef, ingressConfig, infraConfig)
 	if err != nil {
 		t.Errorf("expected setup to succeed, but there was a failure: %v", err)
 	}
@@ -135,7 +157,7 @@ func Test_podDisruptionBudgetChange(t *testing.T) {
 	for _, tc := range testCases {
 		// Change the ingress controller and check the resulting pdb
 		tc.mutate(ic)
-		_, mutatedPdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef)
+		_, mutatedPdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef, ingressConfig, infraConfig)
 		if err != nil {
 			t.Errorf("expected setup to succeed, but there was a failure: %v", err)
 		}
