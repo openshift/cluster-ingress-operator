@@ -570,6 +570,9 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 		},
 		Spec: operatorv1.IngressControllerSpec{
 			Replicas: &replicas,
+			TLSSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileModernType,
+			},
 		},
 	}
 	if ingressConfig.Spec.LoadBalancer.Platform.Type == configv1.AWSPlatformType {
