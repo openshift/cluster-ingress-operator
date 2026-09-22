@@ -1060,14 +1060,12 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 	} else {
 		effectiveProfile = apiConfig.Spec.TLSSecurityProfile
 	}
-	effectiveProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(effectiveProfile)
-
 	// Validate the effective profile.
 	if effectiveProfile != nil && effectiveProfile.Type == configv1.TLSProfileCustomType {
-		if effectiveProfile.Custom == nil {
+		spec := effectiveProfile.Custom
+		if spec == nil {
 			return fmt.Errorf("security profile is not defined")
 		}
-		spec := effectiveProfile.Custom
 
 		if len(spec.Ciphers) == 0 {
 			errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
@@ -1103,6 +1101,7 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 	// are non-FIPS, they would all be removed, leaving no TLS 1.3 ciphers
 	// configured. Reject such profiles with a clear error message.
 	if isFIPSEnabled {
+		effectiveProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(effectiveProfile)
 		tls13InProfile := tlsVersion13Ciphers.Intersection(sets.NewString(effectiveProfileSpec.Ciphers...))
 		if tls13InProfile.Len() > 0 && !tls13InProfile.HasAny(fipsApprovedTLS13Ciphers.UnsortedList()...) {
 			errs = append(errs, fmt.Errorf(
