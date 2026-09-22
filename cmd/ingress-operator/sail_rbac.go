@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/spf13/cobra"
 
 	"github.com/istio-ecosystem/sail-operator/chart"
@@ -17,6 +20,7 @@ import (
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -32,6 +36,16 @@ type renderedRBACObject struct {
 	Rules []rbacv1.PolicyRule
 }
 
+type staleManifestError struct {
+	diff string
+}
+
+func (e *staleManifestError) Error() string {
+	return fmt.Sprintf("generated RBAC is out of date; run hack/update-sail-rbac.sh to regenerate:\n%s", e.diff)
+}
+
+// NewSailRBACCommand returns the generator command used to keep the checked-in
+// no-escalate RBAC superset synchronized with Sail's vendored inputs.
 func NewSailRBACCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sail-rbac",
@@ -43,6 +57,8 @@ func NewSailRBACCommand() *cobra.Command {
 	return cmd
 }
 
+// newSailRBACGenerateCommand constructs regeneration separately so updates only
+// replace the generated manifest section and preserve its reviewed manual rules.
 func newSailRBACGenerateCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "generate <manifest-path>",
@@ -58,21 +74,36 @@ func newSailRBACGenerateCommand() *cobra.Command {
 	}
 }
 
+// newSailRBACVerifyCommand uses the production generator to detect when a Sail
+// dependency update changes the RBAC superset that avoids requiring escalate.
 func newSailRBACVerifyCommand() *cobra.Command {
+	return newSailRBACVerifyCommandWithGenerate(generateFromAllVersions)
+}
+
+// newSailRBACVerifyCommandWithGenerate permits tests to exercise stale-manifest
+// diagnostics without depending on the vendored chart contents.
+func newSailRBACVerifyCommandWithGenerate(generate func() (string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   "verify <manifest-path>",
 		Short: "Verify the manifest matches the vendored charts",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			generated, err := generateFromAllVersions()
+			generated, err := generate()
 			if err != nil {
 				return err
 			}
-			return verifyManifest(args[0], generated)
+			err = verifyManifest(args[0], generated)
+			var staleErr *staleManifestError
+			if errors.As(err, &staleErr) {
+				cmd.SilenceUsage = true
+			}
+			return err
 		},
 	}
 }
 
+// generateFromAllVersions builds the least-privilege no-escalate superset from
+// every supported vendored Istiod chart and Sail/Istio user-facing RBAC aggregation rule.
 func generateFromAllVersions() (string, error) {
 	entries, err := resources.FS.ReadDir(".")
 	if err != nil {
@@ -90,10 +121,10 @@ func generateFromAllVersions() (string, error) {
 	}
 	sort.Strings(versions)
 
-	// Render every version and collect the union of all rules.
-	// Deduplicate using JSON serialization as the key.
+	// Preserve the first encountered rule so the generated manifest remains stable
+	// while still covering every supported version and user-facing RBAC aggregation input.
 	seen := map[string]struct{}{}
-	var allRules []rbacv1.PolicyRule
+	var istiodRules []rbacv1.PolicyRule
 
 	for _, version := range versions {
 		chartPath := version + "/" + istiodChartPath
@@ -102,25 +133,27 @@ func generateFromAllVersions() (string, error) {
 			return "", fmt.Errorf("version %s: %w", version, err)
 		}
 		for _, obj := range objects {
-			allRules, err = appendUniqueRules(allRules, obj.Rules, seen)
+			istiodRules, err = appendUniqueRules(istiodRules, obj.Rules, seen)
 			if err != nil {
 				return "", err
 			}
 		}
 	}
 
-	aggregationRules, err := aggregationAdminRules()
+	userRBACRules, err := aggregationUserRBACRules()
 	if err != nil {
 		return "", err
 	}
-	allRules, err = appendUniqueRules(allRules, aggregationRules, seen)
+	userRBACRules, err = appendUniqueRules(nil, userRBACRules, seen)
 	if err != nil {
 		return "", err
 	}
 
-	return renderRules(versions, allRules)
+	return renderRules(versions, istiodRules, userRBACRules)
 }
 
+// appendUniqueRules preserves first-seen order while removing equivalent rules
+// across chart versions and sources, which makes generated diffs reproducible.
 func appendUniqueRules(allRules, rules []rbacv1.PolicyRule, seen map[string]struct{}) ([]rbacv1.PolicyRule, error) {
 	for _, rule := range rules {
 		key, err := json.Marshal(rule)
@@ -135,7 +168,10 @@ func appendUniqueRules(allRules, rules []rbacv1.PolicyRule, seen map[string]stru
 	return allRules, nil
 }
 
-func aggregationAdminRules() ([]rbacv1.PolicyRule, error) {
+// aggregationUserRBACRules derives the rules for Sail Library, which uses Kubernetes RBAC aggregation labels (rbac.authorization.k8s.io/aggregate-to-*)
+// to add user-facing view, edit, and admin permissions for Sail Operator CRDs.
+// This is the standard way to ship user-facing RBAC with CRDs, and cluster-ingress-operator installs those CRDs when OSSM has not already installed them.
+func aggregationUserRBACRules() ([]rbacv1.PolicyRule, error) {
 	entries, err := fs.ReadDir(chart.CRDsFS, ".")
 	if err != nil {
 		return nil, fmt.Errorf("reading Sail CRDs: %w", err)
@@ -174,6 +210,8 @@ func aggregationAdminRules() ([]rbacv1.PolicyRule, error) {
 	return rules, nil
 }
 
+// renderAndExtract renders one supported Istiod chart with the same defaults the
+// library uses, so the generated superset tracks the roles it will create.
 func renderAndExtract(chartPath string) ([]renderedRBACObject, error) {
 	values := install.GatewayAPIDefaults(renderNamespace)
 	helmValues := helm.FromValues(values)
@@ -183,12 +221,16 @@ func renderAndExtract(chartPath string) ([]renderedRBACObject, error) {
 		return nil, fmt.Errorf("rendering chart: %w", err)
 	}
 
-	// Sort template names for deterministic output
+	return extractRenderedRBACObjects(rendered)
+}
+
+// extractRenderedRBACObjects selects RBAC by object kind rather than template
+// filename, so upstream template renames cannot silently omit permissions.
+func extractRenderedRBACObjects(rendered map[string]string) ([]renderedRBACObject, error) {
+	// Sort template names for deterministic output.
 	var templateNames []string
 	for name := range rendered {
-		if isRBACTemplate(name) {
-			templateNames = append(templateNames, name)
-		}
+		templateNames = append(templateNames, name)
 	}
 	sort.Strings(templateNames)
 
@@ -207,26 +249,34 @@ func renderAndExtract(chartPath string) ([]renderedRBACObject, error) {
 	return objects, nil
 }
 
-func isRBACTemplate(name string) bool {
-	base := name[strings.LastIndex(name, "/")+1:]
-	return (strings.Contains(base, "clusterrole") && !strings.Contains(base, "binding")) ||
-		base == "role.yaml"
-}
-
+// extractRBACObjects decodes multi-document Helm output and retains only roles,
+// because bindings grant no permissions to include in the no-escalate superset.
 func extractRBACObjects(content string) ([]renderedRBACObject, error) {
 	var objects []renderedRBACObject
-	for _, doc := range strings.Split(content, "---") {
-		doc = strings.TrimSpace(doc)
-		if doc == "" {
+	decoder := k8syaml.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096)
+	for {
+		var object any
+		if err := decoder.Decode(&object); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		metadata, ok := object.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := metadata["kind"].(string)
+		if kind != "ClusterRole" && kind != "Role" {
 			continue
 		}
 
 		var cr rbacv1.ClusterRole
-		if err := sigsyaml.Unmarshal([]byte(doc), &cr); err != nil {
+		data, err := json.Marshal(metadata)
+		if err != nil {
 			return nil, err
 		}
-		if cr.Kind != "ClusterRole" && cr.Kind != "Role" {
-			continue
+		if err := json.Unmarshal(data, &cr); err != nil {
+			return nil, err
 		}
 
 		objects = append(objects, renderedRBACObject{
@@ -237,19 +287,37 @@ func extractRBACObjects(content string) ([]renderedRBACObject, error) {
 	return objects, nil
 }
 
-func renderRules(versions []string, rules []rbacv1.PolicyRule) (string, error) {
+// renderRules labels each generated source so reviewers can distinguish Istiod
+// runtime permissions from the Sail/Istio user-facing RBAC aggregation rules.
+func renderRules(versions []string, istiodRules, userRBACAggregationRules []rbacv1.PolicyRule) (string, error) {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "# Union of Sail Library RBAC across versions: %s\n", strings.Join(versions, ", "))
+	fmt.Fprintln(&sb, "# --- Istiod runtime RBAC (generated) ---")
+	fmt.Fprintln(&sb, "# Source: every supported vendored Istiod chart at v*/charts/istiod.")
+	fmt.Fprintf(&sb, "# Union across supported versions: %s\n", strings.Join(versions, ", "))
 
-	out, err := sigsyaml.Marshal(rules)
+	out, err := sigsyaml.Marshal(istiodRules)
 	if err != nil {
-		return "", fmt.Errorf("marshaling rules: %w", err)
+		return "", fmt.Errorf("marshaling Istiod rules: %w", err)
+	}
+	sb.Write(out)
+	sb.WriteByte('\n')
+
+	fmt.Fprintln(&sb, "# --- Sail/Istio user-facing RBAC aggregation (generated) ---")
+	fmt.Fprintln(&sb, "# Source: Sail Library CRDs.")
+	fmt.Fprintln(&sb, "# Sail Library uses Kubernetes RBAC aggregation labels (rbac.authorization.k8s.io/aggregate-to-*) to add user-facing view, edit, and admin permissions for Sail Operator CRDs.")
+	fmt.Fprintln(&sb, "# This is the standard way to ship user-facing RBAC with CRDs, and cluster-ingress-operator installs those CRDs when OSSM has not already installed them.")
+
+	out, err = sigsyaml.Marshal(userRBACAggregationRules)
+	if err != nil {
+		return "", fmt.Errorf("marshaling user-facing RBAC aggregation rules: %w", err)
 	}
 	sb.Write(out)
 
 	return sb.String(), nil
 }
 
+// writeManifest replaces only the generated tail so manually curated Sail
+// operational RBAC and its reviewer-facing explanation survive regeneration.
 func writeManifest(manifestPath string, generated string) error {
 	existing, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -265,6 +333,8 @@ func writeManifest(manifestPath string, generated string) error {
 	return os.WriteFile(manifestPath, []byte(header+generatedMarker+"\n\n"+generated), 0640)
 }
 
+// verifyManifest compares the generated tail rather than the whole manifest so
+// reviewers get a focused diff when vendored Sail inputs change required RBAC.
 func verifyManifest(manifestPath string, generated string) error {
 	existing, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -280,7 +350,17 @@ func verifyManifest(manifestPath string, generated string) error {
 	expectedGenerated := strings.TrimSpace(generated)
 
 	if existingGenerated != expectedGenerated {
-		return fmt.Errorf("generated RBAC is out of date; run hack/update-sail-rbac.sh to regenerate")
+		diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+			A:        difflib.SplitLines(existingGenerated + "\n"),
+			B:        difflib.SplitLines(expectedGenerated + "\n"),
+			FromFile: "checked-in generated manifest section",
+			ToFile:   "newly rendered expected section",
+			Context:  3,
+		})
+		if err != nil {
+			return fmt.Errorf("generating generated RBAC diff: %w", err)
+		}
+		return &staleManifestError{diff: diff}
 	}
 
 	fmt.Println("Sail RBAC manifest is up to date.")
