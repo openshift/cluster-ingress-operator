@@ -26,7 +26,7 @@ const (
 )
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
-func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *configv1.TLSProfileSpec) (bool, *appsv1.DaemonSet, error) {
+func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *configv1.TLSProfileSpec, customTolerations []corev1.Toleration) (bool, *appsv1.DaemonSet, error) {
 	// Attempt to read the canary serving cert secret and compute a content hash.
 	// If the secret is missing or incomplete, proceed without the annotation but
 	// surface a log entry so operators can investigate.
@@ -46,7 +46,7 @@ func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *
 		}
 	}
 
-	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash, tlsProfileSpec)
+	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash, tlsProfileSpec, customTolerations)
 	haveDs, current, err := r.currentCanaryDaemonSet(ctx)
 	if err != nil {
 		return false, nil, err
@@ -133,7 +133,7 @@ func (r *reconciler) updateCanaryDaemonSet(ctx context.Context, current, desired
 
 // desiredCanaryDaemonSet returns the desired canary daemonset read in
 // from manifests
-func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec *configv1.TLSProfileSpec) *appsv1.DaemonSet {
+func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec *configv1.TLSProfileSpec, customTolerations []corev1.Toleration) *appsv1.DaemonSet {
 	daemonset := manifests.CanaryDaemonSet()
 	name := controller.CanaryDaemonSetName()
 	daemonset.Name = name.Name
@@ -195,7 +195,30 @@ func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec 
 		daemonset.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = certHash
 	}
 
+	daemonset.Spec.Template.Spec.Tolerations = mergeTolerationsWithDedup(daemonset.Spec.Template.Spec.Tolerations, customTolerations)
+
 	return daemonset
+}
+
+// mergeTolerationsWithDedup returns the base tolerations with any custom tolerations
+// appended that are not already present, using cmpTolerations for equivalence.
+// The base tolerations are always preserved as-is.
+func mergeTolerationsWithDedup(base, custom []corev1.Toleration) []corev1.Toleration {
+	merged := make([]corev1.Toleration, len(base))
+	copy(merged, base)
+	for _, c := range custom {
+		found := false
+		for _, b := range merged {
+			if cmpTolerations(b, c) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, c)
+		}
+	}
+	return merged
 }
 
 // canaryDaemonSetChanged returns true if current and expected differ by the pod template's
