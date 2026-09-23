@@ -29,7 +29,7 @@ echo "All gatewayclass status:"
 oc get gatewayclass -A
 
 CLONE_DIR=$(mktemp -d)
-cd "${CLONE_DIR}"
+cd "${CLONE_DIR}" 
 
 # find the branch of gateway-api repo
 RELEASE_VERSION=$(\grep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
