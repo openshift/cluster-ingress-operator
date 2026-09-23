@@ -1060,6 +1060,7 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 	} else {
 		effectiveProfile = apiConfig.Spec.TLSSecurityProfile
 	}
+
 	// 2. Validate the effective profile.
 	if effectiveProfile != nil && effectiveProfile.Type == configv1.TLSProfileCustomType {
 		spec := effectiveProfile.Custom
