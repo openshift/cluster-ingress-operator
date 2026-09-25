@@ -66,7 +66,7 @@ func getSpecSecurityGroups(ic *operatorv1.IngressController) []operatorv1.Securi
 func (c *clients) waitForStatusMatchesSpec(ctx context.Context, name string, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
 		ic := &operatorv1.IngressController{}
-		if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: icNamespace, Name: name}, ic); err != nil {
+		if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: OperatorNamespace, Name: name}, ic); err != nil {
 			return false, nil
 		}
 		return securityGroupsEqual(getSpecSecurityGroups(ic), getStatusSecurityGroups(ic)), nil
@@ -97,7 +97,7 @@ func securityGroupsEqual(a, b []operatorv1.SecurityGroupID) bool {
 func (c *clients) updateSecurityGroups(ctx context.Context, name string, securityGroups []operatorv1.SecurityGroupID, autoDelete bool, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		ic := &operatorv1.IngressController{}
-		if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: icNamespace, Name: name}, ic); err != nil {
+		if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: OperatorNamespace, Name: name}, ic); err != nil {
 			return false, nil
 		}
 		eps := ic.Spec.EndpointPublishingStrategy
