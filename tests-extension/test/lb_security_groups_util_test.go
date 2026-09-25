@@ -1,10 +1,24 @@
 package test
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type getClient struct {
+	crclient.Client
+	get func(context.Context, crclient.ObjectKey, crclient.Object, ...crclient.GetOption) error
+}
+
+func (c *getClient) Get(ctx context.Context, key crclient.ObjectKey, obj crclient.Object, opts ...crclient.GetOption) error {
+	return c.get(ctx, key, obj, opts...)
+}
 
 func TestSecurityGroupsConverged(t *testing.T) {
 	t.Parallel()
@@ -94,4 +108,67 @@ func TestSecurityGroupsConverged(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWaitForSecurityGroupsConvergedRetriesGetErrors(t *testing.T) {
+	const sg operatorv1.SecurityGroupID = "sg-11111111"
+
+	converged := newNLBIngressController("test", "test.example.com", []operatorv1.SecurityGroupID{sg})
+	converged.Generation = 1
+	converged.Status.ObservedGeneration = 1
+	converged.Status.EndpointPublishingStrategy = converged.Spec.EndpointPublishingStrategy
+
+	t.Run("retries read errors until convergence", func(t *testing.T) {
+		readErr := errors.New("transient read failure")
+		getCalls := 0
+		client := &getClient{
+			get: func(_ context.Context, _ crclient.ObjectKey, obj crclient.Object, _ ...crclient.GetOption) error {
+				getCalls++
+				if getCalls < 3 {
+					return readErr
+				}
+				converged.DeepCopyInto(obj.(*operatorv1.IngressController))
+				return nil
+			},
+		}
+
+		c := &clients{client: client}
+		err := c.waitForSecurityGroupsConvergedWithInterval(context.Background(), "test", []operatorv1.SecurityGroupID{sg}, time.Millisecond, 100*time.Millisecond)
+		if err != nil {
+			t.Fatalf("waitForSecurityGroupsConvergedWithInterval() error = %v", err)
+		}
+		if getCalls != 3 {
+			t.Fatalf("waitForSecurityGroupsConvergedWithInterval() Get calls = %d, want 3", getCalls)
+		}
+	})
+
+	t.Run("surfaces persistent read error after retries", func(t *testing.T) {
+		firstReadErr := errors.New("first read failure")
+		latestReadErr := errors.New("latest read failure")
+		getCalls := 0
+		client := &getClient{
+			get: func(_ context.Context, _ crclient.ObjectKey, _ crclient.Object, _ ...crclient.GetOption) error {
+				getCalls++
+				if getCalls == 1 {
+					return firstReadErr
+				}
+				return latestReadErr
+			},
+		}
+
+		c := &clients{client: client}
+		err := c.waitForSecurityGroupsConvergedWithInterval(context.Background(), "test", []operatorv1.SecurityGroupID{sg}, time.Millisecond, 20*time.Millisecond)
+		if getCalls < 2 {
+			t.Fatalf("waitForSecurityGroupsConvergedWithInterval() Get calls = %d, want at least 2", getCalls)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("waitForSecurityGroupsConvergedWithInterval() error = %v, want context deadline exceeded", err)
+		}
+		if !errors.Is(err, latestReadErr) {
+			t.Errorf("waitForSecurityGroupsConvergedWithInterval() error = %v, want latest read error", err)
+		}
+		if errors.Is(err, firstReadErr) {
+			t.Errorf("waitForSecurityGroupsConvergedWithInterval() error = %v, unexpectedly retained first read error", err)
+		}
+	})
 }

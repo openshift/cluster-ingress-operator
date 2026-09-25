@@ -76,13 +76,25 @@ func (c *clients) waitForStatusMatchesSpec(ctx context.Context, name string, tim
 // waitForSecurityGroupsConverged polls until the IngressController has observed its
 // current generation and its spec and status both report the expected security groups.
 func (c *clients) waitForSecurityGroupsConverged(ctx context.Context, name string, expected []operatorv1.SecurityGroupID, timeout time.Duration) error {
-	return wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+	return c.waitForSecurityGroupsConvergedWithInterval(ctx, name, expected, 10*time.Second, timeout)
+}
+
+// waitForSecurityGroupsConvergedWithInterval allows unit tests to use a short
+// polling interval while preserving the production interval above.
+func (c *clients) waitForSecurityGroupsConvergedWithInterval(ctx context.Context, name string, expected []operatorv1.SecurityGroupID, interval, timeout time.Duration) error {
+	var latestGetErr error
+	pollErr := wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
 		ic := &operatorv1.IngressController{}
-		if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: icNamespace, Name: name}, ic); err != nil {
+		latestGetErr = c.client.Get(ctx, crclient.ObjectKey{Namespace: icNamespace, Name: name}, ic)
+		if latestGetErr != nil {
 			return false, nil
 		}
 		return securityGroupsConverged(ic, expected), nil
 	})
+	if pollErr != nil && latestGetErr != nil {
+		return fmt.Errorf("polling for ingresscontroller %s/%s security groups: %w (latest read error: %w)", icNamespace, name, pollErr, latestGetErr)
+	}
+	return pollErr
 }
 
 // securityGroupsConverged reports whether the IngressController has observed its
