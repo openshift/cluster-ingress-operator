@@ -73,6 +73,26 @@ func (c *clients) waitForStatusMatchesSpec(ctx context.Context, name string, tim
 	})
 }
 
+// waitForSecurityGroupsConverged polls until the IngressController has observed its
+// current generation and its spec and status both report the expected security groups.
+func (c *clients) waitForSecurityGroupsConverged(ctx context.Context, name string, expected []operatorv1.SecurityGroupID, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+		ic := &operatorv1.IngressController{}
+		if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: icNamespace, Name: name}, ic); err != nil {
+			return false, nil
+		}
+		return securityGroupsConverged(ic, expected), nil
+	})
+}
+
+// securityGroupsConverged reports whether the IngressController has observed its
+// current generation and its spec and status both report the expected security groups.
+func securityGroupsConverged(ic *operatorv1.IngressController, expected []operatorv1.SecurityGroupID) bool {
+	return ic.Generation == ic.Status.ObservedGeneration &&
+		securityGroupsEqual(expected, getSpecSecurityGroups(ic)) &&
+		securityGroupsEqual(expected, getStatusSecurityGroups(ic))
+}
+
 // securityGroupsEqual compares two SecurityGroupID slices as multisets, treating nil and empty as equal.
 func securityGroupsEqual(a, b []operatorv1.SecurityGroupID) bool {
 	if len(a) != len(b) {
