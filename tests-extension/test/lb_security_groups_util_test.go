@@ -7,6 +7,8 @@ import (
 )
 
 func TestSecurityGroupsConverged(t *testing.T) {
+	t.Parallel()
+
 	const (
 		sg1 operatorv1.SecurityGroupID = "sg-11111111"
 		sg2 operatorv1.SecurityGroupID = "sg-22222222"
@@ -66,10 +68,21 @@ func TestSecurityGroupsConverged(t *testing.T) {
 			expectedSecurityGroups: []operatorv1.SecurityGroupID{sg1, sg2},
 			want:                   true,
 		},
+		{
+			name:                   "security group multiplicity differs",
+			generation:             1,
+			observedGeneration:     1,
+			specSecurityGroups:     []operatorv1.SecurityGroupID{sg1, sg1, sg2},
+			statusSecurityGroups:   []operatorv1.SecurityGroupID{sg1, sg1, sg2},
+			expectedSecurityGroups: []operatorv1.SecurityGroupID{sg1, sg2, sg2},
+			want:                   false,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			ic := newNLBIngressController("test", "test.example.com", tc.specSecurityGroups)
 			status := newNLBIngressController("test", "test.example.com", tc.statusSecurityGroups)
 			ic.Generation = tc.generation
