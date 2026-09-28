@@ -98,6 +98,8 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurit
 		})
 
 		g.It("effectuates an update to the security groups", func(ctx context.Context) {
+			o.Expect(cl.waitForLBProvisioned(ctx, icName, lbProvisionTimeout)).To(o.Succeed(), "LB service was not provisioned")
+
 			var err error
 			sgID2, err = createSecurityGroup(ctx, ec2Client, clusterName, vpcID)
 			o.Expect(err).NotTo(o.HaveOccurred(), "failed to create second security group")
@@ -105,7 +107,6 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurit
 			// Recreating the Service is what propagates an updated securityGroups list to the annotation.
 			updated := []operatorv1.SecurityGroupID{operatorv1.SecurityGroupID(sgID), operatorv1.SecurityGroupID(sgID2)}
 			o.Expect(cl.updateSecurityGroups(ctx, icName, updated, false, updateTimeout)).To(o.Succeed(), "failed to update securityGroups")
-			o.Expect(cl.waitForICCondition(ctx, icName, loadBalancerProgressingConditionType, operatorv1.ConditionTrue, conditionTimeout)).To(o.Succeed())
 			o.Expect(cl.recreateLBService(ctx, icName, conditionTimeout)).To(o.Succeed(), "failed to recreate LB service")
 
 			o.Expect(cl.waitForLBAnnotation(ctx, icName, awsLBSecurityGroupsAnnotation, true, joinSecurityGroups(updated, ","), annotationTimeout)).To(o.Succeed())
@@ -114,6 +115,7 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurit
 		})
 
 		g.It("removes the security groups using the auto-delete-load-balancer annotation", func(ctx context.Context) {
+			o.Expect(cl.waitForLBProvisioned(ctx, icName, lbProvisionTimeout)).To(o.Succeed(), "LB service was not provisioned")
 			o.Expect(cl.updateSecurityGroups(ctx, icName, nil, true, updateTimeout)).To(o.Succeed(), "failed to remove securityGroups")
 
 			o.Expect(cl.waitForLBAnnotation(ctx, icName, awsLBSecurityGroupsAnnotation, false, "", annotationTimeout)).To(o.Succeed(), "security groups annotation not removed")
@@ -121,6 +123,7 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurit
 		})
 
 		g.It("reflects the effective security groups in the IngressController status", func(ctx context.Context) {
+			o.Expect(cl.waitForLBProvisioned(ctx, icName, lbProvisionTimeout)).To(o.Succeed(), "LB service was not provisioned")
 			o.Expect(cl.waitForStatusMatchesSpec(ctx, icName, conditionTimeout)).To(o.Succeed(), "status securityGroups did not match spec after removal")
 		})
 	})
