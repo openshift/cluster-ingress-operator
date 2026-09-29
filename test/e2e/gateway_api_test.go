@@ -1641,7 +1641,7 @@ func testGatewayAPIListenerSetIgnored(t *testing.T) {
 
 }
 
-// testTLSRouteDNS tests that TLSRoute can be successfuly created and tested through DNS.
+// testTLSRouteDNS tests that TLSRoute can be successfuly created and tested by using its assigned DNS name.
 func testTLSRouteDNS(t *testing.T) {
 	// Create a test namespace that cleans itself up and sets up its own service account and role binding.
 	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-"))
@@ -1665,12 +1665,10 @@ func testTLSRouteDNS(t *testing.T) {
 	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "tls", 443, 8443)
 	if err = createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout) })
 
 	gateway := buildTLSGateway(gatewayName, operatorcontroller.DefaultOperandNamespace, gatewayClass.Name, allNamespaces, domain)
 	if err = createOrGetWithRetry(t, context.Background(), gateway, DefaultRetryTimeout); err != nil {

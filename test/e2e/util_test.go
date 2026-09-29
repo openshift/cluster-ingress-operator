@@ -104,7 +104,8 @@ func buildTLSPod(name, namespace string, secret string) *corev1.Pod {
 			Containers: []corev1.Container{
 				{
 					// this sets up a minimal HTTPS server using socat which responds to any request with a
-					// 200OK. This can be used to test DNS, TLS passthrough and route connectivity
+					// 200OK. This can be used to test DNS, TLS passthrough and route connectivity by listening
+					// for TLS connections, completes a TLS handshake and runs the handler script
 					Command: []string{"/bin/bash", "-c", `
 					cat > /tmp/handler.sh <<- 'SCRIPT'
 					#!/bin/bash

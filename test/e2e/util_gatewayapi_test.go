@@ -346,7 +346,7 @@ func buildGateway(name, namespace, gcname, fromNs, domain string) *gatewayapiv1.
 	}
 }
 
-// buildGateway initializes the Gateway and returns its address.
+// builTLSGateway initializes the Gateway and returns its address.
 func buildTLSGateway(name, namespace, gcname, fromNs, domain string) *gatewayapiv1.Gateway {
 	hostname := gatewayapiv1.Hostname("*." + domain)
 	fromNamespace := gatewayapiv1.FromNamespaces(fromNs)
@@ -1312,7 +1312,7 @@ func assertRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.
 }
 
 func getRouteResponse(client *http.Client, url string) (int, http.Header, string, error) {
-	// Send the HTTP request.
+	// Send the HTTP/S request.
 	response, err := client.Get(url)
 	if err != nil {
 		return 0, nil, "", fmt.Errorf("GET %s failed: %w", url, err)
