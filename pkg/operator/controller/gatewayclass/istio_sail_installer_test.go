@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/resources"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -64,6 +65,17 @@ func (i *fakeSailInstaller) Status() install.Status {
 }
 
 func (i *fakeSailInstaller) Enqueue() {}
+
+func TestBuildInstallerOptionsResolvesIstioVersionAlias(t *testing.T) {
+	reconciler := &reconciler{
+		config: Config{OperandNamespace: "openshift-ingress"},
+	}
+
+	opts, err := reconciler.buildInstallerOptions(false, "v1.28-latest", nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, "v1.28.10", opts.Version)
+	assert.NoError(t, install.ValidateVersion(resources.FS, opts.Version))
+}
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 	crd := func(name string, labels map[string]string) *apiextensionsv1.CustomResourceDefinition {
