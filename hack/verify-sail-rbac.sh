@@ -8,6 +8,13 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${REPO_ROOT}/manifests/00-cluster-role-sail-library.yaml"
+STDERR_FILE="$(mktemp)"
+trap 'rm -f "${STDERR_FILE}"' EXIT
 
-echo "Verifying Sail RBAC against vendored Istio charts..."
-go run "${REPO_ROOT}/cmd/ingress-operator" sail-rbac verify "${MANIFEST}"
+if go run "${REPO_ROOT}/cmd/ingress-operator" sail-rbac verify "${MANIFEST}" >/dev/null 2>"${STDERR_FILE}"; then
+  exit 0
+else
+  status=$?
+  cat "${STDERR_FILE}" >&2
+  exit "${status}"
+fi
