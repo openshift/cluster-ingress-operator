@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,9 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIDNS", testGatewayAPIDNS)
 		t.Run("testGatewayAPIDNSListenerUpdate", testGatewayAPIDNSListenerUpdate)
 		t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
+		t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
+		t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
+
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
 	}
@@ -825,6 +829,223 @@ func testGatewayAPIDNSListenerWithNoHostname(t *testing.T) {
 		return false, nil
 	})
 	t.Logf("Confirmed no DNSRecord created for gateway listener with no hostname.")
+}
+
+func testGatewayAPIInfrastructureAnnotations(t *testing.T) {
+	// This test uses AWS-specific annotations, so skip on other platforms
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("Skipping test: platform status is nil")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("Skipping test on platform %q: test is specific to AWS", infraConfig.Status.PlatformStatus.Type)
+	}
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-infra-annotations"
+
+	// Create a gateway with infrastructure annotations
+	// Use a unique wildcard hostname to avoid conflicts with other gateways
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Infrastructure: &gatewayapiv1.GatewayInfrastructure{
+				Annotations: map[gatewayapiv1.AnnotationKey]gatewayapiv1.AnnotationValue{
+					"service.beta.kubernetes.io/aws-load-balancer-internal": "true",
+				},
+			},
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.infra-annotations.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+
+	t.Logf("Creating gateway %s with infrastructure annotations...", gatewayName)
+	if err := createWithRetryOnError(t, context.Background(), gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), gateway); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("Failed to delete gateway %q: %v", gateway.Name, err)
+		}
+	})
+
+	// Wait for the gateway to be accepted and programmed
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to accept/program gateway %s: %v", gatewayName, err)
+	}
+
+	// Wait for the service to be created and verify it has the expected annotation
+	// Use label selectors to find the service (same approach as the gateway-service-dns controller)
+	// Istio converts the controller name "openshift.io/gateway-controller/v1" to the label value
+	// "openshift.io-gateway-controller-v1" by replacing slashes with dashes
+	managedLabelValue := strings.ReplaceAll(operatorcontroller.OpenShiftGatewayClassControllerName, "/", "-")
+	interval, timeout := 5*time.Second, 3*time.Minute
+	t.Logf("Polling for up to %v to verify that service for gateway %q has the expected annotation...", timeout, gatewayName)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
+		// List services with the gateway labels
+		var services corev1.ServiceList
+		listOpts := []client.ListOption{
+			client.MatchingLabels{
+				"gateway.istio.io/managed":               managedLabelValue,
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
+			client.InNamespace(gateway.Namespace),
+		}
+		if err := kclient.List(context, &services, listOpts...); err != nil {
+			t.Logf("Failed to list services for gateway %s: %v; retrying...", gatewayName, err)
+			return false, nil
+		}
+
+		if len(services.Items) == 0 {
+			t.Logf("No services found for gateway %s yet; retrying...", gatewayName)
+			return false, nil
+		}
+
+		if len(services.Items) > 1 {
+			t.Fatalf("Expected 1 service for gateway %s, found %d", gatewayName, len(services.Items))
+		}
+
+		service := services.Items[0]
+
+		// Check if the annotation is present on the service
+		annotationKey := "service.beta.kubernetes.io/aws-load-balancer-internal"
+		if value, ok := service.Annotations[annotationKey]; ok {
+			if value == "true" {
+				t.Logf("Found expected annotation %s=%s on service %s", annotationKey, value, service.Name)
+				return true, nil
+			}
+			t.Logf("Service %s has annotation %s but value is %q, expected %q; retrying...", service.Name, annotationKey, value, "true")
+			return false, nil
+		}
+
+		t.Logf("Service %s does not have annotation %s yet; retrying...", service.Name, annotationKey)
+		return false, nil
+	}); err != nil {
+		t.Fatalf("Failed to observe the expected annotation on service for gateway %s: %v", gatewayName, err)
+	}
+
+	t.Logf("Successfully verified that infrastructure annotation was propagated to service for gateway %s", gatewayName)
+}
+
+func testGatewayAPIInternalLoadBalancer(t *testing.T) {
+	ctx := context.Background()
+	platform := infraConfig.Status.PlatformStatus.Type
+
+	supportedPlatforms := map[configv1.PlatformType]map[gatewayapiv1.AnnotationKey]gatewayapiv1.AnnotationValue{
+		configv1.AWSPlatformType: {
+			"service.beta.kubernetes.io/aws-load-balancer-internal": "true",
+		},
+		configv1.AzurePlatformType: {
+			"service.beta.kubernetes.io/azure-load-balancer-internal": "true",
+		},
+		configv1.GCPPlatformType: {
+			"cloud.google.com/load-balancer-type": "Internal",
+		},
+	}
+
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("Test is not supported on platform %q, skipping...", platform)
+	}
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-internal-lb"
+
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Infrastructure: &gatewayapiv1.GatewayInfrastructure{
+				Annotations: supportedPlatforms[platform],
+			},
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.internal-lb.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+
+	// create gateway and wait for it to be programmed
+	t.Logf("Creating gateway %s", gatewayName)
+	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(ctx, gateway); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("Failed to delete gateway %v: %v", gatewayName, err)
+			}
+		}
+	})
+
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to program gateway %s: %v", gatewayName, err)
+	}
+
+	lbService := &corev1.Service{}
+	var hostname string
+	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
+
+		if err := kclient.Get(ctx, operatorcontroller.LoadBalancerServiceNameFromGatewayName(gatewayName), lbService); err != nil {
+			t.Logf("Unable to get the LoadBalancer service, retrying...")
+			return false, nil
+		}
+		switch {
+		case platform == configv1.AWSPlatformType:
+			if len(lbService.Status.LoadBalancer.Ingress) > 0 {
+				hostname = lbService.Status.LoadBalancer.Ingress[0].Hostname
+			}
+			if strings.Contains(hostname, "internal") {
+				t.Logf("The gateway %s, has successfully created an internal LoadBalancer service on the %s platform.", gatewayName, platform)
+				return true, nil
+			}
+			t.Logf("The hostname is empty or does not contain the correct substring, retrying...")
+			return false, nil
+		case platform == configv1.AzurePlatformType || platform == configv1.GCPPlatformType:
+			var ip netip.Addr
+			var err error
+			if len(lbService.Status.LoadBalancer.Ingress) > 0 {
+				hostname = lbService.Status.LoadBalancer.Ingress[0].IP
+			}
+			ip, err = netip.ParseAddr(hostname)
+			if err != nil {
+				t.Logf("The hostname does not have a valid IP Address, retrying...")
+				return false, nil
+			}
+			if ip.IsPrivate() {
+				t.Logf("The gateway %s, has successfully created an internal LoadBalancer service on the %s platform.", gatewayName, platform)
+				return true, nil
+			} else {
+				t.Errorf("The gateway %s, does not have a private IP address on the LoadBalancer service", gatewayName)
+			}
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf("The gateway %s, has failed to create an internal LoadBalancer service on the %s platform.", gatewayName, platform)
+	}
 }
 
 // testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect

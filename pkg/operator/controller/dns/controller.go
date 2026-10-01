@@ -166,6 +166,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// zero TTLs, simply ignore the record until the TTL is updated by the ingresscontroller controller. Report
 	// this through events so we can detect problems with our migration.
 	if record.Spec.RecordTTL <= 0 {
+		log.Info("DNSRecord missing TTL, skipping until updated", "namespace", record.Namespace, "name", record.Name)
 		r.recorder.Eventf(record, "Warning", "ZeroTTL", "Record is missing TTL and will be temporarily ignored; the TTL will be automatically updated and the record will be retried.")
 		return reconcile.Result{}, nil
 	}

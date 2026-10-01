@@ -78,6 +78,10 @@ const (
 	IstioRevLabelKey = "istio.io/rev"
 
 	GatewayClassIndexFieldName = "gatewayclassController"
+
+	// ServiceMeshOperatorSubscriptionPackage represents the name of the package
+	// on a OLM subscription that installs OSSM
+	ServiceMeshOperatorSubscriptionPackage = "servicemeshoperator3"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
@@ -250,6 +254,10 @@ func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedN
 
 func LoadBalancerServiceNameFromICName(icName string) types.NamespacedName {
 	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-" + icName}
+}
+
+func LoadBalancerServiceNameFromGatewayName(gatewayName string) types.NamespacedName {
+	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: gatewayName + "-" + OpenShiftDefaultGatewayClassName}
 }
 
 func NodePortServiceName(ic *operatorv1.IngressController) types.NamespacedName {

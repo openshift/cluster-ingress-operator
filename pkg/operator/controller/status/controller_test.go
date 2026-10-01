@@ -896,7 +896,27 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Type:    configv1.OperatorDegraded,
 				Status:  configv1.ConditionFalse,
 				Reason:  "IngressNotDegradedAndGatewayAPIInstallWarnings",
-				Message: "The \"default\" ingress controller reports Degraded=False.\nFound version servicemeshoperator3.v3.5.0, but operator-managed Gateway API expects version servicemeshoperator3.v3.1.0. Operator-managed Gateway API may not work as intended.",
+				Message: "The \"default\" ingress controller reports Degraded=False.\nFound version servicemeshoperator3.v3.5.0 on foo/servicemeshoperator3, but operator-managed Gateway API expects version servicemeshoperator3.v3.1.0. Operator-managed Gateway API may not work as intended.",
+			},
+		},
+		{
+			description: "Gateway API Enabled, exact expected OSSM3 version but not CIO-owned",
+			modes:       olmMode,
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				ossmSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.1.0", false),
+				},
+				shouldInstallOSSM:                 true,
+				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegradedAndGatewayAPIInstallWarnings",
+				Message: "The \"default\" ingress controller reports Degraded=False.\nFound the expected version servicemeshoperator3.v3.1.0 on foo/servicemeshoperator3, but the subscription is not managed by ingress operator. Operator-managed Gateway API may not work as intended.",
 			},
 		},
 		{

@@ -108,10 +108,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// tracking OLM subscriptions across all namespaces.
 	var subscriptionCache cache.Cache
 	var err error
-	if subscriptionCache, err = cache.New(mgr.GetConfig(), cache.Options{}); err != nil {
-		return nil, err
+	if config.OperatorLifecycleManagerEnabled {
+		if subscriptionCache, err = cache.New(mgr.GetConfig(), cache.Options{}); err != nil {
+			return nil, err
+		}
+		mgr.Add(subscriptionCache)
 	}
-	mgr.Add(subscriptionCache)
 	reconciler := &reconciler{
 		config:            config,
 		client:            mgr.GetClient(),
@@ -304,13 +306,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		})
 	}
 	if r.config.GatewayAPIEnabled && r.config.GatewayAPIControllerEnabled {
-		if state.haveOSSMSubscription {
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+		for _, subscription := range state.ossmSubscriptions {
 			related = append(related, configv1.ObjectReference{
 				Group:     operatorsv1alpha1.GroupName,
 				Resource:  "subscriptions",
-				Namespace: subscriptionName.Namespace,
-				Name:      subscriptionName.Name,
+				Namespace: subscription.Namespace,
+				Name:      subscription.Name,
 			})
 		}
 		if state.haveIstiosResource {
@@ -406,8 +407,6 @@ type operatorState struct {
 	unmanagedGatewayAPICRDNames string
 	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
 	useSailLibrary bool
-	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
-	haveOSSMSubscription bool
 	// haveIstiosResource means that the "istios.sailproject.io" CRD exists.
 	haveIstiosResource bool
 	// haveGatewaysResource means that the
@@ -473,83 +472,75 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		olmCapabilityEnabled := r.config.OperatorLifecycleManagerEnabled
 		useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 		state.useSailLibrary = useSailLibrary
+		useOLM := r.config.MarketplaceEnabled && olmCapabilityEnabled
+		if r.config.GatewayAPIControllerEnabled && (useOLM || useSailLibrary) {
+			var (
+				crd                                  apiextensionsv1.CustomResourceDefinition
+				gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
+				gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
+				istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
+			)
 
-		if r.config.GatewayAPIControllerEnabled {
-			var subscription operatorsv1alpha1.Subscription
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-			if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
+			if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
 				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+					return state, fmt.Errorf("failed to get CRD %q: %v", gatewaysResourceName, err)
 				}
 			} else {
-				state.haveOSSMSubscription = true
+				state.haveGatewaysResource = true
 			}
-		}
-
-		var (
-			crd                                  apiextensionsv1.CustomResourceDefinition
-			gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
-			gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
-			istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
-		)
-
-		if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get CRD %q: %v", gatewaysResourceName, err)
-			}
-		} else {
-			state.haveGatewaysResource = true
-		}
-		if err := r.cache.Get(ctx, gatewayclassesResourceNamespacedName, &crd); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get CRD %q: %v", gatewayclassesResourceName, err)
-			}
-		} else {
-			state.haveGatewayclassesResource = true
-		}
-		if err := r.cache.Get(ctx, istiosResourceNamespacedName, &crd); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get CRD %q: %v", istiosResourceName, err)
-			}
-		} else {
-			state.haveIstiosResource = true
-		}
-
-		state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
-
-		// List subscriptions when OLM capability is available.
-		if olmCapabilityEnabled {
-			subscriptionList := operatorsv1alpha1.SubscriptionList{}
-			// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
-			if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
-				Namespace: "",
-			}); err != nil {
-				return state, fmt.Errorf("failed to get subscriptions: %w", err)
-			}
-			for _, subscription := range subscriptionList.Items {
-				if subscription.Spec == nil {
-					continue
+			if err := r.cache.Get(ctx, gatewayclassesResourceNamespacedName, &crd); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get CRD %q: %v", gatewayclassesResourceName, err)
 				}
-				if !useSailLibrary && ossmSubscriptions.Has(subscription.Spec.Package) {
-					state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+			} else {
+				state.haveGatewayclassesResource = true
+			}
+			if err := r.cache.Get(ctx, istiosResourceNamespacedName, &crd); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get CRD %q: %v", istiosResourceName, err)
 				}
-				if useSailLibrary && subscription.Spec.Package == "servicemeshoperator3" {
-					if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; ok {
-						state.orphanedOSSMSubscriptions = append(state.orphanedOSSMSubscriptions, subscription)
+			} else {
+				state.haveIstiosResource = true
+			}
+
+			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
+
+			// In OLM mode, list subscriptions that may conflict with the
+			// operator-managed OSSM installation. In Sail Library mode,
+			// detect CIO-owned OSSM subscriptions left behind by migration.
+			if olmCapabilityEnabled {
+				subscriptionList := operatorsv1alpha1.SubscriptionList{}
+				// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
+				if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
+					Namespace: "",
+				}); err != nil {
+					return state, fmt.Errorf("failed to get subscriptions: %w", err)
+				}
+				for _, subscription := range subscriptionList.Items {
+					if subscription.Spec == nil {
+						continue
+					}
+					if useOLM && ossmSubscriptions.Has(subscription.Spec.Package) {
+						state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+					}
+					if useSailLibrary && subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage {
+						if _, owned := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; owned {
+							state.orphanedOSSMSubscriptions = append(state.orphanedOSSMSubscriptions, subscription)
+						}
 					}
 				}
 			}
-		}
 
-		gatewayClassList := gatewayapiv1.GatewayClassList{}
-		if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
-			operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
-		}); err != nil {
-			return state, fmt.Errorf("failed to list gateway classes: %w", err)
+			gatewayClassList := gatewayapiv1.GatewayClassList{}
+			if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
+				operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+			}); err != nil {
+				return state, fmt.Errorf("failed to list gateway classes: %w", err)
+			}
+			// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
+			// the ingress operator should try to install OSSM.
+			state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
 		}
-		// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
-		// the ingress operator should try to install OSSM.
-		state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
 	}
 
 	return state, nil
@@ -694,7 +685,7 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 	conflicts := []string{}
 	warnings := []string{}
 	for _, subscription := range state.ossmSubscriptions {
-		if subscription.Spec.Package == "servicemeshoperator3" {
+		if subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage {
 			if _, found := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; found {
 				// The subscription that the ingress operator creates naturally does not conflict with itself.
 				continue
@@ -711,13 +702,13 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 			case versionDiff < 0:
 				// Installed version is newer than expected. Gateway API install may still work if the correct Istio
 				// version is supported. Warn the user that the installed OSSM version may be incompatible.
-				warnings = append(warnings, fmt.Sprintf("Found version %s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion))
+				warnings = append(warnings, fmt.Sprintf("Found version %s on %s/%s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, subscription.Namespace, subscription.Name, state.expectedGatewayAPIOperatorVersion))
 			case versionDiff > 0:
 				// Installed version is older than expected. Gateway API install will not work, since the correct Istio
 				// version won't be supported.
 				conflicts = append(conflicts, fmt.Sprintf("Installed version %s does not support operator-managed Gateway API. Install version %s or uninstall %s/%s to enable functionality.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion, subscription.Namespace, subscription.Name))
 			case versionDiff == 0:
-				// Installed version is exactly as expected. Nothing to do.
+				warnings = append(warnings, fmt.Sprintf("Found the expected version %s on %s/%s, but the subscription is not managed by ingress operator. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, subscription.Namespace, subscription.Name))
 			}
 		} else {
 			conflicts = append(conflicts, fmt.Sprintf("Package %s from subscription %s/%s prevents enabling operator-managed Gateway API. Uninstall %s/%s to enable functionality.", subscription.Spec.Package, subscription.Namespace, subscription.Name, subscription.Namespace, subscription.Name))

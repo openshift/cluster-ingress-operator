@@ -316,14 +316,15 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
 	gatewayclassControllerConfig := gatewayclasscontroller.Config{
-		OperatorNamespace:           config.Namespace,
-		OperandNamespace:            operatorcontroller.DefaultOperandNamespace,
-		GatewayAPIOperatorCatalog:   config.GatewayAPIOperatorCatalog,
-		GatewayAPIOperatorChannel:   config.GatewayAPIOperatorChannel,
-		GatewayAPIOperatorVersion:   config.GatewayAPIOperatorVersion,
-		GatewayAPIWithoutOLMEnabled: gatewayAPIWithoutOLMEnabled,
-		IstioVersion:                config.IstioVersion,
-		Context:                     ctx,
+		OperatorNamespace:               config.Namespace,
+		OperandNamespace:                operatorcontroller.DefaultOperandNamespace,
+		GatewayAPIOperatorCatalog:       config.GatewayAPIOperatorCatalog,
+		GatewayAPIOperatorChannel:       config.GatewayAPIOperatorChannel,
+		GatewayAPIOperatorVersion:       config.GatewayAPIOperatorVersion,
+		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
+		OperatorLifecycleManagerEnabled: olmEnabled,
+		IstioVersion:                    config.IstioVersion,
+		Context:                         ctx,
 	}
 
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclassControllerConfig)

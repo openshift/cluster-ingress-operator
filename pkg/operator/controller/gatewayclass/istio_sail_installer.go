@@ -8,12 +8,14 @@ import (
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -122,8 +124,17 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 		return fmt.Errorf("failed to check for InferencePool CRD: %w", err)
 	}
 
+	// We can ignore the error if it is not found. It means the configuration of proxy will
+	// be null, and no proxy will be configured in this case
+	var proxyConfig configv1.Proxy
+	if err := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &proxyConfig); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("error verifying cluster proxy configuration: %w", err)
+	}
+
 	// Build options from current state
-	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
+	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion, &extraIstioConfig{
+		proxyConfig: &proxyConfig,
+	})
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
 
@@ -137,12 +148,12 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 
 // buildInstallerOptions creates Sail Library installation options by merging
 // Gateway API defaults with OpenShift-specific overrides
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) install.Options {
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, extraConfig *extraIstioConfig) install.Options {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
 	// Apply OpenShift-specific overrides
-	openshiftOverrides := openshiftValues(enableInferenceExtension, r.config.OperandNamespace)
+	openshiftOverrides := openshiftValues(enableInferenceExtension, r.config.OperandNamespace, extraConfig)
 	values = install.MergeValues(values, openshiftOverrides)
 
 	return install.Options{
@@ -157,10 +168,10 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 
 // openshiftValues returns the OpenShift-specific value overrides for Istio.
 // These values are merged on top of the gateway-api preset defaults.
-func openshiftValues(enableInferenceExtension bool, operandNamespace string) *sailv1.Values {
+func openshiftValues(enableInferenceExtension bool, operandNamespace string, extraConfig *extraIstioConfig) *sailv1.Values {
 	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 
-	return &sailv1.Values{
+	val := &sailv1.Values{
 		Global: &sailv1.GlobalConfig{
 			DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
 				Enabled: ptr.To(false),
@@ -178,5 +189,39 @@ func openshiftValues(enableInferenceExtension bool, operandNamespace string) *sa
 				WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
 			},
 		},
+		MeshConfig: &sailv1.MeshConfig{
+			DefaultConfig: &sailv1.MeshConfigProxyConfig{},
+		},
 	}
+
+	if extraConfig != nil && extraConfig.proxyConfig != nil {
+		if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
+			val.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
+		}
+	}
+	return val
+}
+
+func buildProxyMetadata(proxyConfig *configv1.Proxy) map[string]string {
+	if proxyConfig == nil {
+		return nil
+	}
+	proxyCfg := proxyConfig.Status
+	proxyMetadata := map[string]string{}
+	if proxyCfg.HTTPProxy != "" {
+		proxyMetadata["HTTP_PROXY"] = proxyCfg.HTTPProxy
+		proxyMetadata["http_proxy"] = proxyCfg.HTTPProxy
+	}
+	if proxyCfg.HTTPSProxy != "" {
+		proxyMetadata["HTTPS_PROXY"] = proxyCfg.HTTPSProxy
+		proxyMetadata["https_proxy"] = proxyCfg.HTTPSProxy
+	}
+	if proxyCfg.NoProxy != "" {
+		proxyMetadata["NO_PROXY"] = proxyCfg.NoProxy
+		proxyMetadata["no_proxy"] = proxyCfg.NoProxy
+	}
+	if len(proxyMetadata) == 0 {
+		return nil
+	}
+	return proxyMetadata
 }
