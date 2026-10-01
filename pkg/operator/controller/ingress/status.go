@@ -32,8 +32,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/klog/v2"
 	utilclock "k8s.io/utils/clock"
 )
 
@@ -64,18 +66,23 @@ const (
 	ReasonNotRollingOut        = "DeploymentNotRollingOut"
 	ReasonPodsStarting         = "PodsStarting"
 	ReasonReplicasStabilizing  = "ReplicasStabilizing"
+	ReasonAwaitingNodes        = "AwaitingNodes"
 
 	deploymentNewRSAvailableReason = "NewReplicaSetAvailable"
+	// Allow time for the deployment status to observe readiness after MinReadySeconds expires.
+	deploymentAvailableGraceBuffer = 30 * time.Second
 )
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress) (error, bool) {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, controlPlaneTopology configv1.TopologyMode, nodes *corev1.NodeList) (error, bool) {
 	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err), updatedIc
 	}
+	waitingForNodes := shouldWaitForNodes(ic, deployment, controlPlaneTopology, nodes)
+	wasWaitingForNodes := ingressControllerWasWaitingForNodes(ic)
 
 	secret := &corev1.Secret{}
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, deployment.Namespace)
@@ -120,10 +127,17 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeLoadBalancerStatus(ic, service, operandEvents, false)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig, false)...)
+	if wasWaitingForNodes && !waitingForNodes {
+		resetIngressStartupConditionTransitionTimes(updated.Status.Conditions)
+	}
 	availableCondition, err := computeIngressAvailableCondition(updated.Status.Conditions, updated.Status.AvailableReplicas)
 	errs = append(errs, err)
+	if waitingForNodes && availableCondition.Status == operatorv1.ConditionFalse {
+		availableCondition.Reason = ReasonAwaitingNodes
+		availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
+	}
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
-	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
+	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
@@ -669,54 +683,195 @@ func computeDeploymentRollingOutReason(deployment *appsv1.Deployment) string {
 	return ReasonDeploymentRollingOut
 }
 
+// shouldWaitForNodes reports whether an external-control-plane cluster is
+// still waiting for its first ready node that can run the router deployment.
+// The Available condition reason is used to remember that this is initial
+// startup, so a later loss of all nodes is still reported as an outage.
+func shouldWaitForNodes(ic *operatorv1.IngressController, deployment *appsv1.Deployment, controlPlaneTopology configv1.TopologyMode, nodes *corev1.NodeList) bool {
+	if controlPlaneTopology != configv1.ExternalTopologyMode {
+		return false
+	}
+	// Preserve the startup exception when the Node list is temporarily
+	// unavailable. A previously recorded AwaitingNodes state is the only case
+	// where an unknown Node state should continue suppressing startup checks.
+	if nodes == nil {
+		return ingressControllerWasWaitingForNodes(ic)
+	}
+	if hasReadyNodeForDeployment(deployment, nodes.Items) {
+		return false
+	}
+
+	availableCondition, found := findOperatorCondition(ic.Status.Conditions, operatorv1.IngressControllerAvailableConditionType)
+	if !found {
+		return true
+	}
+
+	return availableCondition.Status == operatorv1.ConditionFalse && availableCondition.Reason == ReasonAwaitingNodes
+}
+
+// ingressControllerWasWaitingForNodes reports whether the previous status
+// recorded the initial external-control-plane node wait.
+func ingressControllerWasWaitingForNodes(ic *operatorv1.IngressController) bool {
+	availableCondition, found := findOperatorCondition(ic.Status.Conditions, operatorv1.IngressControllerAvailableConditionType)
+	return found && availableCondition.Status == operatorv1.ConditionFalse && availableCondition.Reason == ReasonAwaitingNodes
+}
+
+// resetIngressStartupConditionTransitionTimes starts fresh grace periods for
+// conditions that were intentionally ignored while waiting for the first
+// eligible node in an external-control-plane cluster.
+func resetIngressStartupConditionTransitionTimes(conditions []operatorv1.OperatorCondition) {
+	now := metav1.NewTime(clock.Now())
+	for i := range conditions {
+		if conditions[i].Status == operatorv1.ConditionTrue {
+			continue
+		}
+		switch conditions[i].Type {
+		case IngressControllerDeploymentAvailableConditionType,
+			IngressControllerDeploymentReplicasMinAvailableConditionType,
+			IngressControllerDeploymentReplicasAllAvailableConditionType,
+			IngressControllerCanaryCheckSuccessConditionType:
+			conditions[i].LastTransitionTime = now
+		}
+	}
+}
+
+// hasReadyNodeForDeployment reports whether at least one Ready node matches
+// the router deployment's scheduling constraints.
+func hasReadyNodeForDeployment(deployment *appsv1.Deployment, nodes []corev1.Node) bool {
+	if deployment == nil {
+		return false
+	}
+
+	nodeSelector := labels.SelectorFromSet(deployment.Spec.Template.Spec.NodeSelector)
+	for i := range nodes {
+		node := &nodes[i]
+		if node.Spec.Unschedulable || !nodeSelector.Matches(labels.Set(node.Labels)) || !nodeMatchesRequiredAffinity(deployment, node) || !nodeTaintsTolerated(deployment, node) {
+			continue
+		}
+		if nodeReadyStatus(node) == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// nodeTaintsTolerated reports whether the router pod tolerates all blocking
+// taints on the node.
+func nodeTaintsTolerated(deployment *appsv1.Deployment, node *corev1.Node) bool {
+	for i := range node.Spec.Taints {
+		taint := &node.Spec.Taints[i]
+		if taint.Effect != corev1.TaintEffectNoSchedule && taint.Effect != corev1.TaintEffectNoExecute {
+			continue
+		}
+
+		tolerated := false
+		for j := range deployment.Spec.Template.Spec.Tolerations {
+			if deployment.Spec.Template.Spec.Tolerations[j].ToleratesTaint(klog.Background(), taint, true) {
+				tolerated = true
+				break
+			}
+		}
+		if !tolerated {
+			return false
+		}
+	}
+	return true
+}
+
+// nodeMatchesRequiredAffinity reports whether a node satisfies the router
+// deployment's required node-affinity expressions.
+func nodeMatchesRequiredAffinity(deployment *appsv1.Deployment, node *corev1.Node) bool {
+	affinity := deployment.Spec.Template.Spec.Affinity
+	if affinity == nil || affinity.NodeAffinity == nil || affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return true
+	}
+
+	selector := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	for _, term := range selector.NodeSelectorTerms {
+		if len(term.MatchFields) != 0 {
+			// The router deployment does not use field requirements. Avoid
+			// treating an unknown field requirement as an eligible node.
+			continue
+		}
+
+		matches := true
+		for _, expression := range term.MatchExpressions {
+			requirement, err := labels.NewRequirement(expression.Key, selection.Operator(expression.Operator), expression.Values)
+			if err != nil || !requirement.Matches(labels.Set(node.Labels)) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
+}
+
+// nodeReadyStatus returns the current Ready condition status for a node.
+func nodeReadyStatus(node *corev1.Node) corev1.ConditionStatus {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			return condition.Status
+		}
+	}
+	return corev1.ConditionUnknown
+}
+
 // computeIngressDegradedCondition computes the ingresscontroller's "Degraded"
 // status condition, which aggregates other status conditions that can indicate
 // a degraded state.  In addition, computeIngressDegradedCondition returns a
 // duration value that indicates, if it is non-zero, that the operator should
 // reconcile the ingresscontroller again after that period to update its status
 // conditions.
-func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, icName string) (operatorv1.OperatorCondition, error) {
+func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, icName string, minReadySeconds int32, waitingForNodes bool) (operatorv1.OperatorCondition, error) {
+	deploymentAvailableGracePeriod := time.Duration(minReadySeconds)*time.Second + deploymentAvailableGraceBuffer
 	expectedConditions := []expectedCondition{
 		{
 			condition: IngressControllerAdmittedConditionType,
 			status:    operatorv1.ConditionTrue,
 		},
-		{
+	}
+	if !waitingForNodes {
+		expectedConditions = append(expectedConditions, expectedCondition{
 			condition:   IngressControllerDeploymentAvailableConditionType,
 			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Second * 30,
-		},
-		{
+			gracePeriod: deploymentAvailableGracePeriod,
+		}, expectedCondition{
 			condition:   IngressControllerDeploymentReplicasMinAvailableConditionType,
 			status:      operatorv1.ConditionTrue,
 			gracePeriod: time.Second * 60,
-		},
-		{
+		}, expectedCondition{
 			condition:   IngressControllerDeploymentReplicasAllAvailableConditionType,
 			status:      operatorv1.ConditionTrue,
 			gracePeriod: time.Minute * 60,
-		},
-		{
-			condition:        operatorv1.LoadBalancerReadyIngressConditionType,
-			status:           operatorv1.ConditionTrue,
-			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
-			gracePeriod:      time.Second * 90,
-		},
-		{
-			condition: operatorv1.DNSReadyIngressConditionType,
-			status:    operatorv1.ConditionTrue,
-			ifConditionsTrue: []string{
-				operatorv1.LoadBalancerManagedIngressConditionType,
-				operatorv1.LoadBalancerReadyIngressConditionType,
-				operatorv1.DNSManagedIngressConditionType,
-			},
-			gracePeriod: time.Second * 30,
-		},
+		})
 	}
+
+	// During initial HCP startup, the router deployment and the default
+	// ingress canary cannot become ready until a guest node exists. Keep those
+	// startup-dependent conditions out of Degraded evaluation, while
+	// continuing to evaluate load balancer and DNS failures.
+	expectedConditions = append(expectedConditions, expectedCondition{
+		condition:        operatorv1.LoadBalancerReadyIngressConditionType,
+		status:           operatorv1.ConditionTrue,
+		ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
+		gracePeriod:      time.Second * 90,
+	}, expectedCondition{
+		condition: operatorv1.DNSReadyIngressConditionType,
+		status:    operatorv1.ConditionTrue,
+		ifConditionsTrue: []string{
+			operatorv1.LoadBalancerManagedIngressConditionType,
+			operatorv1.LoadBalancerReadyIngressConditionType,
+			operatorv1.DNSManagedIngressConditionType,
+		},
+		gracePeriod: time.Second * 30,
+	})
 
 	// Only check the default ingress controller for the canary
 	// success status condition.
-	if icName == manifests.DefaultIngressControllerName {
+	if icName == manifests.DefaultIngressControllerName && !waitingForNodes {
 		canaryCond := expectedCondition{
 			condition:   IngressControllerCanaryCheckSuccessConditionType,
 			status:      operatorv1.ConditionTrue,

@@ -272,6 +272,8 @@ func Test_computeIngressDegradedCondition(t *testing.T) {
 	tests := []struct {
 		name                        string
 		icName                      string
+		minReadySeconds             int32
+		waitingForNodes             bool
 		conditions                  []operatorv1.OperatorCondition
 		expectIngressDegradedStatus operatorv1.ConditionStatus
 		expectRequeue               bool
@@ -313,6 +315,39 @@ func Test_computeIngressDegradedCondition(t *testing.T) {
 			expectRequeue:               true,
 			// Exceeded grace period, just use the one minute for this degraded condition
 			expectAfter: time.Minute,
+		},
+		{
+			name:            "deployment unavailable for <minReadySeconds plus buffer",
+			minReadySeconds: 30,
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-50)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+			// Grace period is 60 seconds: 30 seconds of MinReadySeconds plus a 30 second buffer.
+			expectAfter: time.Second * 10,
+		},
+		{
+			name:            "deployment unavailable for >minReadySeconds plus buffer",
+			minReadySeconds: 30,
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-61)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+			// Exceeded the dynamically calculated grace period.
+			expectAfter: time.Minute,
+		},
+		{
+			name:            "deployment unavailable within larger MinReadySeconds grace",
+			minReadySeconds: 60,
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-80)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+			// Grace period is 90 seconds: 60 seconds of MinReadySeconds plus a 30 second buffer.
+			expectAfter: time.Second * 10,
 		},
 		{
 			name: "deployment minimum replicas unavailable for <60s",
@@ -469,10 +504,38 @@ func Test_computeIngressDegradedCondition(t *testing.T) {
 			expectRequeue:               false,
 			icName:                      "default",
 		},
+		{
+			name:            "initial HCP startup ignores router and canary failures while waiting for nodes",
+			icName:          "default",
+			minReadySeconds: 30,
+			waitingForNodes: true,
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-5)),
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-5)),
+				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-5)),
+				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-5)),
+				cond(IngressControllerCanaryCheckSuccessConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-5)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               false,
+		},
+		{
+			name:            "initial HCP startup still reports a load balancer failure",
+			icName:          "default",
+			waitingForNodes: true,
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-5)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-5)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-2)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+			expectAfter:                 time.Minute,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual, err := computeIngressDegradedCondition(test.conditions, test.icName)
+			actual, err := computeIngressDegradedCondition(test.conditions, test.icName, test.minReadySeconds, test.waitingForNodes)
 			switch e := err.(type) {
 			case retryable.Error:
 				if !test.expectRequeue {
@@ -492,6 +555,174 @@ func Test_computeIngressDegradedCondition(t *testing.T) {
 				t.Errorf("expected status to be %s, got %s", test.expectIngressDegradedStatus, actual.Status)
 			}
 		})
+	}
+}
+
+func Test_shouldWaitForNodes(t *testing.T) {
+	deployment := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"kubernetes.io/os":               "linux",
+						"node-role.kubernetes.io/worker": "",
+					},
+				},
+			},
+		},
+	}
+	readyWorker := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/worker": "",
+		}},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+	notReadyWorker := readyWorker.DeepCopy()
+	notReadyWorker.Status.Conditions[0].Status = corev1.ConditionFalse
+	taintedWorker := readyWorker.DeepCopy()
+	taintedWorker.Spec.Taints = []corev1.Taint{{Key: "dedicated", Effect: corev1.TaintEffectNoSchedule}}
+
+	tests := []struct {
+		name                 string
+		controlPlaneTopology configv1.TopologyMode
+		ic                   *operatorv1.IngressController
+		nodes                *corev1.NodeList
+		expect               bool
+	}{
+		{
+			name:                 "external topology with no status waits for nodes",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic:                   &operatorv1.IngressController{},
+			nodes:                &corev1.NodeList{},
+			expect:               true,
+		},
+		{
+			name:                 "non-external topology does not wait for nodes",
+			controlPlaneTopology: configv1.HighlyAvailableTopologyMode,
+			ic:                   &operatorv1.IngressController{},
+			nodes:                &corev1.NodeList{},
+			expect:               false,
+		},
+		{
+			name:                 "ready matching node does not wait",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic:                   &operatorv1.IngressController{},
+			nodes:                &corev1.NodeList{Items: []corev1.Node{readyWorker}},
+			expect:               false,
+		},
+		{
+			name:                 "matching node that is not ready still waits",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic:                   &operatorv1.IngressController{},
+			nodes:                &corev1.NodeList{Items: []corev1.Node{*notReadyWorker}},
+			expect:               true,
+		},
+		{
+			name:                 "matching node with an untolerated taint still waits",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic:                   &operatorv1.IngressController{},
+			nodes:                &corev1.NodeList{Items: []corev1.Node{*taintedWorker}},
+			expect:               true,
+		},
+		{
+			name:                 "startup marker continues waiting",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+				Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: ReasonAwaitingNodes,
+			}}}},
+			nodes:  &corev1.NodeList{},
+			expect: true,
+		},
+		{
+			name:                 "startup marker continues waiting when node list is unavailable",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+				Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: ReasonAwaitingNodes,
+			}}}},
+			nodes:  nil,
+			expect: true,
+		},
+		{
+			name:                 "unknown node list does not suppress a previously initialized ingress",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+				Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue,
+			}}}},
+			nodes:  nil,
+			expect: false,
+		},
+		{
+			name:                 "previously available ingress reports an outage",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+				Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue,
+			}}}},
+			nodes:  &corev1.NodeList{},
+			expect: false,
+		},
+		{
+			name:                 "previously unavailable ingress reports an outage after startup marker is absent",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+				Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: "IngressControllerUnavailable",
+			}}}},
+			nodes:  &corev1.NodeList{},
+			expect: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := shouldWaitForNodes(test.ic, deployment, test.controlPlaneTopology, test.nodes); actual != test.expect {
+				t.Errorf("expected shouldWaitForNodes=%t, got %t", test.expect, actual)
+			}
+		})
+	}
+}
+
+func Test_resetIngressStartupConditionTransitionTimes(t *testing.T) {
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
+	clock = fakeClock
+	defer func() {
+		clock = utilclock.RealClock{}
+	}()
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		NodeSelector: map[string]string{"node-role.kubernetes.io/worker": ""},
+	}}}}
+	ic := &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+		Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: ReasonAwaitingNodes,
+	}}}}
+	if !shouldWaitForNodes(ic, deployment, configv1.ExternalTopologyMode, &corev1.NodeList{}) {
+		t.Fatal("expected the ingress controller to wait while no node exists")
+	}
+	fakeClock.Step(2 * time.Minute)
+	readyNode := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"node-role.kubernetes.io/worker": ""}},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+	if shouldWaitForNodes(ic, deployment, configv1.ExternalTopologyMode, &corev1.NodeList{Items: []corev1.Node{readyNode}}) {
+		t.Fatal("expected the ingress controller to stop waiting when a ready node appears")
+	}
+
+	conditions := []operatorv1.OperatorCondition{
+		cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", fakeClock.Now().Add(-2*time.Minute)),
+		cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", fakeClock.Now().Add(-2*time.Minute)),
+		cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", fakeClock.Now().Add(-2*time.Minute)),
+		cond(IngressControllerCanaryCheckSuccessConditionType, operatorv1.ConditionFalse, "", fakeClock.Now().Add(-2*time.Minute)),
+	}
+	resetIngressStartupConditionTransitionTimes(conditions)
+
+	actual, err := computeIngressDegradedCondition(conditions, manifests.DefaultIngressControllerName, 30, false)
+	if actual.Status != operatorv1.ConditionFalse {
+		t.Fatalf("expected Degraded=False after the node-wait grace reset, got %s", actual.Status)
+	}
+	retry, ok := err.(retryable.Error)
+	if !ok {
+		t.Fatalf("expected a retryable grace-period error, got %v", err)
+	}
+	if retry.After() != time.Minute {
+		t.Errorf("expected a one-minute deployment grace period, got %s", retry.After())
 	}
 }
 
