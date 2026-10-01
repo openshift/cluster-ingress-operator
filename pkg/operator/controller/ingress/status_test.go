@@ -3156,10 +3156,10 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			description: "effectiveHAProxyVersion equal",
 			expected:    true,
 			a: operatorv1.IngressControllerStatus{
-				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+				EffectiveHAProxyVersion: haproxyVersion32,
 			},
 			b: operatorv1.IngressControllerStatus{
-				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+				EffectiveHAProxyVersion: haproxyVersion32,
 			},
 		},
 		{
@@ -3169,17 +3169,17 @@ func Test_IngressStatusesEqual(t *testing.T) {
 				EffectiveHAProxyVersion: "",
 			},
 			b: operatorv1.IngressControllerStatus{
-				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+				EffectiveHAProxyVersion: haproxyVersion32,
 			},
 		},
 		{
 			description: "effectiveHAProxyVersion changed value",
 			expected:    false,
 			a: operatorv1.IngressControllerStatus{
-				EffectiveHAProxyVersion: operatorv1.HAProxyVersion28,
+				EffectiveHAProxyVersion: haproxyVersion28,
 			},
 			b: operatorv1.IngressControllerStatus{
-				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,
+				EffectiveHAProxyVersion: haproxyVersion32,
 			},
 		},
 	}
