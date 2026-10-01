@@ -8,8 +8,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istioversion"
 	"github.com/istio-ecosystem/sail-operator/resources"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -66,13 +68,19 @@ func (i *fakeSailInstaller) Status() install.Status {
 func (i *fakeSailInstaller) Enqueue() {}
 
 func TestBuildInstallerOptionsResolvesIstioVersionAlias(t *testing.T) {
+	const versionAlias = "v1.28-latest"
+
+	expectedVersion, err := istioversion.Resolve(versionAlias)
+	require.NoError(t, err)
+
 	reconciler := &reconciler{
 		config: Config{OperandNamespace: "openshift-ingress"},
 	}
 
-	opts := reconciler.buildInstallerOptions(false, "v1.28-latest", nil)
-	assert.Equal(t, "v1.28.10", opts.Version)
-	assert.NoError(t, install.ValidateVersion(resources.FS, opts.Version))
+	opts := reconciler.buildInstallerOptions(false, versionAlias, nil)
+	assert.Equal(t, expectedVersion, opts.Version)
+	assert.NotEqual(t, versionAlias, opts.Version)
+	require.NoError(t, install.ValidateVersion(resources.FS, opts.Version))
 }
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
