@@ -26,7 +26,7 @@ const (
 )
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
-func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *configv1.TLSProfileSpec) (bool, *appsv1.DaemonSet, error) {
+func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *configv1.TLSProfileSpec, customTolerations []corev1.Toleration) (bool, *appsv1.DaemonSet, error) {
 	// Attempt to read the canary serving cert secret and compute a content hash.
 	// If the secret is missing or incomplete, proceed without the annotation but
 	// surface a log entry so operators can investigate.
@@ -46,7 +46,7 @@ func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *
 		}
 	}
 
-	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash, tlsProfileSpec)
+	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash, tlsProfileSpec, customTolerations)
 	haveDs, current, err := r.currentCanaryDaemonSet(ctx)
 	if err != nil {
 		return false, nil, err
@@ -133,7 +133,7 @@ func (r *reconciler) updateCanaryDaemonSet(ctx context.Context, current, desired
 
 // desiredCanaryDaemonSet returns the desired canary daemonset read in
 // from manifests
-func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec *configv1.TLSProfileSpec) *appsv1.DaemonSet {
+func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec *configv1.TLSProfileSpec, customTolerations []corev1.Toleration) *appsv1.DaemonSet {
 	daemonset := manifests.CanaryDaemonSet()
 	name := controller.CanaryDaemonSetName()
 	daemonset.Name = name.Name
@@ -195,7 +195,32 @@ func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec 
 		daemonset.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = certHash
 	}
 
+	daemonset.Spec.Template.Spec.Tolerations = mergeTolerationsWithDedup(daemonset.Spec.Template.Spec.Tolerations, customTolerations)
+
 	return daemonset
+}
+
+// mergeTolerationsWithDedup returns the base tolerations with any custom tolerations
+// appended that are not already present.  Equivalence is determined by
+// Toleration.MatchToleration, which is the canonical Kubernetes definition:
+// tolerations are unique by <key, effect, operator, value>.  The base tolerations
+// are always preserved as-is.
+func mergeTolerationsWithDedup(base, custom []corev1.Toleration) []corev1.Toleration {
+	merged := make([]corev1.Toleration, len(base))
+	copy(merged, base)
+	for _, c := range custom {
+		found := false
+		for _, b := range merged {
+			if b.MatchToleration(&c) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, c)
+		}
+	}
+	return merged
 }
 
 // canaryDaemonSetChanged returns true if current and expected differ by the pod template's
@@ -246,7 +271,7 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 		changed = true
 	}
 
-	if !cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) {
+	if !cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(lessToleration)) {
 		updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 		changed = true
 	}
@@ -293,29 +318,19 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 	return true, updated
 }
 
-// cmpTolerations compares two Tolerations values and returns a Boolean
-// indicating whether they are equal.
-func cmpTolerations(a, b corev1.Toleration) bool {
+// lessToleration reports whether a sorts before b.  It is a strict weak
+// ordering over <key, effect, operator, value>, as required by
+// cmpopts.SortSlices, so that tolerations can be compared independently of the
+// order in which they appear in the pod spec.
+func lessToleration(a, b corev1.Toleration) bool {
 	if a.Key != b.Key {
-		return false
-	}
-	if a.Value != b.Value {
-		return false
-	}
-	if a.Operator != b.Operator {
-		return false
+		return a.Key < b.Key
 	}
 	if a.Effect != b.Effect {
-		return false
+		return a.Effect < b.Effect
 	}
-	if a.Effect == corev1.TaintEffectNoExecute {
-		if (a.TolerationSeconds == nil) != (b.TolerationSeconds == nil) {
-			return false
-		}
-		// Field is ignored unless effect is NoExecute.
-		if a.TolerationSeconds != nil && *a.TolerationSeconds != *b.TolerationSeconds {
-			return false
-		}
+	if a.Operator != b.Operator {
+		return a.Operator < b.Operator
 	}
-	return true
+	return a.Value < b.Value
 }

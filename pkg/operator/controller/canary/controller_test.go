@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,10 +9,21 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 func Test_cycleServicePort(t *testing.T) {
@@ -234,5 +246,49 @@ func Test_deduplicateErrorStrings(t *testing.T) {
 				t.Errorf("Expected result:\n%s\nbut got:\n%s", strings.Join(tc.ExpectedResult, "\n"), strings.Join(result, "\n"))
 			}
 		})
+	}
+}
+
+// Test_Reconcile_missingIngressController verifies that a reconcile request for
+// an ingress controller that does not exist is a no-op rather than an error.
+// Returning an error here would requeue forever, and because the ingress
+// controller is fetched before the canary operands are ensured, it would also
+// block reconciliation of the canary daemonset, service account, service, and
+// route.
+func Test_Reconcile_missingIngressController(t *testing.T) {
+	scheme := runtime.NewScheme()
+	for _, addToScheme := range []func(*runtime.Scheme) error{
+		appsv1.AddToScheme,
+		corev1.AddToScheme,
+		networkingv1.AddToScheme,
+		operatorv1.AddToScheme,
+	} {
+		if err := addToScheme(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := &reconciler{
+		config: Config{
+			Namespace:   operatorcontroller.DefaultOperatorNamespace,
+			CanaryImage: "test-image",
+		},
+		client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+	}
+
+	request := reconcile.Request{NamespacedName: types.NamespacedName{
+		Namespace: operatorcontroller.DefaultOperatorNamespace,
+		Name:      manifests.DefaultIngressControllerName,
+	}}
+	if _, err := r.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("expected no error when the ingress controller does not exist, got: %v", err)
+	}
+
+	// The canary daemonset must not be created without an ingress controller to
+	// derive its tolerations from.
+	ds := &appsv1.DaemonSet{}
+	err := r.client.Get(context.Background(), operatorcontroller.CanaryDaemonSetName(), ds)
+	if !kerrors.IsNotFound(err) {
+		t.Errorf("expected the canary daemonset not to exist, got err: %v", err)
 	}
 }
