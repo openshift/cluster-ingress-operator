@@ -15,6 +15,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,25 +29,49 @@ func getRegion(infra *configv1.Infrastructure) (string, error) {
 	return "", fmt.Errorf("region not found")
 }
 
-// createEC2Client creates an EC2 client using the cluster's root AWS credentials and region.
-func (c *clients) createEC2Client(ctx context.Context, infra *configv1.Infrastructure) (*ec2.Client, error) {
-	secret := &corev1.Secret{}
-	if err := c.client.Get(ctx, crclient.ObjectKey{Namespace: "kube-system", Name: "aws-creds"}, secret); err != nil {
-		return nil, fmt.Errorf("failed to get aws-creds secret: %w", err)
-	}
-	accessKeyID := string(secret.Data["aws_access_key_id"])
-	secretAccessKey := string(secret.Data["aws_secret_access_key"])
+// loadAWSConfig loads the cluster's AWS region and credentials. The root
+// credentials secret is preferred when present. Hosted clusters do not expose
+// that secret, so use the SDK's default credential chain in that case.
+func (c *clients) loadAWSConfig(ctx context.Context, infra *configv1.Infrastructure) (aws.Config, error) {
+	return loadAWSConfigWithSecretGetter(ctx, infra, func(ctx context.Context, secret *corev1.Secret) error {
+		return c.client.Get(ctx, crclient.ObjectKey{Namespace: "kube-system", Name: "aws-creds"}, secret)
+	})
+}
 
+// loadAWSConfigWithSecretGetter loads AWS configuration using an injectable
+// secret getter so credential-source behavior can be tested without a cluster.
+func loadAWSConfigWithSecretGetter(ctx context.Context, infra *configv1.Infrastructure, getSecret func(context.Context, *corev1.Secret) error) (aws.Config, error) {
 	region, err := getRegion(infra)
 	if err != nil {
-		return nil, err
+		return aws.Config{}, err
 	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion(region),
-		awsconfig.WithCredentialsProvider(awscreds.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")),
-	)
+
+	loadOptions := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
+	secret := &corev1.Secret{}
+	if err := getSecret(ctx, secret); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return aws.Config{}, fmt.Errorf("failed to get aws-creds secret: %w", err)
+		}
+	} else {
+		accessKeyID := string(secret.Data["aws_access_key_id"])
+		secretAccessKey := string(secret.Data["aws_secret_access_key"])
+		loadOptions = append(loadOptions, awsconfig.WithCredentialsProvider(
+			awscreds.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, ""),
+		))
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+		return aws.Config{}, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+	return cfg, nil
+}
+
+// createEC2Client creates an EC2 client using the cluster's AWS configuration.
+func (c *clients) createEC2Client(ctx context.Context, infra *configv1.Infrastructure) (*ec2.Client, error) {
+	cfg, err := c.loadAWSConfig(ctx, infra)
+	if err != nil {
+		return nil, err
 	}
 	return ec2.NewFromConfig(cfg), nil
 }
