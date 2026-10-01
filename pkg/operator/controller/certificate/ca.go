@@ -9,8 +9,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"reflect"
 	"time"
 
+	"github.com/openshift/api/annotations"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,38 +21,86 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
-	current, err := r.currentRouterCASecret()
+func (r *reconciler) ensureRouterCASecret(ctx context.Context) (*corev1.Secret, error) {
+	current, err := r.currentRouterCASecret(ctx)
 	if err != nil {
 		return nil, err
 	}
+
 	if current != nil {
+		// A CA secret already exists.  Reuse its certificate and key, and
+		// reconcile only the operator-managed TLS metadata annotations so
+		// that a secret created by a release that predates them (for
+		// example, before an upgrade) gets them.  The certificate data and
+		// any unrelated annotations are preserved; the CA is never
+		// regenerated for an existing secret.
+		desired, err := desiredRouterCASecret(r.operatorNamespace, current.Data["tls.crt"], current.Data["tls.key"])
+		if err != nil {
+			return nil, err
+		}
+		if updated, err := r.updateRouterCASecretAnnotations(ctx, current, desired); err != nil {
+			return nil, fmt.Errorf("failed to update CA secret: %w", err)
+		} else if updated {
+			log.Info("Updated default wildcard CA certificate secret annotations", "namespace", current.Namespace, "name", current.Name)
+			r.recorder.Event(current, "Normal", "UpdatedWildcardCACert", "Updated default wildcard CA certificate annotations")
+			return r.currentRouterCASecret(ctx)
+		}
 		return current, nil
 	}
-	desired, err := desiredRouterCASecret(r.operatorNamespace)
+
+	// No CA secret exists yet, so generate a new CA.  Generating a CA is
+	// expensive and non-deterministic, which is why it is done here, only when
+	// there is no existing secret, rather than inside desiredRouterCASecret.
+	caCert, caKey, err := generateRouterCA()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate CA certificate: %w", err)
+	}
+	desired, err := desiredRouterCASecret(r.operatorNamespace, caCert, caKey)
 	if err != nil {
 		return nil, err
 	}
-	if created, err := r.createRouterCASecret(desired); err != nil {
-		return nil, fmt.Errorf("failed to create CA secret: %v", err)
+	if created, err := r.createRouterCASecret(ctx, desired); err != nil {
+		return nil, fmt.Errorf("failed to create CA secret: %w", err)
 	} else if created {
-		new, err := r.currentRouterCASecret()
+		new, err := r.currentRouterCASecret(ctx)
 		if err != nil {
 			return nil, err
 		}
 		log.Info("Created default wildcard CA certificate secret", "namespace", new.Namespace, "name", new.Name)
 		r.recorder.Event(new, "Normal", "CreatedWildcardCACert", "Created a default wildcard CA certificate")
 		return new, nil
-
 	}
-	return r.currentRouterCASecret()
+	return r.currentRouterCASecret(ctx)
+}
+
+// updateRouterCASecretAnnotations reconciles the operator-managed annotations
+// from the desired router CA secret onto the current secret.  Any annotation
+// that the desired secret sets is operator-managed by definition, so every
+// desired annotation is copied onto the current secret; unrelated annotations
+// and the certificate data are preserved.  It returns true if it updated the
+// secret.
+func (r *reconciler) updateRouterCASecretAnnotations(ctx context.Context, current, desired *corev1.Secret) (bool, error) {
+	updated := current.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for key, value := range desired.Annotations {
+		updated.Annotations[key] = value
+	}
+	if reflect.DeepEqual(updated.Annotations, current.Annotations) {
+		return false, nil
+	}
+	if err := r.client.Update(ctx, updated); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // currentRouterCASecret returns the current router CA secret.
-func (r *reconciler) currentRouterCASecret() (*corev1.Secret, error) {
+func (r *reconciler) currentRouterCASecret(ctx context.Context) (*corev1.Secret, error) {
 	name := controller.RouterCASecretName(r.operatorNamespace)
 	secret := &corev1.Secret{}
-	if err := r.client.Get(context.TODO(), name, secret); err != nil {
+	if err := r.client.Get(ctx, name, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -114,22 +164,29 @@ func generateRouterCA() ([]byte, []byte, error) {
 	return certBytes, keyBytes, nil
 }
 
-// desiredRouterCASecret returns the desired router CA secret.
-func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
-	certBytes, keyBytes, err := generateRouterCA()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate certificate: %v", err)
-	}
-
+// desiredRouterCASecret returns the desired router CA secret for the given
+// namespace using the provided CA certificate and key.
+//
+// This function deviates from the usual ensureFoo/desiredFoo convention in
+// which desiredFoo computes the entire desired state by itself.  Generating a
+// CA certificate is both expensive and non-deterministic, so the certificate
+// and key are generated by the caller (ensureRouterCASecret) only when no CA
+// secret exists yet and are passed in here.  Reconciling an existing secret,
+// for example to add annotations, therefore never regenerates the CA.
+func desiredRouterCASecret(namespace string, caCert, caKey []byte) (*corev1.Secret, error) {
 	name := controller.RouterCASecretName(namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
 			Namespace: name.Namespace,
+			Annotations: map[string]string{
+				annotations.OpenShiftComponent:   controller.RouterTLSOwningComponent,
+				annotations.OpenShiftDescription: routerCADescription,
+			},
 		},
 		Data: map[string][]byte{
-			"tls.crt": certBytes,
-			"tls.key": keyBytes,
+			"tls.crt": caCert,
+			"tls.key": caKey,
 		},
 		Type: corev1.SecretTypeTLS,
 	}
@@ -137,8 +194,8 @@ func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
 }
 
 // createRouterCASecret creates the router CA secret.
-func (r *reconciler) createRouterCASecret(secret *corev1.Secret) (bool, error) {
-	if err := r.client.Create(context.TODO(), secret); err != nil {
+func (r *reconciler) createRouterCASecret(ctx context.Context, secret *corev1.Secret) (bool, error) {
+	if err := r.client.Create(ctx, secret); err != nil {
 		if errors.IsAlreadyExists(err) {
 			return false, nil
 		}
