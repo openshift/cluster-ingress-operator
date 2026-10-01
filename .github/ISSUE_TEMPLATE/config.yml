@@ -1,10 +1,10 @@
 contact_links:
 - name: File a bug report
-  url: https://issues.redhat.com/secure/CreateIssueDetails!init.jspa?pid=12332330&issuetype=1&components=12367900&priority=10300&customfield_12316142=26752
+  url: https://redhat.atlassian.net/secure/CreateIssueDetails!init.jspa?pid=10325&project=OCPBUGS&issuetype=10016&components=14827
   about: Please use the Red Hat Issue Tracker to report bugs.
 - name: Ingress Operator in OpenShift Container Platform
-  url: https://docs.openshift.com/container-platform/latest/networking/ingress-operator.html
+  url: https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking_operators/configuring-ingress
   about: Refer to the OpenShift Container Platform documentation for information about the Ingress Operator in OpenShift Container Platform.
 - name: Ingress Operator in OKD
-  url: https://docs.okd.io/latest/networking/ingress-operator.html
+  url: https://docs.okd.io/latest/networking/networking_operators/ingress-operator.html
   about: Refer to the OKD documentation for information about the Ingress Operator in OKD.
