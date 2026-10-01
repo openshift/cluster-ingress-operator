@@ -98,6 +98,12 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurit
 		})
 
 		g.It("effectuates an update to the security groups", func(ctx context.Context) {
+			initial := []operatorv1.SecurityGroupID{operatorv1.SecurityGroupID(sgID)}
+			o.Expect(cl.waitForLBProvisioned(ctx, icName, lbProvisionTimeout)).To(o.Succeed(), "initial LB service was not provisioned")
+			o.Expect(cl.waitForLBAnnotation(ctx, icName, awsLBSecurityGroupsAnnotation, true, sgID, annotationTimeout)).To(o.Succeed(), "initial security groups annotation not set")
+			o.Expect(cl.waitForICCondition(ctx, icName, loadBalancerProgressingConditionType, operatorv1.ConditionFalse, conditionTimeout)).To(o.Succeed(), "initial LoadBalancerProgressing condition did not become False")
+			o.Expect(cl.waitForSecurityGroupsConverged(ctx, icName, initial, conditionTimeout)).To(o.Succeed(), "initial securityGroups did not converge")
+
 			var err error
 			sgID2, err = createSecurityGroup(ctx, ec2Client, clusterName, vpcID)
 			o.Expect(err).NotTo(o.HaveOccurred(), "failed to create second security group")
