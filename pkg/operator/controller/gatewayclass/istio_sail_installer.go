@@ -8,6 +8,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istioversion"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -155,6 +156,15 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 // buildInstallerOptions creates Sail Library installation options by merging
 // Gateway API defaults with OpenShift-specific overrides
 func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (install.Options, error) {
+	// The installer only accepts concrete resource-directory versions, whereas
+	// the configured version can be a catalog alias such as v1.28-latest.
+	// Leave values unknown to the catalog unchanged so the installer remains the
+	// authority for validating the resources embedded in its filesystem.
+	resolvedIstioVersion := istioVersion
+	if resolvedVersion, err := istioversion.Resolve(istioVersion); err == nil {
+		resolvedIstioVersion = resolvedVersion
+	}
+
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
@@ -169,7 +179,7 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 		Namespace:      r.config.OperandNamespace,
 		Revision:       controller.IstioName("").Name,
 		Values:         values,
-		Version:        istioVersion,
+		Version:        resolvedIstioVersion,
 		ManageCRDs:     ptr.To(true),
 		IncludeAllCRDs: ptr.To(true),
 	}, nil
