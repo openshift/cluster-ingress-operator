@@ -531,3 +531,107 @@ func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 		})
 	}
 }
+
+// Test_canaryDaemonSetChanged_tolerationOrdering verifies that the toleration
+// comparison in canaryDaemonSetChanged is order-insensitive and does not panic
+// on duplicate tolerations.
+//
+// cmpopts.SortSlices requires a strict weak ordering.  It was previously passed
+// an equality function, which made the sort a silent no-op (so reordered
+// tolerations were reported as changed, causing a needless daemonset update)
+// and made go-cmp panic with "incomparable values detected" on some inputs.
+func Test_canaryDaemonSetChanged_tolerationOrdering(t *testing.T) {
+	infra := corev1.Toleration{
+		Key:      "node-role.kubernetes.io/infra",
+		Operator: corev1.TolerationOpExists,
+	}
+	gpu := corev1.Toleration{
+		Key:      "gpu.io/type",
+		Operator: corev1.TolerationOpExists,
+	}
+
+	testCases := []struct {
+		description     string
+		current         []corev1.Toleration
+		expected        []corev1.Toleration
+		expectedChanged bool
+	}{
+		{
+			description:     "identical tolerations are unchanged",
+			current:         []corev1.Toleration{infra, gpu},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: false,
+		},
+		{
+			description:     "reordered tolerations are unchanged",
+			current:         []corev1.Toleration{gpu, infra},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: false,
+		},
+		{
+			// A duplicate following a distinct toleration is the input that
+			// made go-cmp panic.  Duplicates are not rejected by the API, so
+			// an edited daemonset can present this.
+			description:     "duplicate toleration in current is reconciled away",
+			current:         []corev1.Toleration{infra, gpu, gpu},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: true,
+		},
+		{
+			description:     "added toleration is detected",
+			current:         []corev1.Toleration{infra},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: true,
+		},
+		{
+			description:     "removed toleration is detected",
+			current:         []corev1.Toleration{infra, gpu},
+			expected:        []corev1.Toleration{infra},
+			expectedChanged: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			current := desiredCanaryDaemonSet("test-image", "", nil, nil)
+			current.Spec.Template.Spec.Tolerations = tc.current
+			expected := desiredCanaryDaemonSet("test-image", "", nil, nil)
+			expected.Spec.Template.Spec.Tolerations = tc.expected
+
+			changed, updated := canaryDaemonSetChanged(current, expected)
+			if changed != tc.expectedChanged {
+				t.Fatalf("expected changed to be %t, got %t", tc.expectedChanged, changed)
+			}
+			if !changed {
+				return
+			}
+			if diff := cmp.Diff(tc.expected, updated.Spec.Template.Spec.Tolerations); diff != "" {
+				t.Errorf("tolerations mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func Test_lessToleration(t *testing.T) {
+	a := corev1.Toleration{Key: "a", Operator: corev1.TolerationOpExists}
+	b := corev1.Toleration{Key: "b", Operator: corev1.TolerationOpExists}
+	c := corev1.Toleration{Key: "b", Operator: corev1.TolerationOpEqual, Value: "x"}
+
+	// cmpopts.SortSlices requires the comparator to be irreflexive and
+	// transitive; an equality function satisfies neither.
+	for _, tol := range []corev1.Toleration{a, b, c} {
+		if lessToleration(tol, tol) {
+			t.Errorf("lessToleration is not irreflexive for %+v", tol)
+		}
+	}
+	if !lessToleration(a, b) || lessToleration(b, a) {
+		t.Error("expected a to sort before b")
+	}
+	if !lessToleration(c, b) || lessToleration(b, c) {
+		t.Error("expected c to sort before b (same key, Equal sorts before Exists)")
+	}
+	// Transitivity: c < b and b < a is false, so check the established chain.
+	if !lessToleration(a, c) || !lessToleration(c, b) || !lessToleration(a, b) {
+		t.Error("expected a < c < b to be a transitive chain")
+	}
+}

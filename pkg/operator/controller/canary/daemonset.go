@@ -271,7 +271,7 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 		changed = true
 	}
 
-	if !cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) {
+	if !cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(lessToleration)) {
 		updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 		changed = true
 	}
@@ -318,29 +318,19 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 	return true, updated
 }
 
-// cmpTolerations compares two Tolerations values and returns a Boolean
-// indicating whether they are equal.
-func cmpTolerations(a, b corev1.Toleration) bool {
+// lessToleration reports whether a sorts before b.  It is a strict weak
+// ordering over <key, effect, operator, value>, as required by
+// cmpopts.SortSlices, so that tolerations can be compared independently of the
+// order in which they appear in the pod spec.
+func lessToleration(a, b corev1.Toleration) bool {
 	if a.Key != b.Key {
-		return false
-	}
-	if a.Value != b.Value {
-		return false
-	}
-	if a.Operator != b.Operator {
-		return false
+		return a.Key < b.Key
 	}
 	if a.Effect != b.Effect {
-		return false
+		return a.Effect < b.Effect
 	}
-	if a.Effect == corev1.TaintEffectNoExecute {
-		if (a.TolerationSeconds == nil) != (b.TolerationSeconds == nil) {
-			return false
-		}
-		// Field is ignored unless effect is NoExecute.
-		if a.TolerationSeconds != nil && *a.TolerationSeconds != *b.TolerationSeconds {
-			return false
-		}
+	if a.Operator != b.Operator {
+		return a.Operator < b.Operator
 	}
-	return true
+	return a.Value < b.Value
 }
