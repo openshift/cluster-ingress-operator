@@ -5,26 +5,9 @@ set -euo pipefail
 command -v jq >/dev/null 2>&1 || { echo "jq not found"; exit 1; }
 
 CLUSTER_CONTEXT=$(oc config current-context)
-KONFLUX_SERVER="api.stone-prod-p02.hjvn.p1.openshiftapps.com"
 BREW_IMAGE_REGISTRY="brew.registry.redhat.io"
 STAGE_IMAGE_REGISTRY="registry.stage.redhat.io"
 BREW_MIRROR_NEEDED="false"
-
-echo "> Login to konflux cluster to access the index image"
-oc login --token="$TOKEN" --server=https://${KONFLUX_SERVER}:6443
-
-# Check if Index Image is already passed
-if [[ -z "${INDEX_IMAGE:-}" ]]; then
-    echo "> Get the index image"
-    INDEX_IMAGE=$(oc get releases -l appstudio.openshift.io/application=ossm-fbc-next --sort-by=.metadata.creationTimestamp -o name -n service-mesh-tenant | tail -1 | xargs oc -n service-mesh-tenant get -ojson | jq -r '.status.artifacts.index_image | .[] | .index_image')
-    
-fi
-INDEX_IMAGE=${INDEX_IMAGE##*/}
-if [[ -z "${INDEX_IMAGE}" || "${INDEX_IMAGE}" == "null" ]]; then
-    echo "> No index image found"
-    exit 2
-fi
-echo "> Index image tag: $INDEX_IMAGE"
 
 echo "> Switch back to kube cluster"
 oc config use-context "$CLUSTER_CONTEXT"
@@ -116,62 +99,4 @@ spec:
 EOF
 fi
 
-echo "> Apply custom istio catalog source"
-oc apply -f -<<EOF
-apiVersion: operators.coreos.com/v1alpha1
-kind: CatalogSource
-metadata:
-  name: custom-istio-catalog
-  namespace: openshift-marketplace
-spec:
-  displayName: RH Custom Istio catalog
-  image: brew.registry.redhat.io/rh-osbs/$INDEX_IMAGE
-  sourceType: grpc
-EOF
-
-MAX_TRIES=300
-TRIES=0
-
-while (( TRIES < MAX_TRIES )); do
-    CATALOG_STATE=$(oc get catalogsource -n openshift-marketplace custom-istio-catalog -ojson | jq -r '.status.connectionState.lastObservedState')
-    if [[ "$CATALOG_STATE" = "READY" ]]; then
-        echo "> Istio custom catalog source is ready!"
-        break
-    fi
-    TRIES=$((TRIES+1))
-    echo "(${TRIES}/${MAX_TRIES}) Istio catalog source is not ready, retrying..."
-    sleep 2
-done
-
-if (( TRIES >= MAX_TRIES )); then
-    echo "> Exceeded max tries waiting for catalog source to become ready"
-    exit 3
-fi
-
-CUSTOM_CATALOG_SOURCE=custom-istio-catalog
-ISTIO_VERSION=""
-TRIES=0
-while (( TRIES < MAX_TRIES )); do
-    OUTPUT=$(oc get packagemanifests -n openshift-marketplace -o json | jq -r '.items[] | select(.metadata.labels.catalog=="custom-istio-catalog") | .status.channels[] | select(.currentCSV | contains("servicemeshoperator3")) | "\(.name),\(.currentCSV)"' | tail -n 1)
-    OSSM_CHANNEL=$(echo "$OUTPUT" | cut -d ',' -f 1)
-    OSSM_VERSION=$(echo "$OUTPUT" | cut -d ',' -f 2)
-    if [[ "$OSSM_VERSION" != "" ]]; then
-       ISTIO_VERSION=$(oc get packagemanifests -n openshift-marketplace -o json | jq -r --arg VERSION "$OSSM_VERSION" '.items[] | select(.metadata.labels.catalog == "custom-istio-catalog") | .status.channels[] | select(.currentCSV | contains($VERSION)) | .currentCSVDesc.annotations["alm-examples"] // "[]" | fromjson | .[] | select(.kind == "Istio") | .spec.version' | tail -n 1)
-    fi
-    if [[ "$OSSM_VERSION" != "" && "$OSSM_CHANNEL" != "" && "$ISTIO_VERSION" != "" ]]; then
-        echo "> OSSM channel found: ${OSSM_CHANNEL}"
-        echo "> OSSM version found: ${OSSM_VERSION}"
-        echo "> Istio version found: ${ISTIO_VERSION}"
-        break
-    fi
-    TRIES=$((TRIES+1))
-    echo "(${TRIES}/${MAX_TRIES}) OSSM channel, version and/or Istio version is not available, retrying..."
-    sleep 2
-done
-if (( TRIES >= MAX_TRIES )); then
-    echo "> OSSM version and channel not found in $CUSTOM_CATALOG_SOURCE"
-    exit 4
-fi
-
-echo "> Run GatewayAPI tests"
-CUSTOM_OSSM_VERSION=$OSSM_VERSION CUSTOM_CATALOG_SOURCE=$CUSTOM_CATALOG_SOURCE CUSTOM_OSSM_CHANNEL=$OSSM_CHANNEL CUSTOM_ISTIO_VERSION=$ISTIO_VERSION TEST=TestGatewayAPI make test-e2e
+echo "> Pre-release secrets successfully applied"
