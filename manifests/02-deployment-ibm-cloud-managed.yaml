@@ -97,6 +97,7 @@ spec:
           capabilities:
             drop:
             - ALL
+          readOnlyRootFilesystem: true
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - mountPath: /etc/pki/ca-trust/extracted/pem
@@ -108,6 +109,8 @@ spec:
         - mountPath: /etc/tls/metrics
           name: metrics-tls
           readOnly: true
+        - mountPath: /tmp
+          name: tmp
       nodeSelector:
         kubernetes.io/os: linux
       priorityClassName: system-cluster-critical
@@ -144,3 +147,5 @@ spec:
           - serviceAccountToken:
               audience: openshift
               path: token
+      - emptyDir: {}
+        name: tmp
