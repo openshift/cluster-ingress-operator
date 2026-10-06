@@ -9,6 +9,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
+	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 
 	"k8s.io/client-go/tools/record"
 
@@ -222,6 +223,7 @@ type reconciler struct {
 	mu                  sync.Mutex
 	gatewayClassIndexed bool
 	listenerSetIndexed  bool
+	udpRouteIndexed     bool
 	controllersStarted  bool
 
 	// dependentsBlockedLogged tracks whether we have already logged that
@@ -484,9 +486,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 }
 
 // ensureDependentControllers creates the required Gateway API field indexes.
-// gatewayClassIndexed and listenerSetIndexed record successful registrations,
-// so later reconciles retry only unset registrations after a partial failure.
-// Dependent controllers start exactly once after both indexes are registered.
+// The index flags record successful registrations, so later reconciles retry
+// only unset registrations after a partial failure. Dependent controllers start
+// exactly once after all indexes are registered.
 func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -532,6 +534,23 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 			return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
 		}
 		r.listenerSetIndexed = true
+	}
+	if !r.udpRouteIndexed {
+		// Index UDPRoutes by all Gateway parents after CRDs are installed.
+		if err := r.fieldIndexer.IndexField(
+			ctx,
+			&gatewayapiv1.UDPRoute{},
+			udproutestatuscontroller.UDPRouteParentGatewayIndex,
+			client.IndexerFunc(func(o client.Object) []string {
+				route, ok := o.(*gatewayapiv1.UDPRoute)
+				if !ok {
+					return []string{}
+				}
+				return udproutestatuscontroller.ParentGatewayIndexKeys(route)
+			})); err != nil {
+			return fmt.Errorf("failed to add UDPRoute field indexer: %w", err)
+		}
+		r.udpRouteIndexed = true
 	}
 
 	for i := range r.config.DependentControllers {

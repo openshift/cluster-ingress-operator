@@ -67,7 +67,8 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 # - GatewayBackendClientCertificate, GatewayFrontendClientCertificateValidation,
 #   GatewayFrontendClientCertificateValidationInsecureFallback, GatewayHTTPSListenerDetectMisdirectedRequests:
 #   not supported by Istio 1.30.1 (https://github.com/istio/istio/blob/1.30.1/pilot/pkg/config/kube/gateway/supported_features.go#L22).
-# - ListenerSet: CRD is installed as part of Gateway API v1.5.1 standard channel, but Istio does not yet support it.
+# - ListenerSet and UDPRoute: CRDs are installed from the Gateway API v1.6.2 standard channel,
+#   but the OpenShift Gateway API implementation does not support them.
 SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
 SKIPPED_TESTS=""
 
