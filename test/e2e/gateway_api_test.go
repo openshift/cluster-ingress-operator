@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
+	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/library-go/test/library/metrics"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -65,7 +67,9 @@ var crdNames = []string{
 	"referencegrants.gateway.networking.k8s.io",
 	"backendtlspolicies.gateway.networking.k8s.io",
 	"listenersets.gateway.networking.k8s.io",
+	"tcproutes.gateway.networking.k8s.io",
 	"tlsroutes.gateway.networking.k8s.io",
+	"udproutes.gateway.networking.k8s.io",
 }
 
 // List of Istio CRDs for testing installation and ownership.
@@ -159,6 +163,7 @@ func TestGatewayAPI(t *testing.T) {
 	}
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
+	t.Run("testUDPRouteNotAccepted", testUDPRouteNotAccepted)
 	if gatewayAPIManagementModeEnabled && ingressesAPIExists {
 		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
 		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
@@ -1928,6 +1933,124 @@ func testListenerSetNotAccepted(t *testing.T) {
 		}
 	}
 	assertMetricGone(t, prometheusClient, metricQuery2, "Prometheus metric was not cleaned up after Gateway deletion")
+}
+
+// testUDPRouteNotAccepted verifies that UDPRoutes targeting an OpenShift-managed
+// Gateway get an owned Accepted=False parent status and a metric that is cleaned
+// up when a route is deleted or retargeted to an unmanaged Gateway.
+func testUDPRouteNotAccepted(t *testing.T) {
+	managedGatewayName := names.SimpleNameGenerator.GenerateName("test-udp-gw-")
+	managedGateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: managedGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: operatorcontroller.OpenShiftDefaultGatewayClassName,
+			Listeners:        []gatewayapiv1.Listener{{Name: "http", Port: 80, Protocol: gatewayapiv1.HTTPProtocolType}},
+		},
+	}
+	require.NoError(t, kclient.Create(t.Context(), managedGateway))
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), managedGateway); err != nil && !errors.IsNotFound(err) {
+			t.Logf("failed to delete managed Gateway: %v", err)
+		}
+	})
+
+	unmanagedClass := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: names.SimpleNameGenerator.GenerateName("test-udp-unmanaged-")},
+		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: "example.com/udp-test-controller"},
+	}
+	require.NoError(t, kclient.Create(t.Context(), unmanagedClass))
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), unmanagedClass); err != nil && !errors.IsNotFound(err) {
+			t.Logf("failed to delete unmanaged GatewayClass: %v", err)
+		}
+	})
+	unmanagedGateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: names.SimpleNameGenerator.GenerateName("test-udp-unmanaged-gw-"), Namespace: operatorcontroller.DefaultOperandNamespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(unmanagedClass.Name),
+			Listeners:        []gatewayapiv1.Listener{{Name: "http", Port: 80, Protocol: gatewayapiv1.HTTPProtocolType}},
+		},
+	}
+	require.NoError(t, kclient.Create(t.Context(), unmanagedGateway))
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), unmanagedGateway); err != nil && !errors.IsNotFound(err) {
+			t.Logf("failed to delete unmanaged Gateway: %v", err)
+		}
+	})
+
+	createUDPRoute := func(name string) *gatewayapiv1.UDPRoute {
+		route := &gatewayapiv1.UDPRoute{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: operatorcontroller.DefaultOperandNamespace},
+			Spec: gatewayapiv1.UDPRouteSpec{
+				CommonRouteSpec: gatewayapiv1.CommonRouteSpec{ParentRefs: []gatewayapiv1.ParentReference{{Name: gatewayapiv1.ObjectName(managedGatewayName)}}},
+				Rules: []gatewayapiv1.UDPRouteRule{{BackendRefs: []gatewayapiv1.BackendRef{{
+					BackendObjectReference: gatewayapiv1.BackendObjectReference{Name: "unused-backend", Port: ptr.To(gatewayapiv1.PortNumber(53))},
+				}}}},
+			},
+		}
+		require.NoError(t, kclient.Create(t.Context(), route))
+		t.Cleanup(func() {
+			if err := kclient.Delete(context.Background(), route); err != nil && !errors.IsNotFound(err) {
+				t.Logf("failed to delete UDPRoute: %v", err)
+			}
+		})
+		return route
+	}
+	route1 := createUDPRoute(names.SimpleNameGenerator.GenerateName("test-udproute-"))
+	route2 := createUDPRoute(names.SimpleNameGenerator.GenerateName("test-udproute-"))
+
+	for _, route := range []*gatewayapiv1.UDPRoute{route1, route2} {
+		routeKey := client.ObjectKeyFromObject(route)
+		expectedParentRef := route.Spec.ParentRefs[0]
+		assert.Eventually(t, func() bool {
+			current := &gatewayapiv1.UDPRoute{}
+			if err := kclient.Get(t.Context(), routeKey, current); err != nil {
+				return false
+			}
+			foundExpected := false
+			for _, parentStatus := range current.Status.Parents {
+				if parentStatus.ControllerName != gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName) {
+					continue
+				}
+				condition := condutils.FindStatusCondition(parentStatus.Conditions, string(gatewayapiv1.RouteConditionAccepted))
+				if condition != nil && condition.Status == metav1.ConditionTrue {
+					return false
+				}
+				if !reflect.DeepEqual(parentStatus.ParentRef, expectedParentRef) {
+					continue
+				}
+				foundExpected = condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == udproutestatuscontroller.ReasonUnsupportedByController && condition.ObservedGeneration == current.Generation
+			}
+			return foundExpected
+		}, 2*time.Minute, 2*time.Second, "UDPRoute %s did not get an exact owned Accepted=False status or had an owned Accepted=True", route.Name)
+	}
+
+	prometheusClient := createPrometheusClient(t)
+	metricQuery := func(route *gatewayapiv1.UDPRoute) string {
+		return fmt.Sprintf(`ingress_operator_udproute_on_managed_gateway{udproute_name="%s",udproute_namespace="%s"}`, route.Name, route.Namespace)
+	}
+	assertMetricValue(t, prometheusClient, metricQuery(route1), 1, "Prometheus metric was not set for UDPRoute 1")
+	assertMetricValue(t, prometheusClient, metricQuery(route2), 1, "Prometheus metric was not set for UDPRoute 2")
+
+	require.NoError(t, kclient.Delete(t.Context(), route1))
+	assertMetricGone(t, prometheusClient, metricQuery(route1), "Prometheus metric was not cleaned up after UDPRoute deletion")
+
+	current := &gatewayapiv1.UDPRoute{}
+	require.NoError(t, kclient.Get(t.Context(), client.ObjectKeyFromObject(route2), current))
+	current.Spec.ParentRefs = []gatewayapiv1.ParentReference{{Name: gatewayapiv1.ObjectName(unmanagedGateway.Name)}}
+	require.NoError(t, kclient.Update(t.Context(), current))
+	assert.Eventually(t, func() bool {
+		if err := kclient.Get(t.Context(), client.ObjectKeyFromObject(route2), current); err != nil {
+			return false
+		}
+		for _, parentStatus := range current.Status.Parents {
+			if parentStatus.ControllerName == gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName) {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Minute, 2*time.Second, "stale CIO-owned UDPRoute parent status was not removed after retargeting")
+	assertMetricGone(t, prometheusClient, metricQuery(route2), "Prometheus metric was not cleaned up after UDPRoute retargeting")
 }
 
 func createPrometheusClient(t *testing.T) prometheusv1.API {

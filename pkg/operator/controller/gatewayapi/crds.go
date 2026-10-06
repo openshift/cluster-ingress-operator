@@ -27,7 +27,9 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.ReferenceGrantCRD(),
 	manifests.BackendTLSPolicyCRD(),
 	manifests.ListenerSetCRD(),
+	manifests.TCPRouteCRD(),
 	manifests.TLSRouteCRD(),
+	manifests.UDPRouteCRD(),
 }
 
 // managedCRDMap is a map of CRDs that this controller manages.
@@ -39,7 +41,9 @@ var managedCRDMap = map[string]*apiextensionsv1.CustomResourceDefinition{
 	manifests.ReferenceGrantCRD().Name:   manifests.ReferenceGrantCRD(),
 	manifests.BackendTLSPolicyCRD().Name: manifests.BackendTLSPolicyCRD(),
 	manifests.ListenerSetCRD().Name:      manifests.ListenerSetCRD(),
+	manifests.TCPRouteCRD().Name:         manifests.TCPRouteCRD(),
 	manifests.TLSRouteCRD().Name:         manifests.TLSRouteCRD(),
+	manifests.UDPRouteCRD().Name:         manifests.UDPRouteCRD(),
 }
 
 // crdSpecCmpOpts defines go-cmp options for comparing CRD specs.
@@ -87,8 +91,7 @@ func (r *reconciler) ensureCRD(ctx context.Context, desired *apiextensionsv1.Cus
 }
 
 // ensureGatewayAPICRDs ensures the managed Gateway API CRDs are created and
-// returns an error value.  For now, the managed CRDs are the GatewayClass,
-// Gateway, GRPCRoute, HTTPRoute, and ReferenceGrant CRDs.
+// returns an error value.
 func (r *reconciler) ensureGatewayAPICRDs(ctx context.Context) error {
 	var errs []error
 	for i := range managedCRDs {

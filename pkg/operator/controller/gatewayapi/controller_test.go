@@ -34,6 +34,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
+	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 )
 
 func Test_Reconcile(t *testing.T) {
@@ -96,7 +97,9 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				crd("backendtlspolicies.gateway.networking.k8s.io"),
 				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tcproutes.gateway.networking.k8s.io"),
 				crd("tlsroutes.gateway.networking.k8s.io"),
+				crd("udproutes.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
@@ -122,7 +125,9 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				crd("backendtlspolicies.gateway.networking.k8s.io"),
 				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tcproutes.gateway.networking.k8s.io"),
 				crd("tlsroutes.gateway.networking.k8s.io"),
+				crd("udproutes.gateway.networking.k8s.io"),
 			},
 			expectDelete:    []client.Object{},
 			expectStartCtrl: true,
@@ -142,7 +147,9 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				crd("backendtlspolicies.gateway.networking.k8s.io"),
 				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tcproutes.gateway.networking.k8s.io"),
 				crd("tlsroutes.gateway.networking.k8s.io"),
+				crd("udproutes.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
@@ -170,7 +177,9 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				crd("backendtlspolicies.gateway.networking.k8s.io"),
 				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tcproutes.gateway.networking.k8s.io"),
 				crd("tlsroutes.gateway.networking.k8s.io"),
+				crd("udproutes.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
@@ -200,7 +209,9 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				crd("backendtlspolicies.gateway.networking.k8s.io"),
 				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tcproutes.gateway.networking.k8s.io"),
 				crd("tlsroutes.gateway.networking.k8s.io"),
+				crd("udproutes.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
@@ -232,7 +243,9 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				crd("backendtlspolicies.gateway.networking.k8s.io"),
 				crd("listenersets.gateway.networking.k8s.io"),
+				crd("tcproutes.gateway.networking.k8s.io"),
 				crd("tlsroutes.gateway.networking.k8s.io"),
+				crd("udproutes.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
@@ -401,7 +414,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 
 func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T) {
 	indexer := newRetryingFakeIndexer()
-	indexer.failures[listenersetstatuscontroller.ListenerSetParentGatewayIndex] = 1
+	indexer.failures[udproutestatuscontroller.UDPRouteParentGatewayIndex] = 1
 	startCh := make(chan struct{}, 1)
 	ctrl := &testutil.FakeController{T: t, StartNotificationChan: startCh}
 	reconciler := &reconciler{
@@ -412,19 +425,23 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 	}
 
 	err := reconciler.ensureDependentControllers(context.Background())
-	assert.ErrorContains(t, err, "failed to add ListenerSet field indexer")
+	assert.ErrorContains(t, err, "failed to add UDPRoute field indexer")
 	assert.True(t, reconciler.gatewayClassIndexed)
-	assert.False(t, reconciler.listenerSetIndexed)
+	assert.True(t, reconciler.listenerSetIndexed)
+	assert.False(t, reconciler.udpRouteIndexed)
 	assert.False(t, reconciler.controllersStarted)
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
 	assert.Equal(t, 1, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 1, indexer.calls[udproutestatuscontroller.UDPRouteParentGatewayIndex])
 
 	assert.NoError(t, reconciler.ensureDependentControllers(context.Background()))
 	assert.True(t, reconciler.gatewayClassIndexed)
 	assert.True(t, reconciler.listenerSetIndexed)
+	assert.True(t, reconciler.udpRouteIndexed)
 	assert.True(t, reconciler.controllersStarted)
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 2, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 1, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 2, indexer.calls[udproutestatuscontroller.UDPRouteParentGatewayIndex])
 	select {
 	case <-startCh:
 	case <-time.After(time.Second):
@@ -433,7 +450,8 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 
 	assert.NoError(t, reconciler.ensureDependentControllers(context.Background()))
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 2, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 1, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 2, indexer.calls[udproutestatuscontroller.UDPRouteParentGatewayIndex])
 	select {
 	case <-startCh:
 		t.Fatal("controller was started more than once")
@@ -447,6 +465,7 @@ func TestEnsureDependentControllersPropagatesCancellation(t *testing.T) {
 		waitOnCall                int
 		expectGatewayClassIndexed bool
 		expectListenerSetIndexed  bool
+		expectUDPRouteIndexed     bool
 	}{
 		{
 			name:       "GatewayClass index registration",
@@ -456,6 +475,12 @@ func TestEnsureDependentControllersPropagatesCancellation(t *testing.T) {
 			name:                      "ListenerSet index registration",
 			waitOnCall:                2,
 			expectGatewayClassIndexed: true,
+		},
+		{
+			name:                      "UDPRoute index registration",
+			waitOnCall:                3,
+			expectGatewayClassIndexed: true,
+			expectListenerSetIndexed:  true,
 		},
 	}
 
@@ -500,6 +525,7 @@ func TestEnsureDependentControllersPropagatesCancellation(t *testing.T) {
 
 			assert.Equal(t, tc.expectGatewayClassIndexed, reconciler.gatewayClassIndexed)
 			assert.Equal(t, tc.expectListenerSetIndexed, reconciler.listenerSetIndexed)
+			assert.Equal(t, tc.expectUDPRouteIndexed, reconciler.udpRouteIndexed)
 			assert.False(t, reconciler.controllersStarted)
 			select {
 			case <-startCh:
