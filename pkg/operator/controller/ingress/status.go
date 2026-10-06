@@ -130,11 +130,20 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if wasWaitingForNodes && !waitingForNodes {
 		resetIngressStartupConditionTransitionTimes(updated.Status.Conditions)
 	}
-	availableCondition, err := computeIngressAvailableCondition(updated.Status.Conditions, updated.Status.AvailableReplicas)
+	availableCondition, err := computeIngressAvailableCondition(updated.Status.Conditions, updated.Status.AvailableReplicas, waitingForNodes)
 	errs = append(errs, err)
-	if waitingForNodes && availableCondition.Status == operatorv1.ConditionFalse {
+	if waitingForNodes {
+		// Record the AwaitingNodes marker on the Available condition
+		// regardless of its status. This keeps the startup state remembered
+		// (see shouldWaitForNodes) so that a later loss of all nodes on an
+		// already-initialized cluster is still reported as an outage, and it
+		// explains why ingress is available without any running router pods.
 		availableCondition.Reason = ReasonAwaitingNodes
-		availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
+		if availableCondition.Status == operatorv1.ConditionTrue {
+			availableCondition.Message = "IngressController is available; waiting for a ready node matching the router deployment before scheduling router pods."
+		} else {
+			availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
+		}
 	}
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
@@ -341,18 +350,34 @@ func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev
 // pod eviction) but other replicas are still serving traffic. If zero
 // replicas are available, the ingresscontroller is a genuine outage and is
 // reported unavailable immediately, without any grace period.
-func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition, availableReplicas int32) (operatorv1.OperatorCondition, error) {
+//
+// When waitingForNodes is true (initial external-control-plane/HyperShift
+// startup with no eligible node yet), the Deployment Available condition is
+// excluded, so the ingresscontroller can be judged Available based on DNS and
+// load balancer readiness alone. This lets a zero-worker hosted cluster finish
+// installing or upgrading without the router deployment being schedulable.
+func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition, availableReplicas int32, waitingForNodes bool) (operatorv1.OperatorCondition, error) {
 	deploymentAvailableGracePeriod := time.Second * 60
 	if availableReplicas == 0 {
 		deploymentAvailableGracePeriod = 0
 	}
-	expected := []expectedCondition{
-		{
+	var expected []expectedCondition
+	// During initial external-control-plane (HyperShift) startup, the router
+	// deployment cannot become available until a guest node exists. Omit the
+	// deployment availability expectation while waiting for nodes, mirroring
+	// the Degraded handling (see computeIngressDegradedCondition), so the
+	// ingress controller can report Available=True and let the cluster finish
+	// installing or upgrading. Load balancer and DNS failures are still
+	// evaluated below and can keep the ingress controller unavailable.
+	if !waitingForNodes {
+		expected = append(expected, expectedCondition{
 			condition:   IngressControllerDeploymentAvailableConditionType,
 			status:      operatorv1.ConditionTrue,
 			gracePeriod: deploymentAvailableGracePeriod,
-		},
-		{
+		})
+	}
+	expected = append(expected,
+		expectedCondition{
 			condition: operatorv1.DNSReadyIngressConditionType,
 			status:    operatorv1.ConditionTrue,
 			ifConditionsTrue: []string{
@@ -361,12 +386,12 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition,
 				operatorv1.DNSManagedIngressConditionType,
 			},
 		},
-		{
+		expectedCondition{
 			condition:        operatorv1.LoadBalancerReadyIngressConditionType,
 			status:           operatorv1.ConditionTrue,
 			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
 		},
-	}
+	)
 
 	// Cover the rare case of no conditions
 	if len(conditions) == 0 {
@@ -706,14 +731,19 @@ func shouldWaitForNodes(ic *operatorv1.IngressController, deployment *appsv1.Dep
 		return true
 	}
 
-	return availableCondition.Status == operatorv1.ConditionFalse && availableCondition.Reason == ReasonAwaitingNodes
+	// The AwaitingNodes marker persists on the Available condition, which may
+	// be reported as Available=True while no eligible node exists, so the
+	// startup state is recognized by the reason alone. Once an eligible node
+	// has appeared the reason changes, so a later loss of all nodes is
+	// reported as a genuine outage rather than suppressed.
+	return availableCondition.Reason == ReasonAwaitingNodes
 }
 
 // ingressControllerWasWaitingForNodes reports whether the previous status
 // recorded the initial external-control-plane node wait.
 func ingressControllerWasWaitingForNodes(ic *operatorv1.IngressController) bool {
 	availableCondition, found := findOperatorCondition(ic.Status.Conditions, operatorv1.IngressControllerAvailableConditionType)
-	return found && availableCondition.Status == operatorv1.ConditionFalse && availableCondition.Reason == ReasonAwaitingNodes
+	return found && availableCondition.Reason == ReasonAwaitingNodes
 }
 
 // resetIngressStartupConditionTransitionTimes starts fresh grace periods for

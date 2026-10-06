@@ -635,6 +635,15 @@ func Test_shouldWaitForNodes(t *testing.T) {
 			expect: true,
 		},
 		{
+			name:                 "startup marker continues waiting even when reported available",
+			controlPlaneTopology: configv1.ExternalTopologyMode,
+			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
+				Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonAwaitingNodes,
+			}}}},
+			nodes:  &corev1.NodeList{},
+			expect: true,
+		},
+		{
 			name:                 "startup marker continues waiting when node list is unavailable",
 			controlPlaneTopology: configv1.ExternalTopologyMode,
 			ic: &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: []operatorv1.OperatorCondition{{
@@ -2310,6 +2319,7 @@ func Test_computeIngressAvailableCondition(t *testing.T) {
 		description       string
 		conditions        []operatorv1.OperatorCondition
 		availableReplicas int32
+		waitingForNodes   bool
 		expect            operatorv1.OperatorCondition
 		expectRequeue     bool
 		expectAfter       time.Duration
@@ -2417,11 +2427,40 @@ func Test_computeIngressAvailableCondition(t *testing.T) {
 			expect:        operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
 			expectRequeue: false,
 		},
+		{
+			description: "waiting for nodes: deployment unavailable with zero replicas is ignored when lb and dns are ready",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now()),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			},
+			availableReplicas: 0,
+			waitingForNodes:   true,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
+			expectRequeue:     false,
+		},
+		{
+			description: "waiting for nodes: dns failure still reports unavailable",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now()),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			},
+			availableReplicas: 0,
+			waitingForNodes:   true,
+			expect:            operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectRequeue:     true,
+			expectAfter:       time.Minute,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			actual, err := computeIngressAvailableCondition(tc.conditions, tc.availableReplicas)
+			actual, err := computeIngressAvailableCondition(tc.conditions, tc.availableReplicas, tc.waitingForNodes)
 			switch e := err.(type) {
 			case retryable.Error:
 				if !tc.expectRequeue {
