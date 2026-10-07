@@ -2659,6 +2659,75 @@ func Test_zeroWorkerHyperShiftNodeWaitScenarios(t *testing.T) {
 	}
 }
 
+// Test_zeroWorkerHyperShiftAvailableThenNodeThenLoss simulates the full reconcile
+// sequence an external-control-plane cluster goes through: it starts already
+// reporting Available=True/AwaitingNodes while waiting for its first node, then
+// an eligible node appears (clearing the marker), then all nodes are lost after
+// initialization. The last step must be reported as a genuine outage rather than
+// being suppressed by the startup marker. Each step feeds the Available condition
+// it observed from the previous step, as the real status loop does.
+func Test_zeroWorkerHyperShiftAvailableThenNodeThenLoss(t *testing.T) {
+	routerDeployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		NodeSelector: map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/worker": "",
+		},
+	}}}}
+	readyWorker := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/worker": "",
+		}},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+	healthyLBDNS := []operatorv1.OperatorCondition{
+		cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+		cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+		cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+		cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+	}
+
+	// runStep computes the Available condition for one reconcile given the
+	// Available condition observed from the previous reconcile.
+	runStep := func(prevAvailable operatorv1.OperatorCondition, deploymentAvailable, rollingOut operatorv1.ConditionStatus, nodes *corev1.NodeList, availableReplicas int32) operatorv1.OperatorCondition {
+		rollingOutReason := ReasonNotRollingOut
+		if rollingOut == operatorv1.ConditionTrue {
+			rollingOutReason = ReasonDeploymentRollingOut
+		}
+		conditions := append([]operatorv1.OperatorCondition{
+			cond(IngressControllerDeploymentAvailableConditionType, deploymentAvailable, "", clock.Now()),
+			cond(IngressControllerDeploymentRollingOutConditionType, rollingOut, rollingOutReason, clock.Now()),
+			prevAvailable,
+		}, healthyLBDNS...)
+		ic := &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: conditions}}
+		waiting := shouldWaitForNodes(ic, routerDeployment, configv1.ExternalTopologyMode, nodes)
+		available, _ := computeIngressAvailableConditionWithNodeWait(conditions, availableReplicas, waiting)
+		return available
+	}
+
+	// Step 1: already available while waiting for the first eligible node.
+	step1 := runStep(
+		operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonAwaitingNodes},
+		operatorv1.ConditionFalse, operatorv1.ConditionTrue, &corev1.NodeList{}, 0)
+	if step1.Status != operatorv1.ConditionTrue || step1.Reason != ReasonAwaitingNodes {
+		t.Fatalf("step 1: expected Available=True with reason AwaitingNodes, got %s/%q", step1.Status, step1.Reason)
+	}
+
+	// Step 2: the first eligible node appears and the router becomes available.
+	// The AwaitingNodes marker must be cleared.
+	step2 := runStep(step1, operatorv1.ConditionTrue, operatorv1.ConditionFalse, &corev1.NodeList{Items: []corev1.Node{readyWorker}}, 1)
+	if step2.Status != operatorv1.ConditionTrue || step2.Reason == ReasonAwaitingNodes {
+		t.Fatalf("step 2: expected Available=True without the AwaitingNodes marker, got %s/%q", step2.Status, step2.Reason)
+	}
+
+	// Step 3: all nodes are lost after initialization. Because the marker was
+	// cleared in step 2, this must be reported as a genuine outage.
+	step3 := runStep(step2, operatorv1.ConditionFalse, operatorv1.ConditionTrue, &corev1.NodeList{}, 0)
+	if step3.Status != operatorv1.ConditionFalse || step3.Reason == ReasonAwaitingNodes {
+		t.Fatalf("step 3: expected Available=False outage (not AwaitingNodes), got %s/%q", step3.Status, step3.Reason)
+	}
+}
+
 func Test_findOperatorCondition(t *testing.T) {
 	conditions := []operatorv1.OperatorCondition{
 		cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "DeploymentAvailable", time.Time{}),
