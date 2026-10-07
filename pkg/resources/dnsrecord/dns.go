@@ -3,6 +3,7 @@ package dnsrecord
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -154,8 +155,7 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 		recordType = iov1.CNAMERecordType
 		target = ingress.Hostname
 	} else {
-		recordType = iov1.ARecordType
-		target = ingress.IP
+		recordType, target = recordForAddress(ingress.IP)
 	}
 
 	return true, &iov1.DNSRecord{
@@ -174,6 +174,22 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 			RecordTTL:           defaultRecordTTL,
 		},
 	}
+}
+
+// recordForAddress returns the record type and the target to publish for a load
+// balancer address: AAAA for an IPv6 address, A otherwise. An IPv4-mapped IPv6
+// address belongs in an A record, so it is normalized to its IPv4 form rather
+// than published in its "::ffff:" spelling, which a DNS provider would reject
+// as an A record target. An address that does not parse is left untouched.
+func recordForAddress(address string) (iov1.DNSRecordType, string) {
+	ip, err := netip.ParseAddr(address)
+	if err != nil {
+		return iov1.ARecordType, address
+	}
+	if ip.Is4() || ip.Is4In6() {
+		return iov1.ARecordType, ip.Unmap().String()
+	}
+	return iov1.AAAARecordType, ip.String()
 }
 
 func CurrentDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
