@@ -601,6 +601,16 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 					service.Spec.LoadBalancerIP = lbSpec.ProviderParameters.OpenStack.FloatingIP
 				}
 			}
+		case configv1.AzurePlatformType:
+			if platform.Azure != nil && awsutil.IsDualStack(platform.Azure.IPFamily) {
+				ipFamilyPolicy := corev1.IPFamilyPolicyRequireDualStack
+				service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+				if platform.Azure.IPFamily == configv1.DualStackIPv4Primary {
+					service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}
+				} else {
+					service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv6Protocol, corev1.IPv4Protocol}
+				}
+			}
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
