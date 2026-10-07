@@ -130,21 +130,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if wasWaitingForNodes && !waitingForNodes {
 		resetIngressStartupConditionTransitionTimes(updated.Status.Conditions)
 	}
-	availableCondition, err := computeIngressAvailableCondition(updated.Status.Conditions, updated.Status.AvailableReplicas, waitingForNodes)
+	availableCondition, err := computeIngressAvailableConditionWithNodeWait(updated.Status.Conditions, updated.Status.AvailableReplicas, waitingForNodes)
 	errs = append(errs, err)
-	if waitingForNodes {
-		// Record the AwaitingNodes marker on the Available condition
-		// regardless of its status. This keeps the startup state remembered
-		// (see shouldWaitForNodes) so that a later loss of all nodes on an
-		// already-initialized cluster is still reported as an outage, and it
-		// explains why ingress is available without any running router pods.
-		availableCondition.Reason = ReasonAwaitingNodes
-		if availableCondition.Status == operatorv1.ConditionTrue {
-			availableCondition.Message = "IngressController is available; waiting for a ready node matching the router deployment before scheduling router pods."
-		} else {
-			availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
-		}
-	}
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
 	errs = append(errs, err)
@@ -422,6 +409,26 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition,
 		err = retryableerror.New(errors.New("IngressController may become unavailable soon: "+grace), requeueAfter)
 	}
 	return condition, err
+}
+
+// computeIngressAvailableConditionWithNodeWait computes the ingress controller's
+// Available condition and, while an external-control-plane (HyperShift) cluster
+// is still waiting for its first eligible node, records the AwaitingNodes marker
+// on the condition regardless of its status. The marker keeps the startup state
+// remembered (see shouldWaitForNodes), so a later loss of all nodes on an
+// already-initialized cluster is still reported as an outage, and it explains
+// why ingress is available without any running router pods.
+func computeIngressAvailableConditionWithNodeWait(conditions []operatorv1.OperatorCondition, availableReplicas int32, waitingForNodes bool) (operatorv1.OperatorCondition, error) {
+	availableCondition, err := computeIngressAvailableCondition(conditions, availableReplicas, waitingForNodes)
+	if waitingForNodes {
+		availableCondition.Reason = ReasonAwaitingNodes
+		if availableCondition.Status == operatorv1.ConditionTrue {
+			availableCondition.Message = "IngressController is available; waiting for a ready node matching the router deployment before scheduling router pods."
+		} else {
+			availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
+		}
+	}
+	return availableCondition, err
 }
 
 // checkConditions compares expected operator conditions to existing operator

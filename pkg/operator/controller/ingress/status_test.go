@@ -2487,6 +2487,119 @@ func Test_computeIngressAvailableCondition(t *testing.T) {
 	}
 }
 
+// Test_zeroWorkerHyperShiftNodeWaitScenarios exercises the end-to-end decision
+// chain the status sync uses for external-control-plane (HyperShift) clusters:
+// shouldWaitForNodes feeding computeIngressAvailableConditionWithNodeWait. It
+// covers the scenarios called out in review of #1584: initial startup with zero
+// workers, intentional scale-down to zero after init, unexpected worker loss,
+// and scale-up from zero. The key property is that only the initial-startup
+// state (the AwaitingNodes marker) is reported Available, while any zero-worker
+// state reached after the cluster has already had an eligible node is reported
+// as a genuine outage.
+func Test_zeroWorkerHyperShiftNodeWaitScenarios(t *testing.T) {
+	routerDeployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		NodeSelector: map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/worker": "",
+		},
+	}}}}
+	readyWorker := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/worker": "",
+		}},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+
+	// healthyLBDNS returns load balancer and DNS conditions that are all ready,
+	// so the Available outcome is driven solely by the deployment/node state.
+	healthyLBDNS := func() []operatorv1.OperatorCondition {
+		return []operatorv1.OperatorCondition{
+			cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+			cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now()),
+		}
+	}
+
+	tests := []struct {
+		name                 string
+		priorAvailable       *operatorv1.OperatorCondition
+		deploymentAvailable  operatorv1.ConditionStatus
+		nodes                *corev1.NodeList
+		availableReplicas    int32
+		expectWaiting        bool
+		expectStatus         operatorv1.ConditionStatus
+		expectAwaitingReason bool
+	}{
+		{
+			name:                 "initial startup with zero workers is available",
+			priorAvailable:       nil,
+			deploymentAvailable:  operatorv1.ConditionFalse,
+			nodes:                &corev1.NodeList{},
+			availableReplicas:    0,
+			expectWaiting:        true,
+			expectStatus:         operatorv1.ConditionTrue,
+			expectAwaitingReason: true,
+		},
+		{
+			name:                 "intentional scale-down to zero after init reports outage",
+			priorAvailable:       &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+			deploymentAvailable:  operatorv1.ConditionFalse,
+			nodes:                &corev1.NodeList{},
+			availableReplicas:    0,
+			expectWaiting:        false,
+			expectStatus:         operatorv1.ConditionFalse,
+			expectAwaitingReason: false,
+		},
+		{
+			name:                 "unexpected worker loss reports outage",
+			priorAvailable:       &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue, Reason: "DeploymentAvailable"},
+			deploymentAvailable:  operatorv1.ConditionFalse,
+			nodes:                &corev1.NodeList{},
+			availableReplicas:    0,
+			expectWaiting:        false,
+			expectStatus:         operatorv1.ConditionFalse,
+			expectAwaitingReason: false,
+		},
+		{
+			name:                 "scale-up from zero returns to normal availability",
+			priorAvailable:       &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: ReasonAwaitingNodes},
+			deploymentAvailable:  operatorv1.ConditionTrue,
+			nodes:                &corev1.NodeList{Items: []corev1.Node{readyWorker}},
+			availableReplicas:    1,
+			expectWaiting:        false,
+			expectStatus:         operatorv1.ConditionTrue,
+			expectAwaitingReason: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conditions := append([]operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, test.deploymentAvailable, "", clock.Now()),
+			}, healthyLBDNS()...)
+			if test.priorAvailable != nil {
+				conditions = append(conditions, *test.priorAvailable)
+			}
+			ic := &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{Conditions: conditions}}
+
+			waiting := shouldWaitForNodes(ic, routerDeployment, configv1.ExternalTopologyMode, test.nodes)
+			if waiting != test.expectWaiting {
+				t.Fatalf("expected waitingForNodes=%t, got %t", test.expectWaiting, waiting)
+			}
+
+			available, _ := computeIngressAvailableConditionWithNodeWait(conditions, test.availableReplicas, waiting)
+			if available.Status != test.expectStatus {
+				t.Errorf("expected Available=%s, got %s (reason %q)", test.expectStatus, available.Status, available.Reason)
+			}
+			if gotAwaiting := available.Reason == ReasonAwaitingNodes; gotAwaiting != test.expectAwaitingReason {
+				t.Errorf("expected AwaitingNodes reason=%t, got reason %q", test.expectAwaitingReason, available.Reason)
+			}
+		})
+	}
+}
+
 func Test_findOperatorCondition(t *testing.T) {
 	conditions := []operatorv1.OperatorCondition{
 		cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "DeploymentAvailable", time.Time{}),
