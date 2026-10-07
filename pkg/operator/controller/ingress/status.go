@@ -135,7 +135,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
 	errs = append(errs, err)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, waitingForNodes))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(updated, r.config, deploymentRef, service, platformStatus, secret))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
@@ -422,9 +422,15 @@ func computeIngressAvailableConditionWithNodeWait(conditions []operatorv1.Operat
 	availableCondition, err := computeIngressAvailableCondition(conditions, availableReplicas, waitingForNodes)
 	if waitingForNodes {
 		availableCondition.Reason = ReasonAwaitingNodes
-		if availableCondition.Status == operatorv1.ConditionTrue {
+		switch {
+		case availableCondition.Status == operatorv1.ConditionTrue:
 			availableCondition.Message = "IngressController is available; waiting for a ready node matching the router deployment before scheduling router pods."
-		} else {
+		case availableCondition.Message != "":
+			// A load balancer or DNS failure still made the ingress controller
+			// unavailable while waiting for nodes. Preserve the actionable
+			// detail from the computed condition rather than discarding it.
+			availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment: " + availableCondition.Message
+		default:
 			availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
 		}
 	}
@@ -1077,7 +1083,23 @@ func formatConditions(conditions []*operatorv1.OperatorCondition) string {
 // 2) the LoadBalancer Progressing condition of the IngressController
 // The IngressController is judged NOT Progressing only if all 2 conditions are true; otherwise
 // it is considered to be Progressing.
-func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
+func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition, waitingForNodes bool) operatorv1.OperatorCondition {
+	// Ignore infrastructure-driven deployment rollouts when computing the
+	// IngressController's Progressing condition.
+	rollingOutIgnoreReasons := []string{
+		ReasonReplicasStabilizing, // Node reboots, pod evictions
+		ReasonPodsStarting,        // Pods restarting after infrastructure events
+	}
+	// During initial external-control-plane (HyperShift) startup the router
+	// deployment cannot roll out until a guest node exists, so the rollout is
+	// expected rather than active progress. Ignore it while waiting for nodes,
+	// mirroring the Available and Degraded handling, so the ingress
+	// ClusterOperator can report Progressing=False and let the cluster finish
+	// installing or upgrading. The load balancer progressing check below still
+	// applies.
+	if waitingForNodes {
+		rollingOutIgnoreReasons = append(rollingOutIgnoreReasons, ReasonDeploymentRollingOut)
+	}
 	expected := []expectedCondition{
 		{
 			condition:        IngressControllerLoadBalancerProgressingConditionType,
@@ -1085,14 +1107,9 @@ func computeIngressProgressingCondition(conditions []operatorv1.OperatorConditio
 			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
 		},
 		{
-			condition: IngressControllerDeploymentRollingOutConditionType,
-			status:    operatorv1.ConditionFalse,
-			// Ignore infrastructure-driven deployment rollouts when computing
-			// the IngressController's Progressing condition.
-			ignoreReasons: []string{
-				ReasonReplicasStabilizing, // Node reboots, pod evictions
-				ReasonPodsStarting,        // Pods restarting after infrastructure events
-			},
+			condition:     IngressControllerDeploymentRollingOutConditionType,
+			status:        operatorv1.ConditionFalse,
+			ignoreReasons: rollingOutIgnoreReasons,
 		},
 	}
 

@@ -2132,9 +2132,10 @@ func Test_computeLoadBalancerStatus(t *testing.T) {
 // computeIngressProgressingCondition returns the expected status condition.
 func Test_computeIngressProgressingCondition(t *testing.T) {
 	testCases := []struct {
-		description string
-		conditions  []operatorv1.OperatorCondition
-		expect      operatorv1.OperatorCondition
+		description     string
+		conditions      []operatorv1.OperatorCondition
+		waitingForNodes bool
+		expect          operatorv1.OperatorCondition
 	}{
 		{
 			description: "load balancer is not progressing and router deployment is not rolling out",
@@ -2292,11 +2293,41 @@ func Test_computeIngressProgressingCondition(t *testing.T) {
 			conditions:  []operatorv1.OperatorCondition{},
 			expect:      operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
 		},
+		{
+			description: "waiting for nodes: router deployment rolling out is ignored",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonDeploymentRollingOut},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			waitingForNodes: true,
+			expect:          operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "waiting for nodes: load balancer progressing is still reported",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonDeploymentRollingOut},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			waitingForNodes: true,
+			expect:          operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "not waiting for nodes: router deployment rolling out is reported",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonDeploymentRollingOut},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			waitingForNodes: false,
+			expect:          operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			actual := computeIngressProgressingCondition(tc.conditions)
+			actual := computeIngressProgressingCondition(tc.conditions, tc.waitingForNodes)
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 				cmpopts.EquateEmpty(),
@@ -2523,61 +2554,81 @@ func Test_zeroWorkerHyperShiftNodeWaitScenarios(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                 string
-		priorAvailable       *operatorv1.OperatorCondition
-		deploymentAvailable  operatorv1.ConditionStatus
-		nodes                *corev1.NodeList
-		availableReplicas    int32
-		expectWaiting        bool
-		expectStatus         operatorv1.ConditionStatus
-		expectAwaitingReason bool
+		name                     string
+		priorAvailable           *operatorv1.OperatorCondition
+		deploymentAvailable      operatorv1.ConditionStatus
+		deploymentRollingOut     operatorv1.ConditionStatus
+		nodes                    *corev1.NodeList
+		availableReplicas        int32
+		expectWaiting            bool
+		expectStatus             operatorv1.ConditionStatus
+		expectAwaitingReason     bool
+		expectAvailableRetryable bool
+		expectProgressing        operatorv1.ConditionStatus
 	}{
 		{
-			name:                 "initial startup with zero workers is available",
-			priorAvailable:       nil,
-			deploymentAvailable:  operatorv1.ConditionFalse,
-			nodes:                &corev1.NodeList{},
-			availableReplicas:    0,
-			expectWaiting:        true,
-			expectStatus:         operatorv1.ConditionTrue,
-			expectAwaitingReason: true,
+			name:                     "initial startup with zero workers is available and not progressing",
+			priorAvailable:           nil,
+			deploymentAvailable:      operatorv1.ConditionFalse,
+			deploymentRollingOut:     operatorv1.ConditionTrue,
+			nodes:                    &corev1.NodeList{},
+			availableReplicas:        0,
+			expectWaiting:            true,
+			expectStatus:             operatorv1.ConditionTrue,
+			expectAwaitingReason:     true,
+			expectAvailableRetryable: false,
+			expectProgressing:        operatorv1.ConditionFalse,
 		},
 		{
-			name:                 "intentional scale-down to zero after init reports outage",
-			priorAvailable:       &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
-			deploymentAvailable:  operatorv1.ConditionFalse,
-			nodes:                &corev1.NodeList{},
-			availableReplicas:    0,
-			expectWaiting:        false,
-			expectStatus:         operatorv1.ConditionFalse,
-			expectAwaitingReason: false,
+			name:                     "intentional scale-down to zero after init reports outage and progressing",
+			priorAvailable:           &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+			deploymentAvailable:      operatorv1.ConditionFalse,
+			deploymentRollingOut:     operatorv1.ConditionTrue,
+			nodes:                    &corev1.NodeList{},
+			availableReplicas:        0,
+			expectWaiting:            false,
+			expectStatus:             operatorv1.ConditionFalse,
+			expectAwaitingReason:     false,
+			expectAvailableRetryable: true,
+			expectProgressing:        operatorv1.ConditionTrue,
 		},
 		{
-			name:                 "unexpected worker loss reports outage",
-			priorAvailable:       &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue, Reason: "DeploymentAvailable"},
-			deploymentAvailable:  operatorv1.ConditionFalse,
-			nodes:                &corev1.NodeList{},
-			availableReplicas:    0,
-			expectWaiting:        false,
-			expectStatus:         operatorv1.ConditionFalse,
-			expectAwaitingReason: false,
+			name:                     "unexpected worker loss reports outage and progressing",
+			priorAvailable:           &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue, Reason: "DeploymentAvailable"},
+			deploymentAvailable:      operatorv1.ConditionFalse,
+			deploymentRollingOut:     operatorv1.ConditionTrue,
+			nodes:                    &corev1.NodeList{},
+			availableReplicas:        0,
+			expectWaiting:            false,
+			expectStatus:             operatorv1.ConditionFalse,
+			expectAwaitingReason:     false,
+			expectAvailableRetryable: true,
+			expectProgressing:        operatorv1.ConditionTrue,
 		},
 		{
-			name:                 "scale-up from zero returns to normal availability",
-			priorAvailable:       &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: ReasonAwaitingNodes},
-			deploymentAvailable:  operatorv1.ConditionTrue,
-			nodes:                &corev1.NodeList{Items: []corev1.Node{readyWorker}},
-			availableReplicas:    1,
-			expectWaiting:        false,
-			expectStatus:         operatorv1.ConditionTrue,
-			expectAwaitingReason: false,
+			name:                     "scale-up from zero returns to normal availability",
+			priorAvailable:           &operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: ReasonAwaitingNodes},
+			deploymentAvailable:      operatorv1.ConditionTrue,
+			deploymentRollingOut:     operatorv1.ConditionFalse,
+			nodes:                    &corev1.NodeList{Items: []corev1.Node{readyWorker}},
+			availableReplicas:        1,
+			expectWaiting:            false,
+			expectStatus:             operatorv1.ConditionTrue,
+			expectAwaitingReason:     false,
+			expectAvailableRetryable: false,
+			expectProgressing:        operatorv1.ConditionFalse,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			rollingOutReason := ReasonNotRollingOut
+			if test.deploymentRollingOut == operatorv1.ConditionTrue {
+				rollingOutReason = ReasonDeploymentRollingOut
+			}
 			conditions := append([]operatorv1.OperatorCondition{
 				cond(IngressControllerDeploymentAvailableConditionType, test.deploymentAvailable, "", clock.Now()),
+				cond(IngressControllerDeploymentRollingOutConditionType, test.deploymentRollingOut, rollingOutReason, clock.Now()),
 			}, healthyLBDNS()...)
 			if test.priorAvailable != nil {
 				conditions = append(conditions, *test.priorAvailable)
@@ -2589,12 +2640,20 @@ func Test_zeroWorkerHyperShiftNodeWaitScenarios(t *testing.T) {
 				t.Fatalf("expected waitingForNodes=%t, got %t", test.expectWaiting, waiting)
 			}
 
-			available, _ := computeIngressAvailableConditionWithNodeWait(conditions, test.availableReplicas, waiting)
+			available, err := computeIngressAvailableConditionWithNodeWait(conditions, test.availableReplicas, waiting)
 			if available.Status != test.expectStatus {
 				t.Errorf("expected Available=%s, got %s (reason %q)", test.expectStatus, available.Status, available.Reason)
 			}
 			if gotAwaiting := available.Reason == ReasonAwaitingNodes; gotAwaiting != test.expectAwaitingReason {
 				t.Errorf("expected AwaitingNodes reason=%t, got reason %q", test.expectAwaitingReason, available.Reason)
+			}
+			if gotRetryable := err != nil; gotRetryable != test.expectAvailableRetryable {
+				t.Errorf("expected Available retryable error=%t, got err=%v", test.expectAvailableRetryable, err)
+			}
+
+			progressing := computeIngressProgressingCondition(conditions, waiting)
+			if progressing.Status != test.expectProgressing {
+				t.Errorf("expected Progressing=%s, got %s (message %q)", test.expectProgressing, progressing.Status, progressing.Message)
 			}
 		})
 	}
