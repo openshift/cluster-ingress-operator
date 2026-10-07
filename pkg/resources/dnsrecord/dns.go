@@ -3,6 +3,7 @@ package dnsrecord
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -154,7 +155,7 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 		recordType = iov1.CNAMERecordType
 		target = ingress.Hostname
 	} else {
-		recordType = iov1.ARecordType
+		recordType = recordTypeForAddress(ingress.IP)
 		target = ingress.IP
 	}
 
@@ -174,6 +175,15 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 			RecordTTL:           defaultRecordTTL,
 		},
 	}
+}
+
+// recordTypeForAddress returns AAAA for an IPv6 load balancer address and A
+// otherwise, including for an IPv4-mapped address or one that does not parse.
+func recordTypeForAddress(address string) iov1.DNSRecordType {
+	if ip := net.ParseIP(address); ip != nil && ip.To4() == nil {
+		return iov1.AAAARecordType
+	}
+	return iov1.ARecordType
 }
 
 func CurrentDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
