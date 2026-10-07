@@ -236,10 +236,16 @@ func (r *reconciler) managedGatewayParents(ctx context.Context, route *gatewayap
 func (r *reconciler) updateStatus(ctx context.Context, route *gatewayapiv1.UDPRoute, managedParents []gatewayapiv1.ParentReference) error {
 	updated := route.DeepCopy()
 	desiredParents := make([]gatewayapiv1.RouteParentStatus, 0, len(route.Status.Parents)+len(managedParents))
+	hadOwnedParent := false
 	for _, parentStatus := range route.Status.Parents {
 		if parentStatus.ControllerName != gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName) {
 			desiredParents = append(desiredParents, parentStatus)
+		} else {
+			hadOwnedParent = true
 		}
+	}
+	if !hadOwnedParent && len(managedParents) == 0 {
+		return nil
 	}
 	for _, parentRef := range managedParents {
 		parentStatus := gatewayapiv1.RouteParentStatus{
@@ -260,9 +266,6 @@ func (r *reconciler) updateStatus(ctx context.Context, route *gatewayapiv1.UDPRo
 			Message:            unsupportedMessage,
 		})
 		desiredParents = append(desiredParents, parentStatus)
-	}
-	if len(desiredParents) == 0 {
-		desiredParents = nil
 	}
 	if reflect.DeepEqual(route.Status.Parents, desiredParents) {
 		return nil

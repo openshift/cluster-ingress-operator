@@ -2,16 +2,19 @@ package udproute_status
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	operatormanifests "github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ctrltestutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -229,7 +232,7 @@ func TestReconcileIgnoresUnmanagedMissingAndNonGatewayParents(t *testing.T) {
 			require.NoError(t, err)
 			updated := &gatewayapiv1.UDPRoute{}
 			require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
-			assert.Empty(t, updated.Status.Parents)
+			require.Nil(t, updated.Status.Parents, "a route never owned by CIO must not receive a status patch")
 			assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
 		})
 	}
@@ -288,6 +291,51 @@ func TestReconcileCleansStaleStatusAndMetricAfterRetarget(t *testing.T) {
 	require.Len(t, updated.Status.Parents, 1)
 	assert.Equal(t, gatewayapiv1.GatewayController("example.com/other-controller"), updated.Status.Parents[0].ControllerName)
 	assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
+}
+
+func TestReconcileCleansLastOwnedStatusAfterRetarget(t *testing.T) {
+	managedClass := gatewayClass("managed", operatorcontroller.OpenShiftGatewayClassControllerName)
+	unmanagedClass := gatewayClass("unmanaged", "example.com/other-controller")
+	managedGateway := gateway("managed", "route-ns", managedClass.Name)
+	unmanagedGateway := gateway("unmanaged", "route-ns", unmanagedClass.Name)
+	managedParent := gatewayapiv1.ParentReference{Name: "managed"}
+	route := udpRoute("test", "route-ns", []gatewayapiv1.ParentReference{managedParent})
+	route.Generation = 1
+	route.Status.Parents = []gatewayapiv1.RouteParentStatus{{
+		ParentRef:      managedParent,
+		ControllerName: gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName),
+		Conditions: []metav1.Condition{{
+			Type:   string(gatewayapiv1.RouteConditionAccepted),
+			Status: metav1.ConditionFalse,
+			Reason: ReasonUnsupportedByController,
+		}},
+	}}
+	r := newTestReconciler(t, managedClass, unmanagedClass, managedGateway, unmanagedGateway, route)
+	udpRouteOnManagedGatewayMetric.Reset()
+	udpRouteOnManagedGatewayMetric.WithLabelValues(route.Namespace, route.Name).Set(1)
+
+	updated := &gatewayapiv1.UDPRoute{}
+	require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
+	require.Len(t, updated.Status.Parents, 1)
+	assert.Equal(t, gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName), updated.Status.Parents[0].ControllerName)
+
+	updated.Spec.ParentRefs = []gatewayapiv1.ParentReference{{Name: "unmanaged"}}
+	updated.Generation = 2
+	require.NoError(t, r.client.Update(context.Background(), updated))
+	_, err := r.Reconcile(context.Background(), requestFor(route))
+	require.NoError(t, err)
+	require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
+	require.NotNil(t, updated.Status.Parents)
+	assert.Empty(t, updated.Status.Parents)
+	assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
+
+	statusJSON, err := json.Marshal(updated.Status)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"parents":[]}`, string(statusJSON))
+
+	var statusValue map[string]interface{}
+	require.NoError(t, json.Unmarshal(statusJSON, &statusValue))
+	assertUDPRouteStatusMatchesShippedParentsSchema(t, statusValue)
 }
 
 func TestReconcileCleansStaleStatusAfterParentDisappears(t *testing.T) {
@@ -522,6 +570,32 @@ func findCondition(conditions []metav1.Condition, conditionType string) *metav1.
 		}
 	}
 	return nil
+}
+
+func assertUDPRouteStatusMatchesShippedParentsSchema(t *testing.T, status map[string]interface{}) {
+	t.Helper()
+	crd := operatormanifests.UDPRouteCRD()
+	var statusSchema *apiextensionsv1.JSONSchemaProps
+	for i := range crd.Spec.Versions {
+		version := &crd.Spec.Versions[i]
+		if version.Name == "v1" {
+			require.NotNil(t, version.Schema)
+			require.NotNil(t, version.Schema.OpenAPIV3Schema)
+			schema := version.Schema.OpenAPIV3Schema.Properties["status"]
+			statusSchema = &schema
+			break
+		}
+	}
+	require.NotNil(t, statusSchema, "shipped UDPRoute CRD must contain the v1 status schema")
+
+	require.Contains(t, statusSchema.Required, "parents")
+	parentsSchema, ok := statusSchema.Properties["parents"]
+	require.True(t, ok, "shipped UDPRoute v1 status schema must define parents")
+	require.Equal(t, "array", parentsSchema.Type)
+	parents, ok := status["parents"]
+	require.True(t, ok, "serialized UDPRoute status must contain required parents")
+	assert.IsType(t, []interface{}{}, parents)
+	assert.Empty(t, parents)
 }
 
 // concurrentForeignStatusWriter simulates another controller updating its
