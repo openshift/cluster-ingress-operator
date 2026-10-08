@@ -31,16 +31,12 @@ oc get gatewayclass -A
 CLONE_DIR=$(mktemp -d)
 cd "${CLONE_DIR}"
 
-# find the branch of gateway-api repo
-RELEASE_VERSION=$(\grep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
-BRANCH="release-${RELEASE_VERSION}"
-echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
+# Use the exact bundle version because patch releases can change both the
+# conformance suite and CRDs within a release branch.
+GATEWAY_API_TAG="${BUNDLE_VERSION}"
+echo "gateway-api repo tag \"${GATEWAY_API_TAG}\" into ${CLONE_DIR}..."
 
-# clone the branch that matched the installed CRDs version
-# branch release-1.0 -> bundle-version v1.0.0
-# branch release-1.1 -> bundle-version v1.1.1
-# branch release-1.2 -> bundle-version v1.2.1
-git clone --branch "${BRANCH}" https://github.com/kubernetes-sigs/gateway-api
+git clone --branch "${GATEWAY_API_TAG}" https://github.com/kubernetes-sigs/gateway-api
 cd gateway-api
 
 if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
@@ -67,10 +63,11 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 # - GatewayBackendClientCertificate, GatewayFrontendClientCertificateValidation,
 #   GatewayFrontendClientCertificateValidationInsecureFallback, GatewayHTTPSListenerDetectMisdirectedRequests:
 #   not supported by Istio 1.30.1 (https://github.com/istio/istio/blob/1.30.1/pilot/pkg/config/kube/gateway/supported_features.go#L22).
-# - ListenerSet: CRD is installed as part of Gateway API v1.5.1 standard channel, but Istio does not yet support it.
+# - ListenerSet and UDPRoute: CRDs are installed from the Gateway API v1.6.2 standard channel,
+#   but the OpenShift Gateway API implementation does not support them.
 SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
 SKIPPED_TESTS=""
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.4.2" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC,GATEWAY-TLS" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
+go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.4.2" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--contact=https://github.com/openshift/cluster-ingress-operator/issues/new" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC,GATEWAY-TLS" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
 cat conformance/openshift.yaml

@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -408,8 +409,14 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	case "listenersets":
 		kind = "ListenerSet"
 		versions = []map[string]bool{{"v1": true}}
+	case "tcproutes":
+		kind = "TCPRoute"
+		versions = []map[string]bool{{"v1": true}}
 	case "tlsroutes":
 		kind = "TLSRoute"
+		versions = []map[string]bool{{"v1": true}}
+	case "udproutes":
+		kind = "UDPRoute"
 		versions = []map[string]bool{{"v1": true}}
 	}
 
@@ -447,6 +454,55 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	}
 
 	return crd
+}
+
+func Example_buildGWAPICRDFromName() {
+	expectedKinds := map[string]string{
+		"gatewayclasses.gateway.networking.k8s.io":     "GatewayClass",
+		"gateways.gateway.networking.k8s.io":           "Gateway",
+		"grpcroutes.gateway.networking.k8s.io":         "GRPCRoute",
+		"httproutes.gateway.networking.k8s.io":         "HTTPRoute",
+		"referencegrants.gateway.networking.k8s.io":    "ReferenceGrant",
+		"backendtlspolicies.gateway.networking.k8s.io": "BackendTLSPolicy",
+		"listenersets.gateway.networking.k8s.io":       "ListenerSet",
+		"tcproutes.gateway.networking.k8s.io":          "TCPRoute",
+		"tlsroutes.gateway.networking.k8s.io":          "TLSRoute",
+		"udproutes.gateway.networking.k8s.io":          "UDPRoute",
+	}
+
+	if len(crdNames) != len(expectedKinds) {
+		panic(fmt.Sprintf("inventoried CRDs: got %d, want %d", len(crdNames), len(expectedKinds)))
+	}
+	for _, name := range crdNames {
+		crd := buildGWAPICRDFromName(name)
+		apiextensionsv1.SetDefaults_CustomResourceDefinition(crd)
+
+		expectedKind, ok := expectedKinds[name]
+		if !ok {
+			panic(fmt.Sprintf("missing expected kind for inventoried CRD %q", name))
+		}
+		if crd.Spec.Names.Kind != expectedKind || crd.Spec.Names.ListKind != expectedKind+"List" {
+			panic(fmt.Sprintf("%s names: got kind %q, listKind %q", name, crd.Spec.Names.Kind, crd.Spec.Names.ListKind))
+		}
+		for field, value := range map[string]string{
+			"plural":   crd.Spec.Names.Plural,
+			"singular": crd.Spec.Names.Singular,
+			"kind":     strings.ToLower(crd.Spec.Names.Kind),
+			"listKind": strings.ToLower(crd.Spec.Names.ListKind),
+		} {
+			if errs := utilvalidation.IsDNS1035Label(value); len(errs) != 0 {
+				panic(fmt.Sprintf("%s %s %q is invalid: %v", name, field, value, errs))
+			}
+		}
+		if crd.Spec.Names.Plural == "tcproutes" || crd.Spec.Names.Plural == "udproutes" {
+			if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Name != "v1" || !crd.Spec.Versions[0].Served || !crd.Spec.Versions[0].Storage {
+				panic(fmt.Sprintf("%s must use one served/storage v1 version: %#v", name, crd.Spec.Versions))
+			}
+		}
+	}
+
+	fmt.Println("all 10 Gateway API CRD fixtures are valid")
+	// Output: all 10 Gateway API CRD fixtures are valid
 }
 
 // assertSubscription checks if the Subscription of the given name exists and returns an error if not.
