@@ -31,16 +31,12 @@ oc get gatewayclass -A
 CLONE_DIR=$(mktemp -d)
 cd "${CLONE_DIR}"
 
-# find the branch of gateway-api repo
-RELEASE_VERSION=$(\grep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
-BRANCH="release-${RELEASE_VERSION}"
-echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
+# Use the exact bundle version because patch releases can change both the
+# conformance suite and CRDs within a release branch.
+GATEWAY_API_TAG="${BUNDLE_VERSION}"
+echo "gateway-api repo tag \"${GATEWAY_API_TAG}\" into ${CLONE_DIR}..."
 
-# clone the branch that matched the installed CRDs version
-# branch release-1.0 -> bundle-version v1.0.0
-# branch release-1.1 -> bundle-version v1.1.1
-# branch release-1.2 -> bundle-version v1.2.1
-git clone --branch "${BRANCH}" https://github.com/kubernetes-sigs/gateway-api
+git clone --branch "${GATEWAY_API_TAG}" https://github.com/kubernetes-sigs/gateway-api
 cd gateway-api
 
 if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
