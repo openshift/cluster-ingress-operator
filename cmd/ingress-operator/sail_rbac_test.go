@@ -121,7 +121,7 @@ func TestSailRBACVerifyStaleManifestShowsDiffWithoutUsage(t *testing.T) {
 }
 
 func TestRenderRulesIncludesProvenanceSectionsAndPreservesOrder(t *testing.T) {
-	versions := []string{"v1.27.3", "v1.30.4"}
+	versions := []string{"v1.27.3", "v1.30.5"}
 	istiodRules := []rbacv1.PolicyRule{
 		{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}},
 		{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices"}, Verbs: []string{"list"}},
@@ -144,7 +144,7 @@ func TestRenderRulesIncludesProvenanceSectionsAndPreservesOrder(t *testing.T) {
 	if !containsAll(got,
 		"# --- Istiod runtime RBAC (generated) ---",
 		"# Source: every supported vendored Istiod chart at v*/charts/istiod.",
-		"# Union across supported versions: v1.27.3, v1.30.4",
+		"# Union across supported versions: v1.27.3, v1.30.5",
 		"# --- Sail/Istio user-facing RBAC aggregation (generated) ---",
 		"# Source: Sail Library CRDs.",
 		"# Sail Library uses Kubernetes RBAC aggregation labels (rbac.authorization.k8s.io/aggregate-to-*) to add user-facing view, edit, and admin permissions for Sail Operator CRDs.",
