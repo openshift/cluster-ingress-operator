@@ -33,9 +33,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	for _, match := range matches {
-		fmt.Println(match)
+	if err := printMatches(os.Stdout, matches); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
+}
+
+func printMatches(w io.Writer, matches []string) error {
+	for _, match := range matches {
+		if _, err := fmt.Fprintln(w, match); err != nil {
+			return fmt.Errorf("write match: %w", err)
+		}
+	}
+	return nil
 }
 
 func findIngressCRDs(root string) ([]string, error) {

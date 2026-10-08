@@ -1,10 +1,26 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+type errorWriter struct {
+	err error
+}
+
+func (w errorWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestPrintMatchesPropagatesErrors(t *testing.T) {
+	writeErr := errors.New("write failed")
+	if err := printMatches(errorWriter{err: writeErr}, []string{"manifest.yaml"}); !errors.Is(err, writeErr) {
+		t.Fatalf("printMatches error = %v, want %v", err, writeErr)
+	}
+}
 
 func TestFindIngressCRDs(t *testing.T) {
 	tests := []struct {
