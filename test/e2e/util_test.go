@@ -113,7 +113,7 @@ func buildTLSPod(name, namespace string, secret string) *corev1.Pod {
 					sed -e "/^\r/q"
 					SCRIPT
 					chmod +x /tmp/handler.sh
-					socat OPENSSL-LISTEN:8443,reuseaddr,fork,cert=/etc/tls/tls.crt,key=/etc/tls/tls.key,verify=0 SYSTEM:/tmp/handler.sh`},
+					socat OPENSSL-LISTEN:8443,reuseaddr,fork,cert=/etc/tls/tls.crt,key=/etc/tls/tls.key,verify=1,cafile=/etc/tls/ca.crt SYSTEM:/tmp/handler.sh`},
 					Command: []string{"/bin/bash"},
 					Image:   "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest",
 					Name:    "echo",
