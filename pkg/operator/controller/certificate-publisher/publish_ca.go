@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openshift/api/annotations"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+)
+
+const (
+	defaultIngressCertificateDescription = "CA bundle containing the certificate for the default ingress controller, published by the ingress operator."
 )
 
 // ensureDefaultIngressCertConfigMap will create or update the configmap containing the public half of the default ingress wildcard certificate
@@ -19,6 +24,10 @@ func (r *reconciler) ensureDefaultIngressCertConfigMap(caBundle string) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
 			Namespace: name.Namespace,
+			Annotations: map[string]string{
+				annotations.OpenShiftComponent:   controller.RouterTLSOwningComponent,
+				annotations.OpenShiftDescription: defaultIngressCertificateDescription,
+			},
 		},
 		Data: map[string]string{
 			"ca-bundle.crt": caBundle,
@@ -94,6 +103,12 @@ func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap)
 	}
 	updated := current.DeepCopy()
 	updated.Data = desired.Data
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for key, value := range desired.Annotations {
+		updated.Annotations[key] = value
+	}
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
@@ -112,10 +127,19 @@ func (r *reconciler) deleteRouterCAConfigMap(cm *corev1.ConfigMap) (bool, error)
 	return true, nil
 }
 
-// routerCAConfigMapsEqual compares two router CA configmaps.
+// routerCAConfigMapsEqual compares two router CA configmaps.  It compares the
+// CA bundle and only the operator-managed TLS metadata annotations
+// (annotations.OpenShiftComponent and annotations.OpenShiftDescription).
+// Unrelated annotations are intentionally ignored so that annotations set by
+// other actors do not cause spurious updates.
 func routerCAConfigMapsEqual(a, b *corev1.ConfigMap) bool {
 	if a.Data["ca-bundle.crt"] != b.Data["ca-bundle.crt"] {
 		return false
+	}
+	for _, key := range []string{annotations.OpenShiftComponent, annotations.OpenShiftDescription} {
+		if a.Annotations[key] != b.Annotations[key] {
+			return false
+		}
 	}
 	return true
 }
