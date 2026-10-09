@@ -1354,3 +1354,116 @@ func buildFakeCache(t *testing.T, existingObjects []runtime.Object) *testutil.Fa
 	cache := testutil.FakeCache{Informers: &informer, Reader: cl}
 	return &cache
 }
+
+// Test_createDNSProviderIfNeeded verifies that createDNSProviderIfNeeded
+// replaces the fake provider with the real provider once zones are added to the
+// cluster DNS config, that it does not replace a real provider when the zones
+// change or are removed, and that it does not rebuild a fake provider that is
+// used on purpose although the DNS config has zones.
+func Test_createDNSProviderIfNeeded(t *testing.T) {
+	azureInfraConfig := &configv1.Infrastructure{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type:  configv1.AzurePlatformType,
+				Azure: &configv1.AzurePlatformStatus{CloudName: configv1.AzurePublicCloud},
+			},
+		},
+	}
+	azureCreds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "openshift-ingress-operator",
+			Name:      cloudCredentialsSecretName,
+		},
+		Data: map[string][]byte{
+			"azure_client_id":       []byte("client-id"),
+			"azure_client_secret":   []byte("client-secret"),
+			"azure_tenant_id":       []byte("tenant-id"),
+			"azure_subscription_id": []byte("subscription-id"),
+		},
+	}
+	ibmExternalInfraConfig := &configv1.Infrastructure{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: configv1.InfrastructureStatus{
+			ControlPlaneTopology: configv1.ExternalTopologyMode,
+			PlatformStatus: &configv1.PlatformStatus{
+				Type:     configv1.IBMCloudPlatformType,
+				IBMCloud: &configv1.IBMCloudPlatformStatus{},
+			},
+		},
+	}
+	zonelessDNSConfig := &configv1.DNS{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec:       configv1.DNSSpec{BaseDomain: "example.com"},
+	}
+	zonedDNSConfig := zonelessDNSConfig.DeepCopy()
+	zonedDNSConfig.Spec.PublicZone = &configv1.DNSZone{ID: "public"}
+	zonedDNSConfig.Spec.PrivateZone = &configv1.DNSZone{ID: "private"}
+	changedDNSConfig := zonedDNSConfig.DeepCopy()
+	changedDNSConfig.Spec.PrivateZone.ID = "other-private"
+	record := &iov1.DNSRecord{
+		Spec: iov1.DNSRecordSpec{DNSManagementPolicy: iov1.ManagedDNS},
+	}
+
+	type step struct {
+		name        string
+		dnsConfig   *configv1.DNS
+		wantFake    bool
+		wantRebuild bool
+	}
+	testCases := []struct {
+		name    string
+		objects []runtime.Object
+		steps   []step
+	}{
+		{
+			name:    "Azure",
+			objects: []runtime.Object{azureInfraConfig, azureCreds},
+			steps: []step{
+				{"no zones uses the fake provider", zonelessDNSConfig, true, true},
+				{"adding zones rebuilds the provider", zonedDNSConfig, false, true},
+				{"no change keeps the provider", zonedDNSConfig, false, false},
+				// The real provider may still be needed to delete
+				// records from the previous zones.
+				{"changing a zone keeps the provider", changedDNSConfig, false, false},
+				{"removing all zones keeps the provider", zonelessDNSConfig, false, false},
+			},
+		},
+		{
+			name:    "IBM Cloud with External topology",
+			objects: []runtime.Object{ibmExternalInfraConfig},
+			steps: []step{
+				{"zones use the fake provider", zonedDNSConfig, true, true},
+				{"no change keeps the provider", zonedDNSConfig, true, false},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			configv1.AddToScheme(scheme)
+			corev1.AddToScheme(scheme)
+			cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(tc.objects...).Build()
+			r := &reconciler{
+				config: Config{CredentialsRequestNamespace: "openshift-ingress-operator"},
+				client: cl,
+				cache:  &testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl},
+			}
+			for _, s := range tc.steps {
+				// r.infraConfig is set on every rebuild.  The fake
+				// provider has zero size, so it cannot be used to
+				// detect a rebuild.
+				infraConfig := r.infraConfig
+				if err := r.createDNSProviderIfNeeded(s.dnsConfig.DeepCopy(), record); err != nil {
+					t.Fatalf("%s: unexpected error: %v", s.name, err)
+				}
+				if _, isFake := r.dnsProvider.(*dns.FakeProvider); isFake != s.wantFake {
+					t.Errorf("%s: expected fake provider: %t, got %T", s.name, s.wantFake, r.dnsProvider)
+				}
+				if rebuilt := r.infraConfig != infraConfig; rebuilt != s.wantRebuild {
+					t.Errorf("%s: expected rebuild: %t, got %t", s.name, s.wantRebuild, rebuilt)
+				}
+			}
+		})
+	}
+}
