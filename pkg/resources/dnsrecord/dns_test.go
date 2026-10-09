@@ -119,6 +119,46 @@ func Test_desiredWildcardDNSRecord(t *testing.T) {
 			},
 		},
 		{
+			description: "IPv6 IP to AAAA record",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "2603:1030:c02:9::7a7"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.AAAARecordType,
+				Targets:             []string{"2603:1030:c02:9::7a7"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description: "IPv4-mapped IPv6 IP to A record",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "::ffff:192.0.2.1"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.ARecordType,
+				Targets:             []string{"::ffff:192.0.2.1"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
 			description: "unmanaged DNS policy",
 			publish: operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.LoadBalancerServiceStrategyType,

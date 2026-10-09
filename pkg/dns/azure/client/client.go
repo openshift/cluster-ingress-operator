@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"net"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
@@ -47,12 +48,12 @@ type Config struct {
 	TenantID string
 }
 
-// ARecord is a DNS A record.
+// ARecord is a DNS A or AAAA record.
 type ARecord struct {
 	// Name is the record name.
 	Name string
 
-	// Address is the IPv4 address of the A record.
+	// Address is the IPv4 or IPv6 address of dns record.
 	Address string
 
 	//TTL is the Time To Live property of the A record
@@ -60,6 +61,14 @@ type ARecord struct {
 
 	//Label is the metadata label that needs to be added with the A record.
 	Label string
+}
+
+// isIPv6 reports whether the record needs to be published as AAAA rather than A.
+// Both Put and Delete derive the type from this, so they cannot disagree and
+// leave an orphaned record in the zone.
+func (a ARecord) isIPv6() bool {
+	ip := net.ParseIP(a.Address)
+	return ip != nil && ip.To4() == nil
 }
 
 type dnsClient struct {
@@ -130,24 +139,36 @@ func newRecordSetClient(config Config, credential azcore.TokenCredential) (*reco
 func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
 	rs := armdns.RecordSet{
 		Properties: &armdns.RecordSetProperties{
-			TTL: &arec.TTL,
-			ARecords: []*armdns.ARecord{
-				{IPv4Address: &arec.Address},
-			},
+			TTL:      &arec.TTL,
 			Metadata: metadata,
 		},
 	}
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, rs, nil)
+	recordType := armdns.RecordTypeA
+	if arec.isIPv6() {
+		recordType = armdns.RecordTypeAAAA
+		rs.Properties.AaaaRecords = []*armdns.AaaaRecord{
+			{IPv6Address: &arec.Address},
+		}
+	} else {
+		rs.Properties.ARecords = []*armdns.ARecord{
+			{IPv4Address: &arec.Address},
+		}
+	}
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, recordType, rs, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+		return errors.Wrapf(err, "failed to update dns %s record: %s.%s", recordType, arec.Name, zone.Name)
 	}
 	return nil
 }
 
 func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, nil)
+	recordType := armdns.RecordTypeA
+	if arec.isIPv6() {
+		recordType = armdns.RecordTypeAAAA
+	}
+	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, recordType, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+		return errors.Wrapf(err, "failed to delete dns %s record: %s.%s", recordType, arec.Name, zone.Name)
 	}
 	return nil
 }
@@ -175,25 +196,37 @@ func newPrivateRecordSetClient(config Config, credential azcore.TokenCredential)
 func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
 	rs := armprivatedns.RecordSet{
 		Properties: &armprivatedns.RecordSetProperties{
-			TTL: &arec.TTL,
-			ARecords: []*armprivatedns.ARecord{
-				{IPv4Address: &arec.Address},
-			},
+			TTL:      &arec.TTL,
 			Metadata: metadata,
 		},
 	}
+	recordType := armprivatedns.RecordTypeA
+	if arec.isIPv6() {
+		recordType = armprivatedns.RecordTypeAAAA
+		rs.Properties.AaaaRecords = []*armprivatedns.AaaaRecord{
+			{IPv6Address: &arec.Address},
+		}
+	} else {
+		rs.Properties.ARecords = []*armprivatedns.ARecord{
+			{IPv4Address: &arec.Address},
+		}
+	}
 
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, rs, nil)
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, recordType, arec.Name, rs, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+		return errors.Wrapf(err, "failed to update dns %s record: %s.%s", recordType, arec.Name, zone.Name)
 	}
 	return nil
 }
 
 func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, nil)
+	recordType := armprivatedns.RecordTypeA
+	if arec.isIPv6() {
+		recordType = armprivatedns.RecordTypeAAAA
+	}
+	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, recordType, arec.Name, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+		return errors.Wrapf(err, "failed to delete dns %s record: %s.%s", recordType, arec.Name, zone.Name)
 	}
 	return nil
 }
