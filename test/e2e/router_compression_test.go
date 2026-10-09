@@ -241,7 +241,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloPod, DefaultRetryTimeout) })
 
-	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels)
+	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), helloService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", helloService.Namespace, helloService.Name, err)
 	}

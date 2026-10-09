@@ -103,12 +103,13 @@ func TestGatewayAPITLSScannerSetup(t *testing.T) {
 	t.Logf("Gateway %s/%s is ready for TLS scanning (resources intentionally left in place)", gateway.Namespace, gateway.Name)
 }
 
-// ensureGatewayTLSSecret creates a self-signed TLS secret for the Gateway
-// HTTPS listener if it does not already exist.
+// ensureGatewayTLSSecret creates a CA-signed TLS secret for the Gateway
+// HTTPS listener if it does not already exist. The secret includes the CA
+// certificate (ca.crt) for client certificate verification.
 func ensureGatewayTLSSecret(t *testing.T, namespace, name, dnsName string) (*corev1.Secret, error) {
 	t.Helper()
 
-	certPEM, keyPEM, err := generateServerTLSKeyPair(dnsName)
+	caCertPEM, _, certPEM, keyPEM, err := generateServerTLSKeyPair(dnsName)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +123,7 @@ func ensureGatewayTLSSecret(t *testing.T, namespace, name, dnsName string) (*cor
 		Data: map[string][]byte{
 			"tls.crt": []byte(certPEM),
 			"tls.key": []byte(keyPEM),
+			"ca.crt":  []byte(caCertPEM),
 		},
 	}
 	if err := createOrGetWithRetry(t, t.Context(), secret, DefaultRetryTimeout); err != nil {
@@ -175,21 +177,69 @@ func ensureHTTPSGateway(t *testing.T, gatewayClassName, name, namespace, hostnam
 	return gateway, nil
 }
 
-// generateServerTLSKeyPair returns PEM-encoded certificate and key material
-// suitable for a Gateway HTTPS listener Secret.
-func generateServerTLSKeyPair(dnsName string) (certPEM, keyPEM string, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// generateServerTLSKeyPair generates a CA certificate and a server certificate
+// signed by that CA. It returns PEM-encoded CA cert, CA key, server cert, and
+// server key suitable for a Gateway HTTPS listener Secret.
+func generateServerTLSKeyPair(dnsName string) (caCertPEM, caKeyPEM, certPEM, keyPEM string, err error) {
+	// Generate the CA key and self-signed CA certificate.
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to generate key: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to generate CA key: %w", err)
 	}
 
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	caSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return "", "", fmt.Errorf("failed to generate serial: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to generate CA serial: %w", err)
 	}
 
-	template := &x509.Certificate{
-		SerialNumber: serial,
+	caTemplate := &x509.Certificate{
+		SerialNumber: caSerial,
+		Subject: pkix.Name{
+			Organization: []string{"OpenShift E2E Testing"},
+			CommonName:   "E2E Test CA",
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("failed to create CA certificate: %w", err)
+	}
+	caCerts, err := x509.ParseCertificates(caDER)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+	if len(caCerts) != 1 {
+		return "", "", "", "", fmt.Errorf("expected 1 CA certificate, got %d", len(caCerts))
+	}
+	caCert := caCerts[0]
+
+	caKeyDER, err := x509.MarshalPKCS8PrivateKey(caKey)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("failed to marshal CA private key: %w", err)
+	}
+	caKeyPEM = string(pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: caKeyDER,
+	}))
+
+	// Generate the server key and certificate signed by the CA.
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("failed to generate server key: %w", err)
+	}
+
+	serverSerial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("failed to generate server serial: %w", err)
+	}
+
+	serverTemplate := &x509.Certificate{
+		SerialNumber: serverSerial,
 		Subject: pkix.Name{
 			Organization: []string{"OpenShift E2E Testing"},
 			CommonName:   dnsName,
@@ -202,26 +252,98 @@ func generateServerTLSKeyPair(dnsName string) (certPEM, keyPEM string, err error
 		DNSNames:              []string{dnsName, "localhost"},
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, &serverKey.PublicKey, caKey)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create certificate: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to create server certificate: %w", err)
 	}
-	certs, err := x509.ParseCertificates(der)
+	serverCerts, err := x509.ParseCertificates(serverDER)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to parse certificate: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to parse server certificate: %w", err)
 	}
-	if len(certs) != 1 {
-		return "", "", fmt.Errorf("expected 1 certificate, got %d", len(certs))
+	if len(serverCerts) != 1 {
+		return "", "", "", "", fmt.Errorf("expected 1 server certificate, got %d", len(serverCerts))
 	}
 
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	serverKeyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to marshal private key: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to marshal server private key: %w", err)
 	}
 	keyPEM = string(pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
-		Bytes: keyDER,
+		Bytes: serverKeyDER,
 	}))
 
-	return encodeCert(certs[0]), keyPEM, nil
+	return encodeCert(caCert), caKeyPEM, encodeCert(serverCerts[0]), keyPEM, nil
+}
+
+// generateClientKeyPair generates a client certificate signed by the given CA.
+// The returned PEM-encoded cert has ExtKeyUsageClientAuth for mTLS.
+func generateClientKeyPair(caCertPEM, caKeyPEM, commonName string) (clientCertPEM, clientKeyPEM string, err error) {
+	caBlock, _ := pem.Decode([]byte(caCertPEM))
+	if caBlock == nil {
+		return "", "", fmt.Errorf("failed to decode CA cert PEM")
+	}
+	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+
+	caKeyBlock, _ := pem.Decode([]byte(caKeyPEM))
+	if caKeyBlock == nil {
+		return "", "", fmt.Errorf("failed to decode CA key PEM")
+	}
+	caKeyParsed, err := x509.ParsePKCS8PrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse CA private key: %w", err)
+	}
+	caKey, ok := caKeyParsed.(*ecdsa.PrivateKey)
+	if !ok {
+		return "", "", fmt.Errorf("CA key is not ECDSA")
+	}
+
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate client key: %w", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate client serial: %w", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			Organization: []string{"OpenShift E2E Testing"},
+			CommonName:   commonName,
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	clientDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &clientKey.PublicKey, caKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create client certificate: %w", err)
+	}
+	clientCerts, err := x509.ParseCertificates(clientDER)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse client certificate: %w", err)
+	}
+	if len(clientCerts) != 1 {
+		return "", "", fmt.Errorf("expected 1 client certificate, got %d", len(clientCerts))
+	}
+
+	clientKeyDER, err := x509.MarshalPKCS8PrivateKey(clientKey)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to marshal client private key: %w", err)
+	}
+	clientKeyPEM = string(pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: clientKeyDER,
+	}))
+
+	return encodeCert(clientCerts[0]), clientKeyPEM, nil
 }
