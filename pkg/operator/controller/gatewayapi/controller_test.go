@@ -794,7 +794,7 @@ func (f *fakeWatchController) Watch(_ source.TypedSource[reconcile.Request]) err
 }
 
 // TestRegisterIngressWatch verifies that the gatewayapi controller only
-// watches the v1alpha1 Ingress CR when the management mode gate is
+// watches the v1 Ingress CR when the management mode gate is
 // enabled. This CRD only exists on TechPreview/DevPreview clusters and
 // is absent entirely on HyperShift Default clusters; watching it
 // unconditionally previously caused controller-runtime to fail resolving
