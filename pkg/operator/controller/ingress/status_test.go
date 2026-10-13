@@ -39,6 +39,33 @@ import (
 	utilclocktesting "k8s.io/utils/clock/testing"
 )
 
+func TestCheckDeprecatedHAProxyVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		version    operatorv1.HAProxyVersion
+		deprecated []string
+		wantError  string
+	}{
+		{name: "legacy 2.8 blocks upgrade", version: alternateHAProxyVersion, deprecated: []string{"2.8"}, wantError: `haproxy "2.8" is being removed in the next release; update or unset spec.haproxyVersion before upgrading`},
+		{name: "3.2 remains upgradeable", version: operatorv1.HAProxyVersion32, deprecated: []string{"2.8"}},
+		{name: "unset remains upgradeable", deprecated: []string{"2.8"}},
+		{name: "configured deprecated list respected", version: alternateHAProxyVersion},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			ic := &operatorv1.IngressController{Status: operatorv1.IngressControllerStatus{EffectiveHAProxyVersion: testCase.version}}
+			err := checkDeprecatedHAProxyVersion(ic, testCase.deprecated)
+			if testCase.wantError != "" {
+				assert.EqualError(t, err, testCase.wantError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
 	return &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
@@ -3407,7 +3434,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			description: "effectiveHAProxyVersion changed value",
 			expected:    false,
 			a: operatorv1.IngressControllerStatus{
-				EffectiveHAProxyVersion: operatorv1.HAProxyVersion28,
+				EffectiveHAProxyVersion: alternateHAProxyVersion,
 			},
 			b: operatorv1.IngressControllerStatus{
 				EffectiveHAProxyVersion: operatorv1.HAProxyVersion32,

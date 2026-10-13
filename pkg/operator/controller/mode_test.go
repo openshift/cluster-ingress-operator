@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -25,36 +25,36 @@ func TestModeAccessor_LastAppliedMode(t *testing.T) {
 
 	t.Run("set and get", func(t *testing.T) {
 		m := NewGatewayAPIModeAccessor(true)
-		m.SetLastAppliedMode(operatorv1alpha1.GatewayAPIManagementModeManaged)
+		m.SetLastAppliedMode(operatorv1.GatewayAPIManagementModeManaged)
 		got := m.GetLastAppliedMode()
 		assert.NotNil(t, got)
-		assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeManaged, *got)
+		assert.Equal(t, operatorv1.GatewayAPIManagementModeManaged, *got)
 	})
 
 	t.Run("overwrite with different mode", func(t *testing.T) {
 		m := NewGatewayAPIModeAccessor(true)
-		m.SetLastAppliedMode(operatorv1alpha1.GatewayAPIManagementModeManaged)
-		m.SetLastAppliedMode(operatorv1alpha1.GatewayAPIManagementModeUnmanaged)
+		m.SetLastAppliedMode(operatorv1.GatewayAPIManagementModeManaged)
+		m.SetLastAppliedMode(operatorv1.GatewayAPIManagementModeUnmanaged)
 		got := m.GetLastAppliedMode()
 		assert.NotNil(t, got)
-		assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged, *got)
+		assert.Equal(t, operatorv1.GatewayAPIManagementModeUnmanaged, *got)
 	})
 
 	t.Run("independent of transition state", func(t *testing.T) {
 		m := NewGatewayAPIModeAccessor(true)
-		m.SetLastAppliedMode(operatorv1alpha1.GatewayAPIManagementModeManaged)
+		m.SetLastAppliedMode(operatorv1.GatewayAPIManagementModeManaged)
 		m.SetTransitionState(TransitionState{})
 		got := m.GetLastAppliedMode()
 		assert.NotNil(t, got,
 			"clearing transition state must not affect lastAppliedMode")
-		assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeManaged, *got)
+		assert.Equal(t, operatorv1.GatewayAPIManagementModeManaged, *got)
 	})
 }
 
 func TestModeAccessor_BlockDependents(t *testing.T) {
 	t.Run("immediately makes AllowDependents false", func(t *testing.T) {
 		m := NewGatewayAPIModeAccessor(true)
-		m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+		m.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
 		require.True(t, m.AllowDependents(),
 			"precondition: AllowDependents must be true after a fully Managed Update")
 
@@ -66,7 +66,7 @@ func TestModeAccessor_BlockDependents(t *testing.T) {
 
 	t.Run("does not touch present or compliant", func(t *testing.T) {
 		m := NewGatewayAPIModeAccessor(true)
-		m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+		m.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
 
 		m.BlockDependents()
 
@@ -78,7 +78,7 @@ func TestModeAccessor_BlockDependents(t *testing.T) {
 
 		// Restoring managed=true should make AllowDependents true again,
 		// confirming present/compliant were never actually cleared.
-		m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+		m.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
 		assert.True(t, m.AllowDependents(),
 			"present/compliant must be unaffected by BlockDependents")
 	})
@@ -191,7 +191,7 @@ func TestModeAccessor_AllowDependents_GateOn(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewGatewayAPIModeAccessor(true)
-			m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, tc.managed, tc.present, tc.compliant)
+			m.Update(operatorv1.GatewayAPIManagementModeManaged, tc.managed, tc.present, tc.compliant)
 			assert.Equal(t, tc.want, m.AllowDependents())
 		})
 	}
@@ -199,13 +199,13 @@ func TestModeAccessor_AllowDependents_GateOn(t *testing.T) {
 
 func TestModeAccessor_DesiredMode(t *testing.T) {
 	m := NewGatewayAPIModeAccessor(true)
-	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementMode(""), m.DesiredMode(), "initial mode should be empty until first Update")
+	assert.Equal(t, operatorv1.GatewayAPIManagementMode(""), m.DesiredMode(), "initial mode should be empty until first Update")
 
-	m.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
-	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged, m.DesiredMode())
+	m.Update(operatorv1.GatewayAPIManagementModeUnmanaged, false, true, true)
+	assert.Equal(t, operatorv1.GatewayAPIManagementModeUnmanaged, m.DesiredMode())
 
-	m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
-	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeManaged, m.DesiredMode())
+	m.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
+	assert.Equal(t, operatorv1.GatewayAPIManagementModeManaged, m.DesiredMode())
 }
 
 func TestModeAccessor_GateEnabled(t *testing.T) {
@@ -217,13 +217,13 @@ func TestModeAccessor_DependentPredicate(t *testing.T) {
 	m := NewGatewayAPIModeAccessor(true)
 	p := m.DependentPredicate()
 
-	m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, false, false, false)
+	m.Update(operatorv1.GatewayAPIManagementModeManaged, false, false, false)
 	assert.False(t, p.Create(event.CreateEvent{}), "predicate should deny creates when AllowDependents=false")
 	assert.False(t, p.Update(event.UpdateEvent{}), "predicate should deny updates when AllowDependents=false")
 	assert.False(t, p.Generic(event.GenericEvent{}), "predicate should deny when AllowDependents=false")
 	assert.True(t, p.Delete(event.DeleteEvent{}), "predicate must allow deletes for finalizer cleanup")
 
-	m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+	m.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
 	assert.True(t, p.Create(event.CreateEvent{}), "predicate should allow creates when AllowDependents=true")
 	assert.True(t, p.Update(event.UpdateEvent{}), "predicate should allow updates when AllowDependents=true")
 	assert.True(t, p.Generic(event.GenericEvent{}), "predicate should allow when AllowDependents=true")
@@ -240,18 +240,18 @@ func TestModeAccessor_TransitionState(t *testing.T) {
 	// Set transition in progress.
 	m.SetTransitionState(TransitionState{
 		InProgress: true,
-		Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+		Target:     operatorv1.GatewayAPIManagementModeUnmanaged,
 	})
 	state = m.GetTransitionState()
 	assert.True(t, state.InProgress)
-	assert.Equal(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged, state.Target)
+	assert.Equal(t, operatorv1.GatewayAPIManagementModeUnmanaged, state.Target)
 	assert.Nil(t, state.Error)
 
 	// Set transition error.
 	transitionErr := fmt.Errorf("VAP delete failed")
 	m.SetTransitionState(TransitionState{
 		InProgress: true,
-		Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+		Target:     operatorv1.GatewayAPIManagementModeUnmanaged,
 		Error:      transitionErr,
 	})
 	state = m.GetTransitionState()
@@ -271,7 +271,7 @@ func TestModeAccessor_TransitionStateNotification(t *testing.T) {
 
 	m.SetTransitionState(TransitionState{
 		InProgress: true,
-		Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+		Target:     operatorv1.GatewayAPIManagementModeUnmanaged,
 	})
 	select {
 	case <-events:
@@ -295,7 +295,7 @@ func TestModeAccessor_ConcurrentAccess(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 1000; i++ {
-			m.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+			m.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
 		}
 	}()
 	go func() {
@@ -315,7 +315,7 @@ func TestModeAccessor_ConcurrentAccess(t *testing.T) {
 		for range 1000 {
 			m.SetTransitionState(TransitionState{
 				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+				Target:     operatorv1.GatewayAPIManagementModeUnmanaged,
 			})
 			_ = m.GetTransitionState()
 		}

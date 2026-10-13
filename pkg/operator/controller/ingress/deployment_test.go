@@ -43,7 +43,7 @@ const (
 
 const (
 	defaultHAProxyVersion   = operatorv1.HAProxyVersion32
-	alternateHAProxyVersion = operatorv1.HAProxyVersion28
+	alternateHAProxyVersion = operatorv1.HAProxyVersion("2.8")
 )
 
 var toleration = corev1.Toleration{
@@ -922,7 +922,7 @@ func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.Ingress
 
 func TestDesiredRouterDeploymentSpecHAProxyVersion(t *testing.T) {
 	var haproxyImages = map[operatorv1.HAProxyVersion]string{
-		operatorv1.HAProxyVersion28: "quay.io/openshift/haproxy:2.8",
+		alternateHAProxyVersion:     "quay.io/openshift/haproxy:2.8",
 		operatorv1.HAProxyVersion32: "quay.io/openshift/haproxy:3.2",
 	}
 
@@ -945,21 +945,21 @@ func TestDesiredRouterDeploymentSpecHAProxyVersion(t *testing.T) {
 		"should override default version if using annotation": {
 			featureGateEnabled:    true,
 			haproxyImages:         haproxyImages,
-			defaultVersionAnn:     operatorv1.HAProxyVersion28,
+			defaultVersionAnn:     alternateHAProxyVersion,
 			defaultVersionCmdline: operatorv1.HAProxyVersion32,
 			desiredHAProxyVersion: "",
-			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion28],
+			expectedHAProxyImage:  haproxyImages[alternateHAProxyVersion],
 		},
 		"should deploy default haproxy if unset and default is overridden": {
 			featureGateEnabled:    true,
 			haproxyImages:         haproxyImages,
-			defaultVersionCmdline: operatorv1.HAProxyVersion28,
+			defaultVersionCmdline: alternateHAProxyVersion,
 			desiredHAProxyVersion: "",
-			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion28],
+			expectedHAProxyImage:  haproxyImages[alternateHAProxyVersion],
 		},
 		"should deploy router image if images map is not provided": {
 			featureGateEnabled:    true,
-			defaultVersionCmdline: operatorv1.HAProxyVersion28,
+			defaultVersionCmdline: alternateHAProxyVersion,
 			desiredHAProxyVersion: "",
 			expectedHAProxyImage:  ingressControllerImage,
 		},
@@ -974,8 +974,8 @@ func TestDesiredRouterDeploymentSpecHAProxyVersion(t *testing.T) {
 			featureGateEnabled:    true,
 			haproxyImages:         haproxyImages,
 			defaultVersionCmdline: defaultHAProxyVersion,
-			desiredHAProxyVersion: operatorv1.HAProxyVersion28,
-			expectedHAProxyImage:  haproxyImages[operatorv1.HAProxyVersion28],
+			desiredHAProxyVersion: alternateHAProxyVersion,
+			expectedHAProxyImage:  haproxyImages[alternateHAProxyVersion],
 		},
 		"should fail on invalid haproxy version": {
 			featureGateEnabled:    true,

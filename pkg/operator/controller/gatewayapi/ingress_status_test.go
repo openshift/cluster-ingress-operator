@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,7 +26,7 @@ import (
 func TestComputeManagedCondition(t *testing.T) {
 	tests := []struct {
 		name                    string
-		desiredMode             operatorv1alpha1.GatewayAPIManagementMode
+		desiredMode             operatorv1.GatewayAPIManagementMode
 		present                 bool
 		compliant               bool
 		anyExistingNonCompliant bool
@@ -36,7 +36,7 @@ func TestComputeManagedCondition(t *testing.T) {
 	}{
 		{
 			name:                    "managed, present, compliant",
-			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode:             operatorv1.GatewayAPIManagementModeManaged,
 			present:                 true,
 			compliant:               true,
 			anyExistingNonCompliant: false,
@@ -46,7 +46,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		},
 		{
 			name:                    "managed, not present, none non-compliant (CIO installing)",
-			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode:             operatorv1.GatewayAPIManagementModeManaged,
 			present:                 false,
 			compliant:               false,
 			anyExistingNonCompliant: false,
@@ -56,7 +56,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		},
 		{
 			name:                    "managed, present, not compliant, NOT already managed (takeover blocked)",
-			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode:             operatorv1.GatewayAPIManagementModeManaged,
 			present:                 true,
 			compliant:               false,
 			anyExistingNonCompliant: true,
@@ -66,7 +66,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		},
 		{
 			name:                    "managed, partial presence, some non-compliant, NOT already managed (takeover blocked)",
-			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode:             operatorv1.GatewayAPIManagementModeManaged,
 			present:                 false,
 			compliant:               false,
 			anyExistingNonCompliant: true,
@@ -76,7 +76,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		},
 		{
 			name:                    "managed, not compliant, but WAS already managed (upgrade scenario)",
-			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode:             operatorv1.GatewayAPIManagementModeManaged,
 			present:                 true,
 			compliant:               false,
 			anyExistingNonCompliant: true,
@@ -86,7 +86,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		},
 		{
 			name:                    "unmanaged",
-			desiredMode:             operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			desiredMode:             operatorv1.GatewayAPIManagementModeUnmanaged,
 			present:                 true,
 			compliant:               true,
 			anyExistingNonCompliant: false,
@@ -109,7 +109,7 @@ func TestComputeManagedCondition(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mode := tc.desiredMode
 			if mode == "" {
-				mode = operatorv1alpha1.GatewayAPIManagementModeManaged
+				mode = operatorv1.GatewayAPIManagementModeManaged
 			}
 			cond := computeManagedCondition(mode, tc.anyExistingNonCompliant, tc.wasAlreadyManaged, []string{})
 			assert.Equal(t, conditionTypeGatewayAPICRDsManaged, cond.Type)
@@ -210,14 +210,14 @@ func TestCrdSpecCompliant(t *testing.T) {
 
 func TestReconcileIngressStatus(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
-	ingressCR := func(mode operatorv1alpha1.GatewayAPIManagementMode) *operatorv1alpha1.Ingress {
-		return &operatorv1alpha1.Ingress{
+	ingressCR := func(mode operatorv1.GatewayAPIManagementMode) *operatorv1.Ingress {
+		return &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
 					ManagementMode: mode,
 				},
 			},
@@ -226,7 +226,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 
 	tests := []struct {
 		name              string
-		ingressCR         *operatorv1alpha1.Ingress
+		ingressCR         *operatorv1.Ingress
 		existingCRDs      []runtime.Object
 		wantManaged       bool
 		wantPresent       bool
@@ -237,7 +237,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 	}{
 		{
 			name:              "managed mode, all CRDs compliant",
-			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeManaged),
+			ingressCR:         ingressCR(operatorv1.GatewayAPIManagementModeManaged),
 			existingCRDs:      allManagedCRDObjects(),
 			wantManaged:       true,
 			wantPresent:       true,
@@ -248,7 +248,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 		},
 		{
 			name:              "managed mode, no CRDs present",
-			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeManaged),
+			ingressCR:         ingressCR(operatorv1.GatewayAPIManagementModeManaged),
 			existingCRDs:      nil,
 			wantManaged:       true,
 			wantPresent:       false,
@@ -259,7 +259,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 		},
 		{
 			name:              "unmanaged mode",
-			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeUnmanaged),
+			ingressCR:         ingressCR(operatorv1.GatewayAPIManagementModeUnmanaged),
 			existingCRDs:      allManagedCRDObjects(),
 			wantManaged:       false,
 			wantPresent:       true,
@@ -327,7 +327,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			if tc.ingressCR != nil {
 				mode := tc.ingressCR.Spec.GatewayAPI.ManagementMode
 				if mode == "" {
-					mode = operatorv1alpha1.GatewayAPIManagementModeManaged
+					mode = operatorv1.GatewayAPIManagementModeManaged
 				}
 				snapshot = ingressModeSnapshot{
 					desiredMode: mode,
@@ -336,7 +336,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 				}
 			} else {
 				snapshot = ingressModeSnapshot{
-					desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+					desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 					ingress:     nil,
 					found:       false,
 				}
@@ -350,7 +350,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			if tc.wantStatusUpdate {
 				assert.NotEmpty(t, cl.StatusWriter.Patched, "expected status patch")
 
-				var updated operatorv1alpha1.Ingress
+				var updated operatorv1.Ingress
 				err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
 				require.NoError(t, err)
 
@@ -392,14 +392,14 @@ func TestReconcileIngressStatus(t *testing.T) {
 // compliant.
 func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -445,7 +445,7 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 	}
 
 	snapshot := ingressModeSnapshot{
-		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 		ingress:     ingressObj,
 		found:       true,
 	}
@@ -454,7 +454,7 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 
 	assert.False(t, modeAccessor.AllowDependents(), "must not allow dependents while an unknown CRD is present")
 
-	var updated operatorv1alpha1.Ingress
+	var updated operatorv1.Ingress
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
 	require.NoError(t, err)
 
@@ -467,7 +467,7 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 
 func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
 	crds := allManagedCRDObjects()
@@ -477,11 +477,11 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	}
 	firstCRD.Annotations[bundleVersionAnnotation] = "v0.0.0-wrong"
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -520,7 +520,7 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 	}
 
 	snapshot := ingressModeSnapshot{
-		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 		ingress:     ingressObj,
 		found:       true,
 	}
@@ -529,7 +529,7 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 
 	assert.False(t, modeAccessor.AllowDependents(), "should not allow dependents when CRDs non-compliant")
 
-	var updated operatorv1alpha1.Ingress
+	var updated operatorv1.Ingress
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
 	require.NoError(t, err)
 
@@ -551,7 +551,7 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 // non-compliant without being confused with an Unmanaged-to-Managed takeover.
 func TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, operatorv1alpha1.Install(scheme))
+	require.NoError(t, operatorv1.Install(scheme))
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
 
 	crds := allManagedCRDObjects()
@@ -561,12 +561,12 @@ func TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch(t *testing.T) {
 	}
 	firstCRD.Annotations[bundleVersionAnnotation] = "v0.0.0-upgrade-drift"
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-			ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+			ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 		}},
-		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+		Status: operatorv1.IngressStatus{Conditions: []metav1.Condition{{
 			Type:   conditionTypeGatewayAPICRDsManaged,
 			Status: metav1.ConditionTrue,
 			Reason: reasonManagedByIngressOperator,
@@ -588,13 +588,13 @@ func TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch(t *testing.T) {
 	}
 
 	err := r.reconcileIngressStatus(context.Background(), ingressModeSnapshot{
-		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 		ingress:     ingressObj,
 		found:       true,
 	}, true)
 	require.NoError(t, err)
 
-	var updated operatorv1alpha1.Ingress
+	var updated operatorv1.Ingress
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated))
 	managed := findCondition(updated.Status.Conditions, conditionTypeGatewayAPICRDsManaged)
 	require.NotNil(t, managed)
@@ -610,7 +610,7 @@ func TestReconcileIngressStatus_AlreadyManagedAnnotationMismatch(t *testing.T) {
 // non-compliant, TakeoverBlocked is triggered (the Phase 2 takeover hole).
 func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
 	// Only include a subset of managed CRDs - one with wrong bundle-version.
@@ -622,11 +622,11 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 	}
 	nonCompliantCRD.Annotations[bundleVersionAnnotation] = "v0.0.0-foreign"
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -665,7 +665,7 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 	}
 
 	snapshot := ingressModeSnapshot{
-		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 		ingress:     ingressObj,
 		found:       true,
 	}
@@ -675,7 +675,7 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 	assert.False(t, modeAccessor.ShouldManageCRDs(), "partial presence with non-compliant CRD must block management")
 	assert.False(t, modeAccessor.AllowDependents(), "must not allow dependents when takeover is blocked")
 
-	var updated operatorv1alpha1.Ingress
+	var updated operatorv1.Ingress
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
 	require.NoError(t, err)
 
@@ -713,17 +713,17 @@ func TestComputeCRDConditions_ReadError(t *testing.T) {
 
 func TestReconcileIngressStatus_ObservedGeneration(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "cluster",
 			Generation: 5,
 		},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -762,14 +762,14 @@ func TestReconcileIngressStatus_ObservedGeneration(t *testing.T) {
 	}
 
 	snapshot := ingressModeSnapshot{
-		desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 		ingress:     ingressObj,
 		found:       true,
 	}
 	err := r.reconcileIngressStatus(context.Background(), snapshot, true)
 	require.NoError(t, err)
 
-	var updated operatorv1alpha1.Ingress
+	var updated operatorv1.Ingress
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
 	require.NoError(t, err)
 
