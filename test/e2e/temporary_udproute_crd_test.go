@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -12,13 +13,11 @@ import (
 	"testing"
 	"time"
 
-	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Temporary CI staging only; remove this file and its embedded CRD together after human review and recorded CI proof.
@@ -30,25 +29,14 @@ func init() { prepareUDPRouteTest = installTemporaryUDPRouteCRD }
 
 func installTemporaryUDPRouteCRD(t *testing.T) {
 	t.Helper()
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	err := kclient.Get(t.Context(), client.ObjectKey{Name: udproutestatuscontroller.UDPRouteCRDName}, crd)
-	if errors.IsNotFound(err) {
-		require.NoError(t, yaml.NewYAMLOrJSONDecoder(bytes.NewReader(temporaryUDPRouteCRD), 4096).Decode(crd))
-		require.NoError(t, kclient.Create(t.Context(), crd))
-	} else {
-		require.NoError(t, err)
-	}
-	require.Eventually(t, func() bool {
-		if err := kclient.Get(t.Context(), client.ObjectKey{Name: udproutestatuscontroller.UDPRouteCRDName}, crd); err != nil {
-			return false
-		}
-		for _, condition := range crd.Status.Conditions {
-			if condition.Type == apiextensionsv1.Established && condition.Status == apiextensionsv1.ConditionTrue {
-				return true
+	fixture := temporaryUDPFixture{client: kclient, timeout: 2 * time.Minute, interval: time.Second}
+	require.NoError(t, fixture.ensure(t.Context(), func(uid types.UID) {
+		t.Cleanup(func() {
+			if err := fixture.removeOwned(context.Background(), uid); err != nil {
+				t.Errorf("remove temporary UDPRoute CRD: %v", err)
 			}
-		}
-		return false
-	}, 2*time.Minute, 2*time.Second, "temporary UDPRoute CRD was not established")
+		})
+	}))
 }
 
 func Example_temporaryUDPRouteSchemaFixture() {
