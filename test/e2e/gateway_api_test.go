@@ -166,6 +166,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIManagementModeUnmanaged", testGatewayAPIManagementModeUnmanaged)
 		t.Run("testGatewayAPIManagementModeTakeover", testGatewayAPIManagementModeTakeover)
 	}
+	t.Run("testUDPRouteNotAccepted", testUDPRouteNotAccepted)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
 	}
