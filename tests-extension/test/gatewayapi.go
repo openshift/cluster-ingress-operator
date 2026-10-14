@@ -22,8 +22,13 @@ import (
 var _ = describeGatewayAPICRDTests("GatewayAPI", false)
 var _ = describeGatewayAPICRDTests("GatewayAPIManagementMode", true)
 
+// describeGatewayAPICRDTests registers protection checks separately to preserve the other CRD test names.
 func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
-	return g.Describe(fmt.Sprintf("[sig-network][OCPFeatureGate:%s][Feature:Router][apigroup:gateway.networking.k8s.io]", featureGate), func() {
+	title := fmt.Sprintf("[sig-network][OCPFeatureGate:%s][Feature:Router][apigroup:gateway.networking.k8s.io]", featureGate)
+	if protection {
+		title += "[apigroup:operator.openshift.io]"
+	}
+	return g.Describe(title, func() {
 		var (
 			apiExtClient apiextensionsclient.Interface
 			crdNames     = []string{
@@ -62,7 +67,7 @@ func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
 			if protection {
 				g.BeforeEach(func(ctx g.SpecContext) {
 					cl, err := newClients()
-					o.Expect(err).NotTo(o.HaveOccurred())
+					o.Expect(err).NotTo(o.HaveOccurred(), "failed to build clients for Gateway API CRD protection prerequisites")
 					reason, err := gatewayAPIProtectionSkipReason(ctx, cl.client)
 					o.Expect(err).NotTo(o.HaveOccurred(), "failed to determine Gateway API CRD management state")
 					if reason != "" {
@@ -75,8 +80,8 @@ func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
 					for _, name := range crdNames {
 						err := apiExtClient.ApiextensionsV1().CustomResourceDefinitions().Delete(
 							context.Background(), name, metav1.DeleteOptions{DryRun: []string{metav1.DryRunAll}})
-						o.Expect(err).To(o.HaveOccurred())
-						o.Expect(err.Error()).To(o.ContainSubstring(errorMessage))
+						o.Expect(err).To(o.HaveOccurred(), "expected dry-run deletion of CRD %q to be denied", name)
+						o.Expect(err.Error()).To(o.ContainSubstring(errorMessage), "unexpected dry-run deletion error for CRD %q", name)
 					}
 				})
 
@@ -85,13 +90,13 @@ func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
 					for _, name := range crdNames {
 						crd, err := apiExtClient.ApiextensionsV1().CustomResourceDefinitions().Get(
 							context.Background(), name, metav1.GetOptions{})
-						o.Expect(err).NotTo(o.HaveOccurred())
+						o.Expect(err).NotTo(o.HaveOccurred(), "failed to get CRD %q before dry-run update", name)
 						// some CRDs have a shortName but some not, just trying to add one for all
 						crd.Spec.Names.ShortNames = append(crd.Spec.Names.ShortNames, "fakename")
 						_, err = apiExtClient.ApiextensionsV1().CustomResourceDefinitions().Update(
 							context.Background(), crd, metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}})
-						o.Expect(err).To(o.HaveOccurred())
-						o.Expect(err.Error()).To(o.ContainSubstring(errorMessage))
+						o.Expect(err).To(o.HaveOccurred(), "expected dry-run update of CRD %q to be denied", name)
+						o.Expect(err.Error()).To(o.ContainSubstring(errorMessage), "unexpected dry-run update error for CRD %q", name)
 					}
 				})
 
@@ -101,8 +106,8 @@ func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
 					fakeCRD := buildGWAPICRDFromName(fakeCRDName)
 					_, err := apiExtClient.ApiextensionsV1().CustomResourceDefinitions().Create(
 						context.Background(), fakeCRD, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-					o.Expect(err).To(o.HaveOccurred())
-					o.Expect(err.Error()).To(o.ContainSubstring(errorMessage))
+					o.Expect(err).To(o.HaveOccurred(), "expected dry-run creation of CRD %q to be denied", fakeCRDName)
+					o.Expect(err.Error()).To(o.ContainSubstring(errorMessage), "unexpected dry-run creation error for CRD %q", fakeCRDName)
 				})
 			}
 
@@ -129,6 +134,8 @@ func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
 	})
 }
 
+// gatewayAPIProtectionSkipReason skips deliberate non-management and errors on
+// indeterminate state or stale takeover-blocked status.
 func gatewayAPIProtectionSkipReason(ctx context.Context, cl crclient.Client) (string, error) {
 	ingress := &unstructured.Unstructured{}
 	ingress.SetGroupVersionKind(schema.GroupVersionKind{Group: "operator.openshift.io", Version: "v1alpha1", Kind: "Ingress"})

@@ -88,6 +88,9 @@ func TestGatewayAPIProtectionFeatureGateTags(t *testing.T) {
 		}
 		if strings.Contains(name, "can not be") {
 			protection++
+			if !strings.Contains(name, "[apigroup:operator.openshift.io]") || !strings.Contains(name, "[apigroup:gateway.networking.k8s.io]") {
+				t.Errorf("protection test omits a required API group: %s", name)
+			}
 			if !strings.Contains(name, "[OCPFeatureGate:GatewayAPIManagementMode]") || strings.Contains(name, "[OCPFeatureGate:GatewayAPI]") {
 				t.Errorf("protection test has incorrect feature gates: %s", name)
 			}
