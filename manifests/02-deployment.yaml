@@ -111,7 +111,7 @@ spec:
             - name: GATEWAY_API_OPERATOR_VERSION
               value: servicemeshoperator3.v3.4.3
             - name: ISTIO_VERSION
-              value: v1.30-latest
+              value: v1.31-latest
           ports:
           - containerPort: 9393
             name: metrics

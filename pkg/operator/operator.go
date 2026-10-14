@@ -46,7 +46,6 @@ import (
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
-	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 	"github.com/openshift/library-go/pkg/operator/events"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -403,10 +402,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listenerset-status controller: %w", err)
 	}
-	udpRouteStatusController, err := udproutestatuscontroller.NewUnmanaged(mgr, modeAccessor)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create udproute-status controller: %w", err)
-	}
 
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
@@ -422,7 +417,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			gatewayStatusController,
 			gatewayNetworkPolicyController,
 			listenerSetStatusController,
-			udpRouteStatusController,
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)

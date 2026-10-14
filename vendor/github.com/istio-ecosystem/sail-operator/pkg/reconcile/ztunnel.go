@@ -71,7 +71,9 @@ func (r *ZTunnelReconciler) Validate(ctx context.Context, version, namespace str
 // ComputeValues computes the final Helm values by applying digests, profiles, and user overrides.
 // If baseValues are provided (e.g. from a referenced IstioRevision), they are treated like an additional
 // profile layer: applied on top of profile defaults, with user values then applied on top.
-func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnelValues, baseValues ...helm.Values) (helm.Values, error) {
+func (r *ZTunnelReconciler) ComputeValues(
+	ctx context.Context, version, namespace string, userValues *v1.ZTunnelValues, baseValues ...helm.Values,
+) (helm.Values, error) {
 	resolvedVersion, err := istioversion.Resolve(version)
 	if err != nil {
 		if istioversion.IsEOLVersion(version) {
@@ -85,7 +87,7 @@ func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnel
 	}
 
 	// Apply image digests from configuration, if not already set by user
-	userValues = ApplyZTunnelImageDigests(resolvedVersion, userValues, config.Config)
+	userValues = istiovalues.ApplyZTunnelImageDigests(resolvedVersion, userValues, config.Config)
 
 	// apply TLS config from platform
 	istiovalues.ApplyZTunnelTLSConfig(r.cfg.TLSConfig, resolvedVersion, userValues)
@@ -96,6 +98,12 @@ func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnel
 		return nil, fmt.Errorf("failed to parse ZTunnel version %q: %w", version, err)
 	}
 	istiovalues.ApplyZTunnelFipsValues(userValues, parsedVersion)
+
+	// apply vendor-specific default values
+	userValues, err = istiovalues.ApplyZTunnelVendorDefaults(resolvedVersion, userValues)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply vendor defaults: %w", err)
+	}
 
 	var mergedHelmValues helm.Values
 	if len(baseValues) > 0 && baseValues[0] != nil {
@@ -120,6 +128,14 @@ func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnel
 		}
 	}
 
+	existingReleaseValues, err := helm.GetReleaseValues(ctx, r.cfg.ChartManager, namespace, ztunnelReleaseName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get existing Helm chart %q: %w", ztunnelChartName, err)
+	}
+	if err := istiovalues.ApplyNetworkPolicyDefaults(r.cfg.OCPVersion, &mergedHelmValues, existingReleaseValues); err != nil {
+		return nil, fmt.Errorf("failed to apply network policy defaults: %w", err)
+	}
+
 	// Apply any user Overrides configured as part of values.ztunnel
 	// This step was not required for the IstioCNI resource because the Helm templates[*] automatically override values.cni
 	// [*]https://github.com/istio/istio/blob/0200fd0d4c3963a72f36987c2e8c2887df172abf/manifests/charts/istio-cni/templates/zzy_descope_legacy.yaml#L3
@@ -128,7 +144,6 @@ func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnel
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply user overrides: %w", err)
 	}
-
 	return finalHelmValues, nil
 }
 
@@ -138,7 +153,7 @@ func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnel
 func (r *ZTunnelReconciler) Install(
 	ctx context.Context, version, namespace string, values *v1.ZTunnelValues, ownerRef *metav1.OwnerReference, baseValues ...helm.Values,
 ) error {
-	finalHelmValues, err := r.ComputeValues(version, values, baseValues...)
+	finalHelmValues, err := r.ComputeValues(ctx, version, namespace, values, baseValues...)
 	if err != nil {
 		return err
 	}
@@ -171,32 +186,4 @@ func (r *ZTunnelReconciler) Uninstall(ctx context.Context, namespace string) err
 		return fmt.Errorf("failed to uninstall Helm chart %q: %w", ztunnelChartName, err)
 	}
 	return nil
-}
-
-// ApplyZTunnelImageDigests applies image digests to ZTunnel values if not already set by user.
-// This function is exported for use by the controller and library.
-func ApplyZTunnelImageDigests(version string, values *v1.ZTunnelValues, cfg config.OperatorConfig) *v1.ZTunnelValues {
-	imageDigests, digestsDefined := cfg.ImageDigests[version]
-	// if we don't have default image digests defined for this version, it's a no-op
-	if !digestsDefined {
-		return values
-	}
-
-	// if a global hub or tag value is configured by the user, don't set image digests
-	if values != nil && values.Global != nil && (values.Global.Hub != nil || values.Global.Tag != nil) {
-		return values
-	}
-
-	if values == nil {
-		values = &v1.ZTunnelValues{}
-	}
-
-	// set image digest unless any part of the image has been configured by the user
-	if values.ZTunnel == nil {
-		values.ZTunnel = &v1.ZTunnelConfig{}
-	}
-	if values.ZTunnel.Image == nil && values.ZTunnel.Hub == nil && values.ZTunnel.Tag == nil {
-		values.ZTunnel.Image = &imageDigests.ZTunnelImage
-	}
-	return values
 }
