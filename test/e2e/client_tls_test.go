@@ -126,7 +126,7 @@ func TestClientTLS(t *testing.T) {
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
-	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
@@ -1019,7 +1019,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
-			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels, "http", 80, 8080)
 			if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 				t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 			}
