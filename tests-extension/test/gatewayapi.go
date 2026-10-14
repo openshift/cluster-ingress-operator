@@ -135,7 +135,7 @@ func describeGatewayAPICRDTests(featureGate string, protection bool) bool {
 }
 
 // gatewayAPIProtectionSkipReason skips deliberate non-management and errors on
-// indeterminate state or stale takeover-blocked status.
+// indeterminate state or stale managed or takeover-blocked status.
 func gatewayAPIProtectionSkipReason(ctx context.Context, cl crclient.Client) (string, error) {
 	ingress := &unstructured.Unstructured{}
 	ingress.SetGroupVersionKind(schema.GroupVersionKind{Group: "operator.openshift.io", Version: "v1alpha1", Kind: "Ingress"})
@@ -169,6 +169,16 @@ func gatewayAPIProtectionSkipReason(ctx context.Context, cl crclient.Client) (st
 			return "Gateway API CRD takeover is blocked", nil
 		}
 		if condition["status"] == "True" {
+			observedGeneration, found, err := unstructured.NestedInt64(condition, "observedGeneration")
+			if err != nil {
+				return "", fmt.Errorf("read GatewayAPICRDsManaged observedGeneration: %w", err)
+			}
+			if !found {
+				return "", fmt.Errorf("GatewayAPICRDsManaged=True is missing observedGeneration")
+			}
+			if observedGeneration != ingress.GetGeneration() {
+				return "", fmt.Errorf("GatewayAPICRDsManaged=True has stale observedGeneration %d, expected %d", observedGeneration, ingress.GetGeneration())
+			}
 			return "", nil
 		}
 	}

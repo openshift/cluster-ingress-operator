@@ -27,13 +27,20 @@ func (cl gatewayAPIIngressClient) Get(_ context.Context, _ crclient.ObjectKey, o
 func TestGatewayAPIProtectionSkipReason(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
-		name, mode, status, reason string
-		skip, wantError            bool
-		omitMode, omitConditions   bool
-		stale                      bool
+		name, mode, status, reason          string
+		skip, wantError                     bool
+		omitMode, omitConditions            bool
+		stale                               bool
+		omitGeneration, malformedGeneration bool
+		zeroGeneration                      bool
+		errorContains                       string
 	}{
 		{name: "enabled and managed", mode: "Managed", status: "True"},
 		{name: "default managed", status: "True", omitMode: true},
+		{name: "stale managed must fail", mode: "Managed", status: "True", stale: true, wantError: true, errorContains: "stale observedGeneration 1, expected 2"},
+		{name: "missing managed generation must fail", mode: "Managed", status: "True", omitGeneration: true, wantError: true, errorContains: "missing observedGeneration"},
+		{name: "missing managed generation with zero ingress generation must fail", mode: "Managed", status: "True", omitGeneration: true, zeroGeneration: true, wantError: true, errorContains: "missing observedGeneration"},
+		{name: "malformed managed generation must fail", mode: "Managed", status: "True", malformedGeneration: true, wantError: true, errorContains: "read GatewayAPICRDsManaged observedGeneration"},
 		{name: "unmanaged", mode: "Unmanaged", skip: true},
 		{name: "unmanaged with stale managed status", mode: "Unmanaged", status: "True", skip: true},
 		{name: "takeover blocked", mode: "Managed", status: "False", reason: "TakeoverBlocked", skip: true},
@@ -62,10 +69,25 @@ func TestGatewayAPIProtectionSkipReason(t *testing.T) {
 			if testCase.stale {
 				ingress.SetGeneration(2)
 			}
+			if testCase.zeroGeneration {
+				ingress.SetGeneration(0)
+			}
+			if testCase.omitGeneration || testCase.malformedGeneration {
+				conditions := ingress.Object["status"].(map[string]interface{})["conditions"].([]interface{})
+				condition := conditions[0].(map[string]interface{})
+				if testCase.omitGeneration {
+					delete(condition, "observedGeneration")
+				} else {
+					condition["observedGeneration"] = "invalid"
+				}
+			}
 			cl := gatewayAPIIngressClient{ingress: ingress}
 			reason, err := gatewayAPIProtectionSkipReason(context.Background(), cl)
 			if (reason != "") != testCase.skip || (err != nil) != testCase.wantError {
 				t.Fatalf("got reason %q, error %v; want skip=%v, error=%v", reason, err, testCase.skip, testCase.wantError)
+			}
+			if testCase.errorContains != "" && (err == nil || !strings.Contains(err.Error(), testCase.errorContains)) {
+				t.Errorf("got error %v; want diagnostic containing %q", err, testCase.errorContains)
 			}
 		})
 	}
