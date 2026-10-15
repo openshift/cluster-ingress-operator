@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -97,14 +97,14 @@ func TestReconcile_GateOn_Managed_CreatesVAP(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -179,14 +179,14 @@ func TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -260,14 +260,14 @@ func TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -339,14 +339,14 @@ func TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 			},
 		},
 	}
@@ -420,14 +420,14 @@ func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 			},
 		},
 	}
@@ -501,7 +501,7 @@ func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
 	}
 
 	// Verify Ingress status shows Unmanaged (transition complete since delete succeeded).
-	var updated operatorv1alpha1.Ingress
+	var updated operatorv1.Ingress
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &updated)
 	require.NoError(t, err)
 	managedCond := findCondition(updated.Status.Conditions, conditionTypeGatewayAPICRDsManaged)
@@ -519,14 +519,14 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
-	ingressObj := &operatorv1alpha1.Ingress{
+	ingressObj := &operatorv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: operatorv1alpha1.IngressSpec{
-			GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+		Spec: operatorv1.IngressSpec{
+			GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+				ManagementMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 			},
 		},
 	}
@@ -580,7 +580,7 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 
 	// Verify that the Ingress status was NOT written with Unmanaged
 	// (reconcileIngressStatus was never reached).
-	var ingress operatorv1alpha1.Ingress
+	var ingress operatorv1.Ingress
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: "cluster"}, &ingress)
 	require.NoError(t, err)
 	managedCond := findCondition(ingress.Status.Conditions, conditionTypeGatewayAPICRDsManaged)
@@ -915,15 +915,15 @@ func TestDeleteAdmissionPolicy(t *testing.T) {
 // transition step that gates Unmanaged status on VAP deletion.
 func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	scheme := runtime.NewScheme()
-	operatorv1alpha1.Install(scheme)
+	operatorv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
 	t.Run("Managed mode does nothing", func(t *testing.T) {
-		ingressObj := &operatorv1alpha1.Ingress{
+		ingressObj := &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-					ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+					ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 				},
 			},
 		}
@@ -940,7 +940,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 		}
 		r := &reconciler{client: cl}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 			ingress:     ingressObj,
 			found:       true,
 		}
@@ -950,11 +950,11 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	})
 
 	t.Run("Unmanaged mode deletes VAP", func(t *testing.T) {
-		ingressObj := &operatorv1alpha1.Ingress{
+		ingressObj := &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-					ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+					ManagementMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 				},
 			},
 		}
@@ -973,7 +973,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 		}
 		r := &reconciler{client: cl}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 			ingress:     ingressObj,
 			found:       true,
 		}
@@ -993,7 +993,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 		}
 		r := &reconciler{client: cl}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 			ingress:     nil,
 			found:       false,
 		}
@@ -1003,11 +1003,11 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	})
 
 	t.Run("Unmanaged mode calls SailUninstaller before deleting VAP", func(t *testing.T) {
-		ingressObj := &operatorv1alpha1.Ingress{
+		ingressObj := &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-					ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+					ManagementMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 				},
 			},
 		}
@@ -1030,7 +1030,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 			config: Config{SailUninstaller: uninstaller},
 		}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 			ingress:     ingressObj,
 			found:       true,
 		}
@@ -1041,11 +1041,11 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	})
 
 	t.Run("Unmanaged mode propagates SailUninstaller error and skips VAP deletion", func(t *testing.T) {
-		ingressObj := &operatorv1alpha1.Ingress{
+		ingressObj := &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-					ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+					ManagementMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 				},
 			},
 		}
@@ -1068,7 +1068,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 			config: Config{SailUninstaller: uninstaller},
 		}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 			ingress:     ingressObj,
 			found:       true,
 		}
@@ -1080,11 +1080,11 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	})
 
 	t.Run("Unmanaged mode without SailUninstaller still deletes VAP", func(t *testing.T) {
-		ingressObj := &operatorv1alpha1.Ingress{
+		ingressObj := &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-					ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+					ManagementMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 				},
 			},
 		}
@@ -1103,7 +1103,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 		}
 		r := &reconciler{client: cl}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeUnmanaged,
 			ingress:     ingressObj,
 			found:       true,
 		}
@@ -1113,11 +1113,11 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	})
 
 	t.Run("Managed mode does not call SailUninstaller", func(t *testing.T) {
-		ingressObj := &operatorv1alpha1.Ingress{
+		ingressObj := &operatorv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Spec: operatorv1alpha1.IngressSpec{
-				GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{
-					ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+			Spec: operatorv1.IngressSpec{
+				GatewayAPI: operatorv1.GatewayAPIIngressConfig{
+					ManagementMode: operatorv1.GatewayAPIManagementModeManaged,
 				},
 			},
 		}
@@ -1138,7 +1138,7 @@ func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 			config: Config{SailUninstaller: uninstaller},
 		}
 		snapshot := ingressModeSnapshot{
-			desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+			desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 			ingress:     ingressObj,
 			found:       true,
 		}

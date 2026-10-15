@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -172,7 +172,7 @@ func registerIngressWatch(c controller.Controller, operatorCache cache.Cache, co
 	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "cluster"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isClusterIngress)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), isClusterIngress)); err != nil {
 		return fmt.Errorf("failed to watch Ingress resources: %w", err)
 	}
 	return nil
@@ -243,9 +243,9 @@ func (r *reconciler) managementModeEnabled() bool {
 // transition and status/mode-accessor updates.
 type ingressModeSnapshot struct {
 	// desiredMode is the resolved desired management mode.
-	desiredMode operatorv1alpha1.GatewayAPIManagementMode
+	desiredMode operatorv1.GatewayAPIManagementMode
 	// ingress is the Ingress CR object (nil when NotFound).
-	ingress *operatorv1alpha1.Ingress
+	ingress *operatorv1.Ingress
 	// found indicates whether the Ingress CR was found on the API
 	// server. When false, mode defaults to Managed and status writes
 	// are skipped.
@@ -259,7 +259,7 @@ type ingressModeSnapshot struct {
 // NotFound  -> returns snapshot with desiredMode=Managed and found=false.
 // Success   -> returns snapshot with the spec's mode and the live object.
 func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressModeSnapshot, error) {
-	ingress := &operatorv1alpha1.Ingress{}
+	ingress := &operatorv1.Ingress{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, ingress); err != nil {
 		if errors.IsForbidden(err) {
 			log.Info("Ingress CR access forbidden, treating ownership as unknown - will requeue", "error", err)
@@ -268,7 +268,7 @@ func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressMod
 		if errors.IsNotFound(err) {
 			log.Info("Ingress CR not found, defaulting to Managed mode")
 			return ingressModeSnapshot{
-				desiredMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
+				desiredMode: operatorv1.GatewayAPIManagementModeManaged,
 				ingress:     nil,
 				found:       false,
 			}, nil
@@ -278,7 +278,7 @@ func (r *reconciler) resolveIngressModeSnapshot(ctx context.Context) (ingressMod
 
 	desiredMode := ingress.Spec.GatewayAPI.ManagementMode
 	if desiredMode == "" {
-		desiredMode = operatorv1alpha1.GatewayAPIManagementModeManaged
+		desiredMode = operatorv1.GatewayAPIManagementModeManaged
 	}
 	return ingressModeSnapshot{
 		desiredMode: desiredMode,
@@ -295,7 +295,7 @@ func (r *reconciler) setTransitionState(state operatorcontroller.TransitionState
 // setTransitionError records an error only while processing an explicit mode
 // transition. Ordinary reconciliation errors must be retried, but do not mean
 // the operator is progressing between steady states.
-func (r *reconciler) setTransitionError(modeChanged bool, target operatorv1alpha1.GatewayAPIManagementMode, err error) {
+func (r *reconciler) setTransitionError(modeChanged bool, target operatorv1.GatewayAPIManagementMode, err error) {
 	if !modeChanged {
 		return
 	}
@@ -343,7 +343,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				Target:     snapshot.desiredMode,
 			})
 
-			if snapshot.desiredMode == operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
+			if snapshot.desiredMode == operatorv1.GatewayAPIManagementModeUnmanaged {
 				// Close the race window as early as possible: block
 				// dependents before Sail uninstall/VAP delete even
 				// start, rather than waiting for the full Update()
@@ -405,7 +405,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// record it as applied or clear InProgress: the status controller must
 		// continue reporting Progressing until the administrator remedies the
 		// conflicting CRDs.
-		if snapshot.desiredMode != operatorv1alpha1.GatewayAPIManagementModeManaged || r.config.ModeAccessor.ShouldManageCRDs() {
+		if snapshot.desiredMode != operatorv1.GatewayAPIManagementModeManaged || r.config.ModeAccessor.ShouldManageCRDs() {
 			r.config.ModeAccessor.SetLastAppliedMode(snapshot.desiredMode)
 			r.setTransitionState(operatorcontroller.TransitionState{})
 		}

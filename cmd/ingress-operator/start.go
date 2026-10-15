@@ -42,6 +42,7 @@ const (
 	defaultGatewayAPIOperatorChannel = "stable"
 	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.4.3"
 	defaultIstioVersion              = "v1.30-latest"
+	legacyHAProxyVersion28           = operatorv1.HAProxyVersion("2.8")
 )
 
 type StartOptions struct {
@@ -100,7 +101,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.IngressControllerImage, "image", "i", "", "image of the ingress controller the operator will manage (required)")
 	cmd.Flags().StringToStringVarP(&options.HAProxyImages, "haproxy-image", "", nil, "HAProxy images as version=pullspec (optional)")
 	cmd.Flags().StringVarP(&options.DefaultHAProxyVersion, "default-haproxy-version", "", "", "defines the default HAProxy version, required if --haproxy-image is also provided (optional)")
-	cmd.Flags().StringSliceVarP(&options.DeprecatedHAProxyVersion, "deprecated-haproxy-version", "", []string{string(operatorv1.HAProxyVersion28)}, "defines the HAProxy version blocking upgrade if used (optional)")
+	cmd.Flags().StringSliceVarP(&options.DeprecatedHAProxyVersion, "deprecated-haproxy-version", "", []string{string(legacyHAProxyVersion28)}, "defines the HAProxy version blocking upgrade if used (optional)")
 	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
 	cmd.Flags().StringVarP(&options.MetricsBindAddr, "metrics-bind-addr", "", "127.0.0.1:60000", "metrics endpoint bind address")
