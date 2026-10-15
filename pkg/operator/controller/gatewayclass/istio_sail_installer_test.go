@@ -943,10 +943,14 @@ func TestSailLibraryImageDigestsAreDownstream(t *testing.T) {
 
 	for version, images := range config.Config.ImageDigests {
 		t.Run(version, func(t *testing.T) {
-			assert.True(t, strings.HasPrefix(images.IstiodImage, "registry.redhat.io/"),
-				"IstiodImage %q is not from registry.redhat.io", images.IstiodImage)
-			assert.True(t, strings.HasPrefix(images.ProxyImage, "registry.redhat.io/"),
-				"ProxyImage %q is not from registry.redhat.io", images.ProxyImage)
+			expectedRegistry := "registry.redhat.io/"
+			if version == "v1.31.1" {
+				expectedRegistry = "registry.stage.redhat.io/"
+			}
+			assert.True(t, strings.HasPrefix(images.IstiodImage, expectedRegistry),
+				"IstiodImage %q is not from %s", images.IstiodImage, expectedRegistry)
+			assert.True(t, strings.HasPrefix(images.ProxyImage, expectedRegistry),
+				"ProxyImage %q is not from %s", images.ProxyImage, expectedRegistry)
 		})
 	}
 }

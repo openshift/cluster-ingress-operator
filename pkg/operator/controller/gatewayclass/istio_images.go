@@ -9,10 +9,10 @@ import "github.com/istio-ecosystem/sail-operator/pkg/config"
 func init() {
 	config.Config.ImageDigests = map[string]config.IstioImageConfig{
 		"v1.31.1": {
-			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:2c0f377f593f52da28cce3fdf3dfbcb65f0c445457ba383459e63d3854aaf7c4",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:77b4d999a06b058c3a7a5e1a24b98bfe19f9bf3d8b86fe64f1f8252e5a2bf31f",
-			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:c13350c37901fc9028c1a9c43ec0a55f7614d7bf75423b709f401339f02bb42a",
-			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:0714844010b5c57cb24f453b1c35ae6f14cca678d99bd63aaa4b6f98e2a2eeb2",
+			IstiodImage:  "registry.stage.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:2c0f377f593f52da28cce3fdf3dfbcb65f0c445457ba383459e63d3854aaf7c4",
+			ProxyImage:   "registry.stage.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:77b4d999a06b058c3a7a5e1a24b98bfe19f9bf3d8b86fe64f1f8252e5a2bf31f",
+			CNIImage:     "registry.stage.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:c13350c37901fc9028c1a9c43ec0a55f7614d7bf75423b709f401339f02bb42a",
+			ZTunnelImage: "registry.stage.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:0714844010b5c57cb24f453b1c35ae6f14cca678d99bd63aaa4b6f98e2a2eeb2",
 		},
 		"v1.30.5": {
 			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:0153604b88f0cee3514551cad3e796a7b0245d2881978848c4a115d3d30ad3b7",
