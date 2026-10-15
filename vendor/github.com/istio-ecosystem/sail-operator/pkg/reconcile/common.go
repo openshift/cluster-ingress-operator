@@ -35,6 +35,9 @@ type Config struct {
 	// Platform is the target Kubernetes platform (e.g., OpenShift, vanilla Kubernetes)
 	Platform config.Platform
 
+	// OCPVersion is the detected OpenShift Container Platform version (nil on non-OpenShift)
+	OCPVersion *config.OCPVersion
+
 	// DefaultProfile is the base profile applied before user-selected profiles
 	DefaultProfile string
 
@@ -42,7 +45,7 @@ type Config struct {
 	OperatorNamespace string
 
 	// ChartManager handles Helm chart installation and upgrades
-	ChartManager *helm.ChartManager
+	ChartManager helm.ChartReconciler
 
 	// TLSConfig holds the TLS configuration from the platform (e.g. OpenShift APIServer).
 	// Nil when not applicable.
