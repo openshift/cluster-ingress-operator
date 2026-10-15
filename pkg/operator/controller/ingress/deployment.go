@@ -151,6 +151,8 @@ const (
 	RouterBackendCheckInterval = "ROUTER_BACKEND_CHECK_INTERVAL"
 	RouterTLSCurves            = "ROUTER_CURVES"
 
+	RouterEnableEndpointAddressValidation = "ROUTER_ENABLE_ENDPOINT_ADDRESS_VALIDATION"
+
 	RouterServiceHTTPPort  = "ROUTER_SERVICE_HTTP_PORT"
 	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
 	StatsPort              = "STATS_PORT"
@@ -596,6 +598,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		// https://gist.github.com/frobware/2b527ce3f040797909eff482a4776e0b
 		MaxDynamicServers     string `json:"maxDynamicServers"`
 		MutualTLSHeaderFilter string `json:"mutualTLSHeaderFilter"`
+		// hostnameTargetReferencePolicy defines the policy for the endpoint address validation. "AllowAll" skips
+		// the validation altogher. "DenyAll" denies any hostname configuration, only IPv4 or IPv6 address is accepted.
+		// The default behavior is "DenyAll" if the configuration is missing.
+		HostnameTargetReferencePolicy string `json:"hostnameTargetReferencePolicy"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -686,6 +692,18 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 			Name:  RouterMutualTLSHeaderFilter,
 			Value: "false",
 		})
+	}
+
+	switch unsupportedConfigOverrides.HostnameTargetReferencePolicy {
+	case "AllowAll":
+		env = append(env, corev1.EnvVar{
+			Name:  RouterEnableEndpointAddressValidation,
+			Value: "false",
+		})
+	case "", "DenyAll":
+		// skips the configuration, router defaults to enable the validation
+	default:
+		return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.hostnameTargetReferencePolicy: %s", ci.Name, unsupportedConfigOverrides.HostnameTargetReferencePolicy)
 	}
 
 	if len(ci.Status.Domain) > 0 {
