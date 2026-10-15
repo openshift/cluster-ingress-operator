@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -443,6 +444,9 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 	}
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
+		if isProfileName(gatewayclass.Name) && !slices.Contains(supportedProfileNames(infraConfig), gatewayclass.Name) {
+			continue
+		}
 		if !isProfileName(gatewayclass.Name) {
 			gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
 			continue

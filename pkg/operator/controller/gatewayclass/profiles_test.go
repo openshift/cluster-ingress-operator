@@ -8,6 +8,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 	"github.com/stretchr/testify/require"
@@ -100,6 +101,102 @@ func TestProfileOverlaysPreserveDefaultAndCommonConfiguration(t *testing.T) {
 			require.Equal(t, `{"gatewayTopology":{"proxyProtocol":{}}}`, template["metadata"].(map[string]any)["annotations"].(map[string]any)["proxy.istio.io/config"])
 		}
 	}
+}
+
+func TestExistingInternalProfileUsesPlatformAllowlist(t *testing.T) {
+	for _, platform := range []configv1.PlatformType{"", configv1.NonePlatformType, configv1.BareMetalPlatformType, configv1.VSpherePlatformType, configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType, configv1.OpenStackPlatformType} {
+		t.Run(string(platform), func(t *testing.T) {
+			ctx := context.Background()
+			anchor := profileTestClass("openshift-default", false)
+			internal := profileTestClass(operatorcontroller.OpenShiftInternalGatewayClassName, true)
+			var infra *configv1.Infrastructure
+			if platform != "" {
+				infra = &configv1.Infrastructure{Status: configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: platform}}}
+			}
+			supported := platform == configv1.AWSPlatformType || platform == configv1.AzurePlatformType || platform == configv1.GCPPlatformType || platform == configv1.IBMCloudPlatformType || platform == configv1.PowerVSPlatformType || platform == configv1.OpenStackPlatformType
+			classes := []gatewayapiv1.GatewayClass{*anchor, *internal}
+			for _, input := range [][]gatewayapiv1.GatewayClass{classes, withDesiredProfiles(infra, classes)} {
+				raw, err := buildGatewayClassesConfig(infra, input)
+				require.NoError(t, err)
+				var values map[string]any
+				require.NoError(t, json.Unmarshal(raw, &values))
+				_, present := values[internal.Name]
+				require.Equal(t, supported, present)
+				require.Contains(t, values, anchor.Name)
+			}
+			r := profileTestReconciler(t, anchor, internal)
+			var currentInfra configv1.Infrastructure
+			require.NoError(t, r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, &currentInfra))
+			if infra != nil {
+				currentInfra.Status = infra.Status
+				require.NoError(t, r.client.Update(ctx, &currentInfra))
+			}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(anchor)})
+			require.NoError(t, err)
+			var current gatewayapiv1.GatewayClass
+			err = r.client.Get(ctx, client.ObjectKeyFromObject(internal), &current)
+			if supported {
+				require.NoError(t, err)
+				require.Empty(t, current.Finalizers)
+			} else {
+				require.True(t, apierrors.IsNotFound(err))
+			}
+		})
+	}
+}
+
+func TestUnsupportedInternalProfilePreservesForeignAndUnmanagedClasses(t *testing.T) {
+	for _, scenario := range []string{"user-created", "foreign-controller", "unmanaged"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			anchor := profileTestClass("openshift-default", false)
+			internal := profileTestClass(operatorcontroller.OpenShiftInternalGatewayClassName, scenario != "user-created")
+			if scenario == "foreign-controller" {
+				internal.Spec.ControllerName = "other.example/controller"
+			}
+			r := profileTestReconciler(t, anchor, internal)
+			if scenario == "unmanaged" {
+				r.modeAccessor = operatorcontroller.NewGatewayAPIModeAccessor(true)
+				r.modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
+			}
+			_, err := r.ensureManagedProfiles(ctx, nil)
+			require.NoError(t, err)
+			var current gatewayapiv1.GatewayClass
+			require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(internal), &current))
+			require.True(t, current.DeletionTimestamp.IsZero())
+			require.Equal(t, internal.UID, current.UID)
+			require.Equal(t, internal.Labels, current.Labels)
+		})
+	}
+}
+
+func TestUnsupportedInternalProfileDeletionRetries(t *testing.T) {
+	ctx := context.Background()
+	internal := profileTestClass(operatorcontroller.OpenShiftInternalGatewayClassName, true)
+	internal.Finalizers = []string{"gateway.networking.k8s.io/gateway-exists-finalizer"}
+	r := profileTestReconciler(t, profileTestClass("openshift-default", false), internal)
+	base := r.client.(client.WithWatch)
+	failDelete := true
+	r.client = interceptor.NewClient(base, interceptor.Funcs{Delete: func(ctx context.Context, delegate client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+		if object.GetName() == internal.Name && failDelete {
+			return fmt.Errorf("internal profile deletion failed")
+		}
+		return delegate.Delete(ctx, object, options...)
+	}})
+	_, err := r.ensureManagedProfiles(ctx, nil)
+	require.ErrorContains(t, err, "internal profile deletion failed")
+	failDelete = false
+	result, err := r.ensureManagedProfiles(ctx, nil)
+	require.NoError(t, err)
+	require.NotZero(t, result.RequeueAfter)
+	var current gatewayapiv1.GatewayClass
+	require.NoError(t, base.Get(ctx, client.ObjectKeyFromObject(internal), &current))
+	require.False(t, current.DeletionTimestamp.IsZero())
+	current.Finalizers = nil
+	require.NoError(t, base.Update(ctx, &current))
+	_, err = r.ensureManagedProfiles(ctx, nil)
+	require.NoError(t, err)
+	require.True(t, apierrors.IsNotFound(base.Get(ctx, client.ObjectKeyFromObject(internal), &current)))
 }
 
 func TestProfileDefaultsPrecedeCreationAndRepairStatus(t *testing.T) {

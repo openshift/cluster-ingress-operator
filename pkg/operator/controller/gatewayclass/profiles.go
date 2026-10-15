@@ -3,6 +3,7 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -73,8 +74,15 @@ func (r *reconciler) enrollInstallationAnchors(ctx context.Context) error {
 }
 
 func withDesiredProfiles(infra *configv1.Infrastructure, classes []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
-	result := append([]gatewayapiv1.GatewayClass{}, classes...)
-	for _, name := range supportedProfileNames(infra) {
+	supported := supportedProfileNames(infra)
+	result := make([]gatewayapiv1.GatewayClass, 0, len(classes)+len(supported))
+	for _, class := range classes {
+		if isProfileName(class.Name) && !slices.Contains(supported, class.Name) {
+			continue
+		}
+		result = append(result, class)
+	}
+	for _, name := range supported {
 		found := false
 		for _, class := range result {
 			if class.Name == name {
@@ -90,6 +98,34 @@ func withDesiredProfiles(infra *configv1.Infrastructure, classes []gatewayapiv1.
 		}
 	}
 	return result
+}
+
+func (r *reconciler) removeUnsupportedInternalProfile(ctx context.Context, infra *configv1.Infrastructure) (bool, error) {
+	if slices.Contains(supportedProfileNames(infra), operatorcontroller.OpenShiftInternalGatewayClassName) {
+		return false, nil
+	}
+	var class gatewayapiv1.GatewayClass
+	key := types.NamespacedName{Name: operatorcontroller.OpenShiftInternalGatewayClassName}
+	if err := r.client.Get(ctx, key, &class); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if class.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true" || class.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+		return false, nil
+	}
+	if class.DeletionTimestamp.IsZero() {
+		if err := r.client.Delete(ctx, &class, client.Preconditions{UID: &class.UID}); err != nil && !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("cannot remove unsupported managed internal profile: %w", err)
+		}
+	}
+	if err := r.client.Get(ctx, key, &class); err == nil {
+		return true, nil
+	} else if !apierrors.IsNotFound(err) {
+		return false, err
+	}
+	return false, nil
 }
 
 func (r *reconciler) installationAnchor(ctx context.Context, request reconcile.Request) (*gatewayapiv1.GatewayClass, error) {
@@ -155,7 +191,10 @@ func (r *reconciler) ensureManagedProfiles(ctx context.Context, infra *configv1.
 		return reconcile.Result{}, err
 	}
 	var errs []error
-	pending := false
+	pending, err := r.removeUnsupportedInternalProfile(ctx, infra)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	for _, name := range supportedProfileNames(infra) {
 		var class gatewayapiv1.GatewayClass
 		err := r.client.Get(ctx, types.NamespacedName{Name: name}, &class)

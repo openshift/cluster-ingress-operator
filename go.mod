@@ -26,6 +26,7 @@ require (
 	github.com/florianl/go-nfqueue v1.3.2
 	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
+	github.com/google/cel-go v0.31.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
 	github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b
@@ -50,6 +51,7 @@ require (
 	google.golang.org/grpc v1.84.0
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
+	helm.sh/helm/v4 v4.1.4
 	k8s.io/api v0.36.2
 	k8s.io/apiextensions-apiserver v0.36.2
 	k8s.io/apimachinery v0.36.2
@@ -146,7 +148,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/cel-go v0.31.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -231,7 +232,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	helm.sh/helm/v4 v4.1.4 // indirect
 	istio.io/api v1.30.5 // indirect
 	istio.io/client-go v1.30.5 // indirect
 	istio.io/istio v0.0.0-20260918160134-55b832fad2bc // indirect
