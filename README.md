@@ -45,8 +45,6 @@ $ oc patch \
    ingresscontroller/<name>
 ```
 
-**Note:** Using `oc scale` on an `ingresscontroller` where `.spec.replicas` is unset will currently return an error ([Kubernetes #75210](https://github.com/kubernetes/kubernetes/pull/75210)).
-
 ## Customizing
 
 Create new `ingresscontroller` resources in the `openshift-ingress-operator`
