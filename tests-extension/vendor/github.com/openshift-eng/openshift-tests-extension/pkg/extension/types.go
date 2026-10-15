@@ -81,9 +81,6 @@ type Suite struct {
 	ClusterStability ClusterStability `json:"clusterStability,omitempty"`
 	// TestTimeout is the default timeout for tests in this suite.
 	TestTimeout *time.Duration `json:"testTimeout,omitempty"`
-	// ResourcePools defines the total capacity of named resource pools for this suite.
-	// The scheduler enforces that parallel test demand does not exceed pool capacity.
-	ResourcePools map[string]int `json:"resourcePools,omitempty"`
 }
 
 type Image struct {
@@ -91,7 +88,4 @@ type Image struct {
 	Registry string `json:"registry"`
 	Name     string `json:"name"`
 	Version  string `json:"version"`
-	// Mapped is the image reference that this image is mirrored to by the image mirror tool.
-	// This field should be populated if the mirrored image reference is predetermined by the test extensions.
-	Mapped *Image `json:"mapped,omitempty"`
 }
