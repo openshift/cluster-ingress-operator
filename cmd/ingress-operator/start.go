@@ -21,6 +21,7 @@ import (
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
+	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -261,6 +262,10 @@ func start(opts *StartOptions) error {
 	log.Info("registering Prometheus metrics for listenerset_status_controller")
 	if err := listenersetstatuscontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for listenerset_status_controller")
+	}
+	log.Info("registering Prometheus metrics for udproute_status_controller")
+	if err := udproutestatuscontroller.RegisterMetrics(); err != nil {
+		log.Error(err, "unable to register metrics for udproute_status_controller")
 	}
 	log.Info("registering Prometheus metrics for gatewayapi_controller")
 	if err := gatewayapicontroller.RegisterMetrics(); err != nil {
