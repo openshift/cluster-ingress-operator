@@ -20,30 +20,6 @@ import "github.com/istio-ecosystem/sail-operator/pkg/config"
 
 func init() {
 	config.Config.ImageDigests = map[string]config.IstioImageConfig{
-		"v1.27.3": {
-			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:0850242436e88f7d82f0f2126de064c7e0f09844f31d8ff0f53dc8d3908075d9",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:7d15cebf9b62f3f235c0eab5158ac8ff2fda86a1d193490dc94c301402c99da8",
-			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:ddadd677161ad8c1077dd156821d6b4e32742ccbb210e9c14696fa66a58c0867",
-			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:b2b3216a05f6136ed9ddb71d72d493030c6d6b431682dddffa692c760b6c9ba1",
-		},
-		"v1.27.5": {
-			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:2e515a40de141bd4e516bfcf4fd0cbb8d236ac02799a7a35d77ae44f53916bc9",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:650da1e2ad1cb93e6a0231dba7ca1f27f4cccac84e5925135281adc629a0caea",
-			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:2929b7df3da8228a728945542647ec5450c0585a2ed5cbdb84f8e3d81ab41806",
-			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:0ae2919cd446e0e1f0a21d0850e7809ba8f44c06d484c023b3bee2787ca4bdd0",
-		},
-		"v1.27.8": {
-			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:2ae8fa9bc0412dacd57f40f293caa09d68ff19eb63a99bc8d5dc1f96db9413c2",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:234d58ad8033644a72f769ace359a5232c52a2532e851bd374334b3c4cf1d4d8",
-			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:a5934a176e87c452b98d7006bc5e0709b22d80b478bd9b9f13f23ffc612552d9",
-			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:cb6adbadc22ca80888f06094c82a402a43526d8a3081e47e6332bcf5355729db",
-		},
-		"v1.27.9": {
-			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:ba05e86f6fee9ae173b199c843710241b7c2c0ad4203031d2f085a9c44f0f7ab",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:f7795a4b73e9ffec1eb1ec71ec43812f976d77832cd56d49076f228d8f7b1220",
-			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:f5abc5497922a2adfabdde501d30763a6d6aee548fd9fd666f0cac59811928de",
-			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:0c9b9e391c4c6b4abb8faa49854f0129596f79a68f0776bf003710a04eaeb22f",
-		},
 		"v1.28.4": {
 			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:978f840ceda7eb00c6f15740bcd60e241bee732cd215e9de464ce431b0156ffa",
 			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:ba78d718627a0662f61ec633fdd2867ba5c24be6bdbc6df672d46456fb399dba",
@@ -91,12 +67,6 @@ func init() {
 			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:de0ddfa8be68efb0a8015bc079490ceb1fc9c437ef548345755b09609281c38e",
 			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:dc1d4cae4b5c9123b29ed22d6c1abacfed11a5ca9ab968adee71403c3b8a021c",
 			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:e1d2d1c3153178e43796fe0dfce3f3b0816cd5c95cf1dcea1aa21f1f5cf8a966",
-		},
-		"v1.30.5": {
-			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:0153604b88f0cee3514551cad3e796a7b0245d2881978848c4a115d3d30ad3b7",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:b722c0999b9442a444bcc8e4dc718b09a067646f5ffe075edf003b3f1e65c109",
-			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:33a2ca9313ea06d116c74da3dd3793bd97ccf22ec4133c37d545aec64bbf4e43",
-			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:af074ea259aa4423d8bb64a712e36b06ff049105463dc669e9bc30439ee8f47f",
 		},
 	}
 }

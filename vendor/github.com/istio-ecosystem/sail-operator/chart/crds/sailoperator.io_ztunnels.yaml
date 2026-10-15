@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: ztunnels.sailoperator.io
 spec:
   group: sailoperator.io
@@ -66,7 +66,7 @@ spec:
           spec:
             default:
               namespace: ztunnel
-              version: v1.30.5
+              version: v1.31.1
             description: ZTunnelSpec defines the desired state of ZTunnel
             properties:
               namespace:
@@ -104,6 +104,8 @@ spec:
                     properties:
                       defaultResources:
                         description: |-
+                          Default k8s resources settings for all Istio control plane components.
+
                           See https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/#resource-requests-and-limits-of-pod-and-container
 
                           Deprecated: Marked as deprecated in pkg/apis/values_types.proto.
@@ -201,6 +203,14 @@ spec:
                               The control plane has different scopes depending on component, but can configure default log level across all components
                               If empty, default scope and level will be used as configured in code
                             type: string
+                        type: object
+                      networkPolicy:
+                        description: Settings related to Kubernetes NetworkPolicy.
+                        properties:
+                          enabled:
+                            description: Controls whether default NetworkPolicy resources
+                              will be created.
+                            type: boolean
                         type: object
                       platform:
                         description: |-
@@ -2534,7 +2544,7 @@ spec:
                                 A failure to resolve or pull the image during pod startup will block containers from starting and may add significant latency. Failures will be retried using normal volume backoff and will be reported on the pod reason and message.
                                 The types of objects that may be mounted by this volume are defined by the container runtime implementation on a host machine and at minimum must include all valid types supported by the container image field.
                                 The OCI object gets mounted in a single directory (spec.containers[*].volumeMounts.mountPath) by merging the manifest layers in the same way as for container images.
-                                The volume will be mounted read-only (ro) and non-executable files (noexec).
+                                The volume will be mounted read-only (ro).
                                 Sub path mounts for containers are not supported (spec.containers[*].volumeMounts.subpath) before 1.33.
                                 The field spec.securityContext.fsGroupChangePolicy has no effect on this volume type.
                               properties:
@@ -2706,8 +2716,7 @@ spec:
                               description: |-
                                 portworxVolume represents a portworx volume attached and mounted on kubelets host machine.
                                 Deprecated: PortworxVolume is deprecated. All operations for the in-tree portworxVolume type
-                                are redirected to the pxd.portworx.com CSI driver when the CSIMigrationPortworx feature-gate
-                                is on.
+                                are redirected to the pxd.portworx.com CSI driver.
                               properties:
                                 fsType:
                                   description: |-
@@ -3533,11 +3542,13 @@ spec:
                     type: object
                 type: object
               version:
-                default: v1.30.5
+                default: v1.31.1
                 description: |-
                   Defines the version of Istio to install.
-                  Must be one of: v1.30-latest, v1.30.5, v1.30.4, v1.30.3, v1.30.1, v1.28-latest, v1.28.10, v1.28.8, v1.28.6, v1.28.5, v1.28.4, v1.27-latest, v1.27.9, v1.27.8, v1.27.5, v1.27.3.
+                  Must be one of: v1.31-latest, v1.31.1, v1.30-latest, v1.30.5, v1.30.4, v1.30.3, v1.30.1, v1.28-latest, v1.28.10, v1.28.8, v1.28.6, v1.28.5, v1.28.4.
                 enum:
+                - v1.31-latest
+                - v1.31.1
                 - v1.30-latest
                 - v1.30.5
                 - v1.30.4
@@ -3672,7 +3683,7 @@ spec:
             default:
               namespace: ztunnel
               profile: ambient
-              version: v1.30.5
+              version: v1.31.1
             description: ZTunnelSpec defines the desired state of ZTunnel
             properties:
               namespace:
@@ -3708,6 +3719,8 @@ spec:
                     properties:
                       defaultResources:
                         description: |-
+                          Default k8s resources settings for all Istio control plane components.
+
                           See https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/#resource-requests-and-limits-of-pod-and-container
 
                           Deprecated: Marked as deprecated in pkg/apis/values_types.proto.
@@ -3805,6 +3818,14 @@ spec:
                               The control plane has different scopes depending on component, but can configure default log level across all components
                               If empty, default scope and level will be used as configured in code
                             type: string
+                        type: object
+                      networkPolicy:
+                        description: Settings related to Kubernetes NetworkPolicy.
+                        properties:
+                          enabled:
+                            description: Controls whether default NetworkPolicy resources
+                              will be created.
+                            type: boolean
                         type: object
                       platform:
                         description: |-
@@ -6138,7 +6159,7 @@ spec:
                                 A failure to resolve or pull the image during pod startup will block containers from starting and may add significant latency. Failures will be retried using normal volume backoff and will be reported on the pod reason and message.
                                 The types of objects that may be mounted by this volume are defined by the container runtime implementation on a host machine and at minimum must include all valid types supported by the container image field.
                                 The OCI object gets mounted in a single directory (spec.containers[*].volumeMounts.mountPath) by merging the manifest layers in the same way as for container images.
-                                The volume will be mounted read-only (ro) and non-executable files (noexec).
+                                The volume will be mounted read-only (ro).
                                 Sub path mounts for containers are not supported (spec.containers[*].volumeMounts.subpath) before 1.33.
                                 The field spec.securityContext.fsGroupChangePolicy has no effect on this volume type.
                               properties:
@@ -6310,8 +6331,7 @@ spec:
                               description: |-
                                 portworxVolume represents a portworx volume attached and mounted on kubelets host machine.
                                 Deprecated: PortworxVolume is deprecated. All operations for the in-tree portworxVolume type
-                                are redirected to the pxd.portworx.com CSI driver when the CSIMigrationPortworx feature-gate
-                                is on.
+                                are redirected to the pxd.portworx.com CSI driver.
                               properties:
                                 fsType:
                                   description: |-
@@ -7137,11 +7157,13 @@ spec:
                     type: object
                 type: object
               version:
-                default: v1.30.5
+                default: v1.31.1
                 description: |-
                   Defines the version of Istio to install.
-                  Must be one of: v1.30-latest, v1.30.5, v1.30.4, v1.30.3, v1.30.1, v1.28-latest, v1.28.10, v1.28.8, v1.28.6, v1.28.5, v1.28.4, v1.27-latest, v1.27.9, v1.27.8, v1.27.5, v1.27.3.
+                  Must be one of: v1.31-latest, v1.31.1, v1.30-latest, v1.30.5, v1.30.4, v1.30.3, v1.30.1, v1.28-latest, v1.28.10, v1.28.8, v1.28.6, v1.28.5, v1.28.4.
                 enum:
+                - v1.31-latest
+                - v1.31.1
                 - v1.30-latest
                 - v1.30.5
                 - v1.30.4
