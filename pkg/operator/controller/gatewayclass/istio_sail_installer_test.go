@@ -18,6 +18,8 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
+	"helm.sh/helm/v4/pkg/release"
+	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -47,6 +49,9 @@ type fakeSailInstaller struct {
 	status          install.Status
 	uninstallCalled bool
 	uninstallError  error
+	onUninstall     func() error
+	stopCalls       int
+	startCalls      int
 
 	// applyStarted, when non-nil, receives a signal as soon as Apply is
 	// invoked (after sailLifecycleMu has been acquired by the caller).
@@ -61,6 +66,7 @@ type fakeSailInstaller struct {
 var _ SailLibraryInstaller = &fakeSailInstaller{}
 
 func (i *fakeSailInstaller) Start(ctx context.Context) (<-chan struct{}, error) {
+	i.startCalls++
 	i.notifyCh = make(chan struct{})
 	return i.notifyCh, nil
 }
@@ -83,6 +89,9 @@ func (i *fakeSailInstaller) Apply(opts install.Options) error {
 
 func (i *fakeSailInstaller) Uninstall(ctx context.Context, namespace, revision string) error {
 	i.uninstallCalled = true
+	if i.onUninstall != nil {
+		return i.onUninstall()
+	}
 	return i.uninstallError
 }
 
@@ -91,6 +100,17 @@ func (i *fakeSailInstaller) Status() install.Status {
 }
 
 func (i *fakeSailInstaller) Enqueue() {}
+
+func (i *fakeSailInstaller) Stop() { i.stopCalls++ }
+
+type fakeHelmReleaseReader struct {
+	current release.Releaser
+	err     error
+}
+
+func (reader *fakeHelmReleaseReader) GetRelease(context.Context, string, string) (release.Releaser, error) {
+	return reader.current, reader.err
+}
 
 // updateGatewayClassStatusBeforeFirstPatchWriter simulates another controller
 // updating an externally-owned GatewayClass condition between the live read
@@ -146,6 +166,7 @@ func (c *statusWriterClient) Status() client.StatusWriter {
 // concurrent access to its fields would also be caught by `go test -race`.
 func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, configv1.Install(scheme))
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
 	require.NoError(t, gatewayapiv1.Install(scheme))
@@ -169,6 +190,7 @@ func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 		client:        fakeClient,
 		cache:         fakeCache,
 		sailInstaller: installer,
+		releaseReader: &fakeHelmReleaseReader{},
 		modeAccessor:  modeAccessor,
 		config:        Config{OperandNamespace: "test-ns"},
 	}
@@ -216,11 +238,14 @@ func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 // Uninstall waits for it rather than running concurrently.
 func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, configv1.Install(scheme))
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
 	require.NoError(t, gatewayapiv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(profileTestClass("openshift-default", false)).
+		WithStatusSubresource(&gatewayapiv1.GatewayClass{}).
 		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
 			gc := o.(*gatewayapiv1.GatewayClass)
 			return []string{string(gc.Spec.ControllerName)}
@@ -247,6 +272,7 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 		sailInstaller: installer,
 		modeAccessor:  modeAccessor,
 		config:        Config{OperandNamespace: "test-ns"},
+		releaseReader: &fakeHelmReleaseReader{},
 	}
 
 	ensureDone := make(chan error, 1)
@@ -302,6 +328,7 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 // "installed" control plane.
 func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, configv1.Install(scheme))
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
 	require.NoError(t, gatewayapiv1.Install(scheme))
@@ -349,6 +376,7 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 		client:        fakeClient,
 		cache:         fakeCache,
 		sailInstaller: &fakeSailInstaller{},
+		releaseReader: &fakeHelmReleaseReader{},
 		modeAccessor:  operatorcontroller.NewGatewayAPIModeAccessor(true),
 		config:        Config{OperandNamespace: "test-ns"},
 	}

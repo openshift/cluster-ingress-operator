@@ -22,8 +22,10 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/chart"
+	sailhelm "github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
+	corev1 "k8s.io/api/core/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -90,7 +92,6 @@ const (
 	// sailLibraryFinalizer is added to GatewayClasses using Sail Library installation.
 	// When a GatewayClass with this finalizer is deleted:
 	// 1. Sail Library mode: Uninstall Istio if this is the last GatewayClass, then remove finalizer
-	// 2. Downgrade to OLM: Clean up Sail Library status and finalizer (then OLM takes over Istio)
 	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
 )
 
@@ -111,11 +112,12 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	operatorCache := mgr.GetCache()
 
 	reconciler := &reconciler{
-		config:       config,
-		client:       mgr.GetClient(),
-		cache:        operatorCache,
-		recorder:     mgr.GetEventRecorderFor(controllerName),
-		modeAccessor: modeAccessor,
+		config:        config,
+		client:        mgr.GetClient(),
+		cache:         operatorCache,
+		recorder:      mgr.GetEventRecorderFor(controllerName),
+		modeAccessor:  modeAccessor,
+		releaseReader: sailhelm.NewChartManager(mgr.GetConfig(), "secret"),
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -128,6 +130,11 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	// gatewayclass controller from reacting to operational resource
 	// changes while in Unmanaged mode.
 	dependentPred := modeAccessor.DependentPredicate()
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, reconciler.enqueueRequestForSomeGatewayClass(), predicate.NewPredicateFuncs(func(object client.Object) bool {
+		return object.GetNamespace() == config.OperandNamespace
+	}), dependentPred)); err != nil {
+		return nil, nil, err
+	}
 
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
@@ -318,6 +325,7 @@ type SailLibraryInstaller interface {
 	Uninstall(ctx context.Context, namespace, revision string) error
 	Status() install.Status
 	Enqueue()
+	Stop()
 }
 
 // reconciler reconciles gatewayclasses.
@@ -332,6 +340,8 @@ type reconciler struct {
 
 	// sailInstaller manages Istio control plane lifecycle (install, upgrade, uninstall) via the sail library.
 	sailInstaller SailLibraryInstaller
+	releaseReader helmReleaseReader
+	sailStopped   bool
 
 	// sailLifecycleMu serializes "check AllowDependents, then act" between
 	// UninstallSail and ensureIstio's Apply call, so a concurrent Uninstall
@@ -398,8 +408,6 @@ func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.O
 			continue
 		}
 
-		// If we ever added the sail library finalizer, this means this is a rollback so
-		// we need to be sure that the OLM process removes the finalizer and the status
 		if controllerutil.ContainsFinalizer(&gatewayClasses.Items[i], sailLibraryFinalizer) {
 			request := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -458,10 +466,57 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	if r.config.GatewayAPIWithoutOLMEnabled {
-		return r.reconcileWithSailLibrary(ctx, request)
+	var current gatewayapiv1.GatewayClass
+	if err := r.client.Get(ctx, request.NamespacedName, &current); err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, err
 	}
-	return r.reconcileWithOLM(ctx, request)
+	if current.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+		return reconcile.Result{}, nil
+	}
+	if !current.DeletionTimestamp.IsZero() && isInstallationAnchor(&current) {
+		return r.ensureGatewayClassDeleted(ctx, &current)
+	}
+	if !r.modeAccessor.AllowDependents() {
+		return reconcile.Result{}, nil
+	}
+	if err := r.enrollInstallationAnchors(ctx); err != nil {
+		return reconcile.Result{}, err
+	}
+	anchor, err := r.installationAnchor(ctx, request)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if anchor == nil {
+		r.sailLifecycleMu.Lock()
+		defer r.sailLifecycleMu.Unlock()
+		if !r.modeAccessor.AllowDependents() {
+			return reconcile.Result{}, nil
+		}
+		anchor, err = r.installationAnchor(ctx, request)
+		if err != nil || anchor != nil {
+			return reconcile.Result{}, err
+		}
+		return r.cleanupInstallation(ctx)
+	}
+	request.NamespacedName = types.NamespacedName{Name: anchor.Name}
+	var result reconcile.Result
+	if r.config.GatewayAPIWithoutOLMEnabled {
+		result, err = r.reconcileWithSailLibrary(ctx, request)
+	} else {
+		result, err = r.reconcileWithOLM(ctx, request)
+	}
+	var infra configv1.Infrastructure
+	if infraErr := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &infra); infraErr != nil {
+		return result, utilerrors.NewAggregate([]error{err, infraErr})
+	}
+	profileResult, profileErr := r.ensureManagedProfiles(ctx, &infra)
+	if result.RequeueAfter == 0 || (profileResult.RequeueAfter > 0 && profileResult.RequeueAfter < result.RequeueAfter) {
+		result.RequeueAfter = profileResult.RequeueAfter
+	}
+	return result, utilerrors.NewAggregate([]error{err, profileErr})
 }
 
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
@@ -483,27 +538,13 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 		return reconcile.Result{}, err
 	}
 
-	// Downgrade scenario: transitioning from Sail Library installation back to OLM-based installation.
-	// Clean up Sail Library finalizers and status to allow OLM to take over.
 	updatedGatewayClass := gatewayclass.DeepCopy()
-	if controllerutil.ContainsFinalizer(updatedGatewayClass, sailLibraryFinalizer) {
-		removeSailInstallConditions(&updatedGatewayClass.Status.Conditions)
-		if err := r.client.Status().Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayclass)); err != nil {
-			log.Error(err, "error patching the gatewayclass status")
-			return reconcile.Result{}, err
-		}
-		controllerutil.RemoveFinalizer(updatedGatewayClass, sailLibraryFinalizer)
+	if controllerutil.AddFinalizer(updatedGatewayClass, sailLibraryFinalizer) {
 		if err := r.client.Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayclass)); err != nil {
-			log.Error(err, "failed to remove finalizer from gatewayclass")
 			return reconcile.Result{}, err
 		}
-
-		return reconcile.Result{}, nil // Removing the finalizer should kick a new reconciliation
 	}
 
-	// Skip OLM installation when the management mode does not allow
-	// dependents. The downgrade (Sail -> OLM) cleanup above still runs
-	// so that finalizer removal proceeds even in Unmanaged mode.
 	if !r.modeAccessor.AllowDependents() {
 		log.Info("Management mode does not allow dependents, skipping OLM installation", "gatewayclass", gatewayclass.Name)
 		return reconcile.Result{}, nil
@@ -545,7 +586,7 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 		return reconcile.Result{}, err
 	}
 
-	if _, _, err := r.ensureIstioOLM(ctx, gatewayclass, istioVersion, gatewayclasses.Items, &infraConfig); err != nil {
+	if _, _, err := r.ensureIstioOLM(ctx, gatewayclass, istioVersion, withDesiredProfiles(&infraConfig, gatewayclasses.Items), &infraConfig); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
@@ -628,7 +669,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		return reconcile.Result{}, err
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion, gatewayclasses.Items, &infraConfig); err != nil {
+	if err := r.ensureIstio(ctx, istioVersion, withDesiredProfiles(&infraConfig, gatewayclasses.Items), &infraConfig); err != nil {
 		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}
@@ -648,13 +689,13 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
-// countActiveGatewayClasses returns the number of managed GatewayClasses that
+// countActiveGatewayClasses returns the number of non-profile GatewayClasses that
 // are not being deleted, excluding the given name.
 func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName string) int {
 	count := 0
 	for i := range list.Items {
 		gc := &list.Items[i]
-		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() {
+		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() || gc.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] == "true" {
 			continue
 		}
 		count++
@@ -663,8 +704,10 @@ func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName 
 }
 
 // ensureGatewayClassDeleted handles cleanup when a GatewayClass is being deleted.
-// Uninstalls Istio if this is the last managed GatewayClass, then removes the finalizer.
+// Uninstalls Istio if this is the last user anchor, then removes the finalizer.
 func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
+	r.sailLifecycleMu.Lock()
+	defer r.sailLifecycleMu.Unlock()
 	if !controllerutil.ContainsFinalizer(gatewayClass, sailLibraryFinalizer) {
 		// No finalizer present; nothing to clean up
 		return reconcile.Result{}, nil
@@ -673,14 +716,19 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 	// Check if this is the last active GatewayClass - if so, uninstall Istio
 	updatedGatewayClass := gatewayClass.DeepCopy()
 	gatewayClassList := gatewayapiv1.GatewayClassList{}
-	if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
-		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
-	}); err != nil {
+	if err := r.client.List(ctx, &gatewayClassList); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
 	}
-	if countActiveGatewayClasses(&gatewayClassList, gatewayClass.Name) == 0 {
-		if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to uninstall Istio: %w", err)
+	anchors := gatewayapiv1.GatewayClassList{}
+	for _, class := range gatewayClassList.Items {
+		if isInstallationAnchor(&class) {
+			anchors.Items = append(anchors.Items, class)
+		}
+	}
+	if countActiveGatewayClasses(&anchors, gatewayClass.Name) == 0 {
+		result, err := r.cleanupInstallation(ctx)
+		if err != nil || result.RequeueAfter > 0 {
+			return result, err
 		}
 	}
 
@@ -705,11 +753,7 @@ func (r *reconciler) UninstallSail(ctx context.Context) error {
 	r.sailLifecycleMu.Lock()
 	defer r.sailLifecycleMu.Unlock()
 
-	// OLM path: sailInstaller is nil, nothing to uninstall
-	if r.sailInstaller == nil {
-		return nil
-	}
-	if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+	if err := r.uninstallIstio(ctx); err != nil {
 		return err
 	}
 
@@ -735,7 +779,13 @@ func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
 		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 			current := &gatewayapiv1.GatewayClass{}
 			if err := r.client.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+				if errors.IsNotFound(err) {
+					return nil
+				}
 				return err
+			}
+			if !current.DeletionTimestamp.IsZero() {
+				return nil
 			}
 
 			updated := current.DeepCopy()

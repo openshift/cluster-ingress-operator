@@ -206,6 +206,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	dnsConfig := &configv1.DNS{}
+	if gateway.Spec.GatewayClassName == operatorcontroller.OpenShiftClusterIPGatewayClassName {
+		return reconcile.Result{}, utilerrors.NewAggregate(r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, sets.NewString()))
+	}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}

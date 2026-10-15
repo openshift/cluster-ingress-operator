@@ -3,6 +3,7 @@ package gatewayapi
 import (
 	"context"
 	"fmt"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -94,6 +95,7 @@ func TestDesiredAdmissionPolicyForTopology_DoesNotMutateBase(t *testing.T) {
 // reconciler creates the ValidatingAdmissionPolicy and its binding.
 func TestReconcile_GateOn_Managed_CreatesVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -176,6 +178,7 @@ func TestReconcile_GateOn_Managed_CreatesVAP(t *testing.T) {
 // VAP includes the pod-bound validation.
 func TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -257,6 +260,7 @@ func TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
 // includes only the SA validation (no pod-bound).
 func TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -336,6 +340,7 @@ func TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
 // control-plane topology.
 func TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -417,6 +422,7 @@ func TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 // before the Managed=False/Unmanaged status condition is written.
 func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -516,6 +522,7 @@ func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
 // the Unmanaged condition.
 func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -595,6 +602,7 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 // any ValidatingAdmissionPolicy or binding resources.
 func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -666,6 +674,7 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 // and binding when they don't exist, and does not update when up-to-date.
 func TestEnsureAdmissionPolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 
@@ -873,6 +882,7 @@ func TestEnsureAdmissionPolicy(t *testing.T) {
 // and binding, and is a no-op when they don't exist.
 func TestDeleteAdmissionPolicy(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	admissionregistrationv1.AddToScheme(scheme)
 
 	t.Run("deletes both when present", func(t *testing.T) {
@@ -915,6 +925,7 @@ func TestDeleteAdmissionPolicy(t *testing.T) {
 // transition step that gates Unmanaged status on VAP deletion.
 func TestReconcileAdmissionPolicyTransition(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	operatorv1alpha1.Install(scheme)
 	admissionregistrationv1.AddToScheme(scheme)
 

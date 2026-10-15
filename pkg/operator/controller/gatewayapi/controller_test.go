@@ -3,6 +3,8 @@ package gatewayapi
 import (
 	"context"
 	"fmt"
+	"github.com/stretchr/testify/require"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +248,7 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -333,6 +336,7 @@ func Test_Reconcile(t *testing.T) {
 
 func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -585,6 +589,7 @@ func establishedManagedCRDs() []runtime.Object {
 // CRD ensures, or dependent controller starts.
 func TestReconcile_ForbiddenIngress_BlocksOwnership(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -677,6 +682,7 @@ func TestReconcile_UnmanagedCRDsMetricGatedByFeatureGate(t *testing.T) {
 
 	buildReconciler := func(t *testing.T, gateEnabled bool) (*reconciler, reconcile.Request) {
 		scheme := runtime.NewScheme()
+		require.NoError(t, gatewayapiv1.Install(scheme))
 		configv1.Install(scheme)
 		apiextensionsv1.AddToScheme(scheme)
 		rbacv1.AddToScheme(scheme)
@@ -832,6 +838,7 @@ func TestRegisterIngressWatch(t *testing.T) {
 // CRDs or ClusterRoles.
 func TestReconcile_Unmanaged_SkipsCRDAndRBAC(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -900,6 +907,7 @@ func TestReconcile_Unmanaged_SkipsCRDAndRBAC(t *testing.T) {
 // (TakeoverBlocked), the reconciler does NOT overwrite CRDs or RBAC.
 func TestReconcile_TakeoverBlocked_SkipsCRDAndRBAC(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1014,6 +1022,7 @@ func TestReconcile_TakeoverBlocked_SkipsCRDAndRBAC(t *testing.T) {
 // create or update any CRDs (the Phase 2 takeover hole fix).
 func TestReconcile_PartialPresenceNonCompliant_TakeoverBlocked(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1107,6 +1116,7 @@ func TestReconcile_PartialPresenceNonCompliant_TakeoverBlocked(t *testing.T) {
 // (legacy behavior preserved).
 func TestReconcile_GateOff_AlwaysEnsures(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1164,6 +1174,7 @@ func TestReconcile_GateOff_AlwaysEnsures(t *testing.T) {
 // is Managed and CRDs are absent, the reconciler installs them.
 func TestReconcile_ManagedAndAbsent_InstallsCRDs(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1322,6 +1333,7 @@ func (c *modeFlippingClient) Get(ctx context.Context, key client.ObjectKey, obj 
 // mode it sees is used consistently for both VAP transition and status write.
 func TestReconcile_ModeSnapshot_PreventsStaleUnmanaged(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1434,6 +1446,7 @@ func TestReconcile_ModeSnapshot_PreventsStaleUnmanaged(t *testing.T) {
 // snapshot, without a second read that could have flipped to Managed.
 func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1541,6 +1554,7 @@ func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 // Progressing=True flaps on every 30s requeue.
 func TestReconcile_SteadyState_NoSpuriousInProgress(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1642,6 +1656,7 @@ func TestReconcile_SteadyState_NoSpuriousInProgress(t *testing.T) {
 // transition reconcile but cleared after completion.
 func TestReconcile_ModeChange_SetsInProgress(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1734,6 +1749,7 @@ func TestReconcile_ModeChange_SetsInProgress(t *testing.T) {
 // transition state from a prior reconcile is cleared.
 func TestReconcile_SnapshotFailure_ClearsStaleState(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1799,6 +1815,7 @@ func TestReconcile_SnapshotFailure_ClearsStaleState(t *testing.T) {
 // therefore do NOT call UninstallSail or deleteAdmissionPolicy).
 func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1895,8 +1912,9 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 // TestReconcile_RestartInSteadyStateUnmanaged_SkipsTransitionOps verifies
 // that the persisted Ingress status, rather than process-local state, prevents
 // a CIO restart from repeating an already-completed Unmanaged transition.
-func TestReconcile_RestartInSteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
+func TestReconcile_RestartInSteadyStateUnmanaged_VerifiesTransitionOps(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1944,6 +1962,6 @@ func TestReconcile_RestartInSteadyStateUnmanaged_SkipsTransitionOps(t *testing.T
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}})
 	assert.NoError(t, err)
-	assert.False(t, uninstaller.called, "an already-completed Unmanaged transition must not be repeated after restart")
-	assert.False(t, modeAccessor.GetTransitionState().InProgress, "restart must not create a synthetic mode transition")
+	assert.True(t, uninstaller.called, "restart must verify teardown and profile status before trusting persisted CRD status")
+	assert.False(t, modeAccessor.GetTransitionState().InProgress, "successful verification must complete the transition")
 }

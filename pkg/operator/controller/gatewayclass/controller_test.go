@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	corev1 "k8s.io/api/core/v1"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -33,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -203,6 +205,18 @@ func Test_Reconcile(t *testing.T) {
 		payload := make(map[string]json.RawMessage, len(gatewayclasses))
 		for _, name := range gatewayclasses {
 			payload[name] = json.RawMessage(config)
+		}
+		for _, name := range []string{operatorcontroller.OpenShiftExternalGatewayClassName, operatorcontroller.OpenShiftClusterIPGatewayClassName} {
+			var overlay map[string]any
+			require.NoError(t, json.Unmarshal([]byte(config), &overlay))
+			service := map[string]any{"metadata": map[string]any{"annotations": nil}, "spec": map[string]any{"type": "ClusterIP"}}
+			if name == operatorcontroller.OpenShiftExternalGatewayClassName {
+				service = map[string]any{"metadata": map[string]any{"annotations": map[string]string{"traffic-policy.network.alpha.openshift.io/local-with-fallback": ""}}, "spec": map[string]any{"type": "LoadBalancer", "externalTrafficPolicy": "Local"}}
+			}
+			overlay["service"] = service
+			profile, err := json.Marshal(overlay)
+			require.NoError(t, err)
+			payload[name] = profile
 		}
 		b, err := json.Marshal(payload)
 		if err != nil {
@@ -619,31 +633,6 @@ func Test_Reconcile(t *testing.T) {
 			expectDelete:               []client.Object{},
 			expectError:                `infrastructures.config.openshift.io "cluster" not found`,
 			expectedSailLibraryOptions: &install.Options{},
-		},
-		{
-			name:    "Sail Library: disabled - removes finalizer and status",
-			request: req("openshift-default"),
-			existingObjects: []client.Object{
-				infraConfig(configv1.HighlyAvailableTopologyMode),
-				gatewayClass("openshift-default", true, nil, []metav1.Condition{
-					{
-						Type:   ControllerInstalledConditionType,
-						Reason: "Something",
-						Status: metav1.ConditionUnknown,
-					},
-					{
-						Type:   CRDsReadyConditionType,
-						Reason: "Otherthing",
-						Status: metav1.ConditionTrue,
-					},
-				}, false),
-			},
-			expectPatched: []client.Object{
-				gatewayClass("openshift-default", false, nil, []metav1.Condition{}, false),
-			},
-			expectedStatusPatched: []client.Object{
-				gatewayClass("openshift-default", false, nil, []metav1.Condition{}, false),
-			},
 		},
 		{
 			name:              "Sail Library: adds finalizer to GatewayClass",
@@ -1116,6 +1105,7 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
 	if err := configv1.Install(scheme); err != nil {
 		t.Fatalf("failed to install configv1 scheme: %v", err)
 	}
@@ -1188,8 +1178,28 @@ func Test_Reconcile(t *testing.T) {
 			if tc.fakeSailInstaller != nil {
 				reconciler.config.GatewayAPIWithoutOLMEnabled = true
 				reconciler.sailInstaller = tc.fakeSailInstaller
+				reconciler.releaseReader = &fakeHelmReleaseReader{}
 			}
-			res, err := reconciler.Reconcile(context.Background(), tc.request)
+			var res reconcile.Result
+			var err error
+			if reconciler.config.GatewayAPIWithoutOLMEnabled {
+				res, err = reconciler.reconcileWithSailLibrary(context.Background(), tc.request)
+			} else {
+				res, err = reconciler.reconcileWithOLM(context.Background(), tc.request)
+				haveInfrastructure := false
+				for _, object := range tc.existingObjects {
+					if _, ok := object.(*configv1.Infrastructure); ok {
+						haveInfrastructure = true
+					}
+				}
+				for _, object := range tc.existingObjects {
+					if class, ok := object.(*gatewayapiv1.GatewayClass); ok && haveInfrastructure && class.Name == tc.request.Name && !controllerutil.ContainsFinalizer(class, sailLibraryFinalizer) {
+						updated := class.DeepCopy()
+						controllerutil.AddFinalizer(updated, sailLibraryFinalizer)
+						tc.expectPatched = append(tc.expectPatched, updated)
+					}
+				}
+			}
 			if tc.expectError != "" {
 				require.NotNil(t, err)
 				assert.Contains(t, err.Error(), tc.expectError)

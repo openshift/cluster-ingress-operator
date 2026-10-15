@@ -331,7 +331,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// flaps that block upgrades and fire alerts.
 		lastApplied := r.config.ModeAccessor.GetLastAppliedMode()
 		if lastApplied == nil {
-			if appliedMode, applied := appliedModeFromIngressStatus(snapshot); applied {
+			if appliedMode, applied := appliedModeFromIngressStatus(snapshot); applied && snapshot.desiredMode != operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
 				r.config.ModeAccessor.SetLastAppliedMode(appliedMode)
 				lastApplied = &appliedMode
 			}

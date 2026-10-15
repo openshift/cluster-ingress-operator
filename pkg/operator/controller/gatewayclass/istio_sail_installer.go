@@ -17,6 +17,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
@@ -26,6 +27,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -171,6 +173,25 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 	if !r.modeAccessor.AllowDependents() {
 		log.Info("management mode no longer allows dependents, skipping Istio install")
 		return nil
+	}
+	anchor, err := r.installationAnchor(ctx, reconcile.Request{})
+	if err != nil || anchor == nil {
+		return err
+	}
+	checkpoint, _, err := r.teardownInventory(ctx)
+	if err != nil {
+		return err
+	}
+	if checkpoint != nil {
+		if err := r.uninstallIstio(ctx); err != nil {
+			return err
+		}
+	}
+	if r.sailStopped {
+		if _, err := sailInstaller.Start(r.config.Context); err != nil {
+			return fmt.Errorf("failed to restart Sail library: %w", err)
+		}
+		r.sailStopped = false
 	}
 
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
@@ -422,7 +443,40 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 	}
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
-		gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+		if !isProfileName(gatewayclass.Name) {
+			gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+			continue
+		}
+		var profileConfig map[string]any
+		common, err := json.Marshal(gatewayclassConfig)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(common, &profileConfig); err != nil {
+			return nil, err
+		}
+		service := &v1.Service{Spec: v1.ServiceSpec{Type: v1.ServiceTypeClusterIP}}
+		if gatewayclass.Name != controller.OpenShiftClusterIPGatewayClassName {
+			var platform *configv1.PlatformStatus
+			if infraConfig != nil {
+				platform = infraConfig.Status.PlatformStatus
+			}
+			service = ingress.LoadBalancerServiceDefaults(platform, gatewayclass.Name == controller.OpenShiftInternalGatewayClassName)
+			if platform != nil && platform.Type == configv1.AWSPlatformType {
+				template := profileConfig["deployment"].(map[string]any)["spec"].(map[string]any)["template"].(map[string]any)
+				template["metadata"] = map[string]any{"annotations": map[string]string{"proxy.istio.io/config": `{"gatewayTopology":{"proxyProtocol":{}}}`}}
+			}
+		}
+		serviceSpec := map[string]any{"type": service.Spec.Type}
+		if service.Spec.Type == v1.ServiceTypeLoadBalancer {
+			serviceSpec["externalTrafficPolicy"] = service.Spec.ExternalTrafficPolicy
+			if service.Spec.IPFamilyPolicy != nil {
+				serviceSpec["ipFamilyPolicy"] = *service.Spec.IPFamilyPolicy
+				serviceSpec["ipFamilies"] = service.Spec.IPFamilies
+			}
+		}
+		profileConfig["service"] = map[string]any{"metadata": map[string]any{"annotations": service.Annotations}, "spec": serviceSpec}
+		gatewayclassesConfig[gatewayclass.Name] = profileConfig
 	}
 
 	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
