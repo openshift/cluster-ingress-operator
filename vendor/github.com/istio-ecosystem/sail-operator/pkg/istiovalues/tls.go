@@ -26,10 +26,7 @@ import (
 	"istio.io/istio/pkg/log"
 )
 
-var (
-	istio1_29 = semver.MustParse("1.29.0")
-	istio1_30 = semver.MustParse("1.30.0")
-)
+var istio1_29 = semver.MustParse("1.29.0")
 
 // ApplyTLSConfig applies TLS configuration to the Istio values.
 // If TLS settings are already set, they are not overridden.
@@ -115,8 +112,9 @@ func ApplyTLSConfig(tlsConfig *config.TLSConfig, istioVersion string, values *v1
 
 	if minVersionName := tlsVersionName(tlsConfig.MinVersion); minVersionName != "" {
 		v, err := semver.NewVersion(istioVersion)
-		if err != nil {
+		if err != nil || v == nil {
 			log.Warnf("failed to parse Istio version %q: %v", istioVersion, err)
+			return
 		}
 
 		// This flag is only supported on Istio 1.29+. TODO: Remove this check when we drop support for Istio 1.28

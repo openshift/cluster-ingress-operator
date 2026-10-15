@@ -67,7 +67,9 @@ func (r *CNIReconciler) Validate(ctx context.Context, version, namespace string)
 }
 
 // ComputeValues computes the final Helm values by applying digests, vendor defaults, and profiles.
-func (r *CNIReconciler) ComputeValues(version string, userValues *v1.CNIValues, profile string) (helm.Values, error) {
+func (r *CNIReconciler) ComputeValues(
+	ctx context.Context, version, namespace string, userValues *v1.CNIValues, profile string,
+) (helm.Values, error) {
 	resolvedVersion, err := istioversion.Resolve(version)
 	if err != nil {
 		if istioversion.IsEOLVersion(version) {
@@ -77,7 +79,7 @@ func (r *CNIReconciler) ComputeValues(version string, userValues *v1.CNIValues, 
 	}
 
 	// Apply image digests from configuration, if not already set by user
-	userValues = ApplyCNIImageDigests(resolvedVersion, userValues, config.Config)
+	userValues = istiovalues.ApplyCNIImageDigests(resolvedVersion, userValues, config.Config)
 
 	// Apply vendor-specific default values
 	userValues, err = istiovalues.ApplyIstioCNIVendorDefaults(resolvedVersion, userValues)
@@ -92,12 +94,20 @@ func (r *CNIReconciler) ComputeValues(version string, userValues *v1.CNIValues, 
 		return nil, fmt.Errorf("failed to apply profile: %w", err)
 	}
 
+	existingReleaseValues, err := helm.GetReleaseValues(ctx, r.cfg.ChartManager, namespace, cniReleaseName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get existing Helm chart %q: %w", cniChartName, err)
+	}
+	if err := istiovalues.ApplyNetworkPolicyDefaults(r.cfg.OCPVersion, &mergedHelmValues, existingReleaseValues); err != nil {
+		return nil, fmt.Errorf("failed to apply network policy defaults: %w", err)
+	}
+
 	return mergedHelmValues, nil
 }
 
 // Install installs or upgrades the istio-cni Helm chart.
 func (r *CNIReconciler) Install(ctx context.Context, version, namespace string, values *v1.CNIValues, profile string, ownerRef *metav1.OwnerReference) error {
-	mergedHelmValues, err := r.ComputeValues(version, values, profile)
+	mergedHelmValues, err := r.ComputeValues(ctx, version, namespace, values, profile)
 	if err != nil {
 		return err
 	}
@@ -130,32 +140,4 @@ func (r *CNIReconciler) Uninstall(ctx context.Context, namespace string) error {
 		return fmt.Errorf("failed to uninstall Helm chart %q: %w", cniChartName, err)
 	}
 	return nil
-}
-
-// ApplyCNIImageDigests applies image digests to CNI values if not already set by user.
-// This function is exported for use by the controller and library.
-func ApplyCNIImageDigests(version string, values *v1.CNIValues, cfg config.OperatorConfig) *v1.CNIValues {
-	imageDigests, digestsDefined := cfg.ImageDigests[version]
-	// if we don't have default image digests defined for this version, it's a no-op
-	if !digestsDefined {
-		return values
-	}
-
-	// if a global hub or tag value is configured by the user, don't set image digests
-	if values != nil && values.Global != nil && (values.Global.Hub != nil || values.Global.Tag != nil) {
-		return values
-	}
-
-	if values == nil {
-		values = &v1.CNIValues{}
-	}
-
-	// set image digest unless any part of the image has been configured by the user
-	if values.Cni == nil {
-		values.Cni = &v1.CNIConfig{}
-	}
-	if values.Cni.Image == nil && values.Cni.Hub == nil && values.Cni.Tag == nil {
-		values.Cni.Image = &imageDigests.CNIImage
-	}
-	return values
 }
