@@ -141,6 +141,7 @@ type reconciler struct {
 	client           client.Client
 	cache            cache.Cache
 	dnsProvider      dns.Provider
+	fakeForNoZones   bool // dnsProvider is fake because the DNS config had no zones
 	infraConfig      *configv1.Infrastructure
 	cloudCredentials *corev1.Secret
 	recorder         record.EventRecorder
@@ -229,10 +230,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 }
 
 // createDNSProviderIfNeeded creates a new DNS provider if none has yet been
-// created or if the infrastructure platform status or cloud credentials have
-// changed since the current provider was created.  After creating a new
-// provider, createDNSProviderIfNeeded updates the reconciler state
-// with the new provider and current platform status and cloud credentials.
+// created, if the infrastructure platform status or cloud credentials have
+// changed since the current provider was created, or if the current provider
+// was created while the cluster DNS config had no zones and the DNS config now
+// has a public or private zone.  After creating a new provider,
+// createDNSProviderIfNeeded updates the reconciler state with the new provider
+// and current platform status and cloud credentials.
 func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *iov1.DNSRecord) error {
 	var needUpdate bool
 
@@ -274,13 +277,29 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *
 		needUpdate = true
 	}
 
+	// If the provider was created when the DNS config had no zones, it is
+	// the fake provider, which publishes nothing.  Recreate the provider
+	// once zones are added to the DNS config.
+	//
+	// Only the fake provider is replaced.  A real provider is kept across DNS
+	// config changes because delete() needs it to remove records from the
+	// zones in their status, which may no longer be the zones in the DNS
+	// config.  That only holds for the lifetime of the process: r.dnsProvider
+	// is cached in memory and is not persisted, so if the operator restarts
+	// while the DNS config has no zones, the provider is rebuilt as the fake
+	// provider and delete() then removes the finalizer without deleting
+	// anything from the cloud.
+	if r.fakeForNoZones && (dnsConfig.Spec.PublicZone != nil || dnsConfig.Spec.PrivateZone != nil) {
+		needUpdate = true
+	}
+
 	if needUpdate {
-		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus, &infraConfig.Status, creds)
+		dnsProvider, fakeForNoZones, err := r.createDNSProvider(dnsConfig, platformStatus, &infraConfig.Status, creds)
 		if err != nil {
 			return fmt.Errorf("failed to create DNS provider: %v", err)
 		}
 
-		r.dnsProvider, r.infraConfig, r.cloudCredentials = dnsProvider, infraConfig, creds
+		r.dnsProvider, r.fakeForNoZones, r.infraConfig, r.cloudCredentials = dnsProvider, fakeForNoZones, infraConfig, creds
 	}
 
 	return nil
@@ -488,6 +507,13 @@ func dnsRecordIsPreferred(a, b *iov1.DNSRecord) bool {
 	return a.Name < b.Name
 }
 
+// delete removes the record from each zone in its status to which it was
+// published, and then removes the finalizer.
+//
+// This assumes r.dnsProvider is a real provider.  The provider is cached in
+// memory only, so if the operator restarted while the cluster DNS config had
+// no public or private zone, r.dnsProvider is the fake provider and this
+// function removes the finalizer while leaving the records in the cloud.
 func (r *reconciler) delete(record *iov1.DNSRecord) error {
 	var errs []error
 	for i := range record.Status.Zones {
@@ -738,8 +764,10 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 }
 
 // createDNSProvider creates a DNS manager compatible with the given cluster
-// configuration.
-func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, infraStatus *configv1.InfrastructureStatus, creds *corev1.Secret) (dns.Provider, error) {
+// configuration.  It returns the provider along with a Boolean indicating
+// whether it is a placeholder returned only because the cluster DNS config
+// has no public or private zone.
+func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, infraStatus *configv1.InfrastructureStatus, creds *corev1.Secret) (dns.Provider, bool, error) {
 	// If no DNS configuration is provided, don't try to set up provider clients.
 	// TODO: the provider configuration can be refactored into the provider
 	// implementations themselves, so this part of the code won't need to
@@ -749,7 +777,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	// created to exercise the provider.
 	if dnsConfig.Spec.PrivateZone == nil && dnsConfig.Spec.PublicZone == nil {
 		log.Info("using fake DNS provider because no public or private zone is defined in the cluster DNS configuration")
-		return &dns.FakeProvider{}, nil
+		return &dns.FakeProvider{}, true, nil
 	}
 
 	var dnsProvider dns.Provider
@@ -765,7 +793,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 
 		sharedCredsFile, err := awsutil.SharedCredentialsFileFromSecret(creds)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create shared credentials file from Secret: %v", err)
+			return nil, false, fmt.Errorf("failed to create shared credentials file from Secret: %v", err)
 		}
 		// since at the end of this function the aws dns provider will be initialized with aws clients, the AWS SDK no
 		// longer needs access to the file and therefore it can be removed.
@@ -785,30 +813,30 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 					route53Found = true
 					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
-						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+						return nil, false, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
 					}
 					if scheme != oputil.SchemeHTTPS {
-						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
+						return nil, false, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				case ep.Name == awsdns.ELBService:
 					elbFound = true
 					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
-						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+						return nil, false, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
 					}
 					if scheme != oputil.SchemeHTTPS {
-						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
+						return nil, false, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				case ep.Name == awsdns.TaggingService:
 					tagFound = true
 					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
-						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+						return nil, false, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
 					}
 					if scheme != oputil.SchemeHTTPS {
-						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
+						return nil, false, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				}
@@ -817,12 +845,12 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 
 		cfg.CustomCABundle, err = r.customCABundle()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get the custom CA bundle: %w", err)
+			return nil, false, fmt.Errorf("failed to get the custom CA bundle: %w", err)
 		}
 
 		provider, err := awsdns.NewProvider(cfg, r.config.OperatorReleaseVersion)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
+			return nil, false, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}
 		var roleARN string
 		if dnsConfig.Spec.Platform.AWS != nil {
@@ -833,7 +861,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			cfg.RoleARN = roleARN
 			privateProvider, err := awsdns.NewProvider(cfg, r.config.OperatorReleaseVersion)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create AWS DNS manager for shared VPC: %v", err)
+				return nil, false, fmt.Errorf("failed to create AWS DNS manager for shared VPC: %v", err)
 			}
 			dnsProvider = splitdns.NewProvider(provider, privateProvider, dnsConfig.Spec.PrivateZone)
 		} else {
@@ -855,7 +883,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			Tags:           azuredns.GetTagList(infraStatus),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
+			return nil, false, fmt.Errorf("failed to create Azure DNS manager: %v", err)
 		}
 		dnsProvider = provider
 	case configv1.GCPPlatformType:
@@ -865,13 +893,13 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			UserAgent:       userAgent,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
+			return nil, false, fmt.Errorf("failed to create GCP DNS provider: %v", err)
 		}
 		dnsProvider = provider
 	case configv1.IBMCloudPlatformType:
 		if infraStatus.ControlPlaneTopology == configv1.ExternalTopologyMode {
 			log.Info("using fake DNS provider because cluster's ControlPlaneTopology is External")
-			return &dns.FakeProvider{}, nil
+			return &dns.FakeProvider{}, false, nil
 		}
 
 		// Read custom service endpoints from the infra status and set when configured.
@@ -892,16 +920,16 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		if platformStatus.IBMCloud.CISInstanceCRN != "" {
 			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.CISInstanceCRN, userAgent, true, serviceEndpointOverrides)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		} else if platformStatus.IBMCloud.DNSInstanceCRN != "" {
 			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.DNSInstanceCRN, userAgent, false, serviceEndpointOverrides)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		} else {
 			log.Info("using fake DNS provider as both CISInstanceCRN and DNSInstanceCRN are empty")
-			return &dns.FakeProvider{}, nil
+			return &dns.FakeProvider{}, false, nil
 		}
 	case configv1.PowerVSPlatformType:
 		// Power VS platform will use the ibm dns implementation
@@ -924,21 +952,21 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		if platformStatus.PowerVS.CISInstanceCRN != "" {
 			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true, serviceEndpointOverrides)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		} else if platformStatus.PowerVS.DNSInstanceCRN != "" {
 			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.DNSInstanceCRN, userAgent, false, serviceEndpointOverrides)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		} else {
 			log.Info("using fake DNS provider as both CISInstanceCRN and DNSInstanceCRN are empty")
-			return &dns.FakeProvider{}, nil
+			return &dns.FakeProvider{}, false, nil
 		}
 	default:
 		dnsProvider = &dns.FakeProvider{}
 	}
-	return dnsProvider, nil
+	return dnsProvider, false, nil
 }
 
 // customCABundle will get the custom CA bundle, if present, configured in the kube cloud config.
