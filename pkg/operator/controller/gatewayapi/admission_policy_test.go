@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/go-logr/zapr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -21,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -89,10 +94,9 @@ func TestDesiredAdmissionPolicyForTopology_DoesNotMutateBase(t *testing.T) {
 		"baseAdmissionPolicy must not be mutated by desiredAdmissionPolicyForTopology")
 }
 
-// TestReconcile_GateOn_Managed_CreatesVAP verifies that when the
-// GatewayAPIManagementMode gate is ON and the mode is Managed, the
+// TestReconcile_Managed_CreatesVAP verifies that when the mode is Managed, the
 // reconciler creates the ValidatingAdmissionPolicy and its binding.
-func TestReconcile_GateOn_Managed_CreatesVAP(t *testing.T) {
+func TestReconcile_Managed_CreatesVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -171,10 +175,10 @@ func TestReconcile_GateOn_Managed_CreatesVAP(t *testing.T) {
 	assert.True(t, vapbCreated, "ValidatingAdmissionPolicyBinding must be created in Managed mode")
 }
 
-// TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP verifies
+// TestReconcile_Managed_InfraHA_CreatesPodBoundVAP verifies
 // that when Infrastructure has HighlyAvailable topology, the created
 // VAP includes the pod-bound validation.
-func TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
+func TestReconcile_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -252,10 +256,10 @@ func TestReconcile_GateOn_Managed_InfraHA_CreatesPodBoundVAP(t *testing.T) {
 		"second validation must be the pod-bound check")
 }
 
-// TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP verifies
+// TestReconcile_Managed_InfraExternal_CreatesSAOnlyVAP verifies
 // that when Infrastructure has External topology, the created VAP
 // includes only the SA validation (no pod-bound).
-func TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
+func TestReconcile_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -330,11 +334,11 @@ func TestReconcile_GateOn_Managed_InfraExternal_CreatesSAOnlyVAP(t *testing.T) {
 		"External topology must use SA-only (no pod-bound)")
 }
 
-// TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP verifies
+// TestReconcile_Managed_InfraIBMCloud_CreatesSAOnlyVAP verifies
 // that when Infrastructure has IBMCloud platform type, the created VAP
 // includes only the SA validation (no pod-bound), regardless of
 // control-plane topology.
-func TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
+func TestReconcile_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -412,10 +416,10 @@ func TestReconcile_GateOn_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 		"IBMCloud platform must use SA-only VAP (no pod-bound)")
 }
 
-// TestReconcile_GateOn_Unmanaged_DeletesVAP verifies that when
+// TestReconcile_Unmanaged_DeletesVAP verifies that when
 // transitioning to Unmanaged mode, the VAP and binding are deleted
 // before the Managed=False/Unmanaged status condition is written.
-func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
+func TestReconcile_Unmanaged_DeletesVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -510,11 +514,11 @@ func TestReconcile_GateOn_Unmanaged_DeletesVAP(t *testing.T) {
 	assert.Equal(t, reasonUnmanaged, managedCond.Reason)
 }
 
-// TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError verifies
+// TestReconcile_Unmanaged_VAPDeleteFails_ReturnsError verifies
 // that when the VAP delete fails during Unmanaged transition, the
 // reconciler returns an error (triggering retry) and does NOT write
 // the Unmanaged condition.
-func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
+func TestReconcile_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -590,10 +594,9 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestReconcile_GateOff_NoVAPOps verifies that when the management
-// mode gate is OFF, the reconciler does not create, update, or delete
-// any ValidatingAdmissionPolicy or binding resources.
-func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
+// TestReconcile_AdoptsExistingVAP verifies that reconciliation
+// updates an existing policy in place without deleting the policy or binding.
+func TestReconcile_AdoptsExistingVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -603,6 +606,7 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	var objs []runtime.Object
 	objs = append(objs, &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "ingress"}})
 	objs = append(objs, baseAdmissionPolicy.DeepCopy(), desiredAdmissionPolicyBinding.DeepCopy())
+	objs = append(objs, &configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -624,12 +628,6 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
-		config: Config{
-			MarketplaceEnabled:              true,
-			OperatorLifecycleManagerEnabled: true,
-			ModeAccessor:                    nil, // gate OFF
-		},
-		fieldIndexer: FakeIndexer{},
 	}
 
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
@@ -639,27 +637,24 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	for _, obj := range cl.Added {
 		switch obj.(type) {
 		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be created when gate is OFF")
+			t.Fatal("existing VAP must not be recreated")
 		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be created when gate is OFF")
+			t.Fatal("existing VAPBinding must not be recreated")
 		}
 	}
 	for _, obj := range cl.Deleted {
 		switch obj.(type) {
 		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be deleted when gate is OFF")
+			t.Fatal("existing VAP must not be deleted")
 		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be deleted when gate is OFF")
+			t.Fatal("existing VAPBinding must not be deleted")
 		}
 	}
-	for _, obj := range cl.Updated {
-		switch obj.(type) {
-		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be updated when gate is OFF")
-		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be updated when gate is OFF")
-		}
-	}
+	assert.Len(t, cl.Updated, 1, "existing policy must be updated in place")
+	assert.IsType(t, &admissionregistrationv1.ValidatingAdmissionPolicy{}, cl.Updated[0])
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	assert.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: baseAdmissionPolicy.Name}, policy))
+	assert.Equal(t, desiredAdmissionPolicyForTopology(false).Spec, policy.Spec)
 }
 
 // TestEnsureAdmissionPolicy verifies the ensure path creates both VAP
@@ -867,6 +862,180 @@ func TestEnsureAdmissionPolicy(t *testing.T) {
 			"updated VAP must include pod-bound validation for HA")
 	})
 
+	t.Run("CVO metadata cleanup", func(t *testing.T) {
+		core, observed := observer.New(zap.InfoLevel)
+		previousLog := log
+		log = zapr.NewLogger(zap.New(core))
+		t.Cleanup(func() { log = previousLog })
+		for _, tc := range []struct {
+			name          string
+			absent        bool
+			metadataDrift bool
+			ownerDrift    bool
+			emptyOwners   bool
+			specDrift     bool
+			failKind      string
+		}{
+			{name: "create", absent: true},
+			{name: "unrelated metadata is unchanged"},
+			{name: "empty owner references are unchanged", emptyOwners: true},
+			{name: "owner references only", ownerDrift: true},
+			{name: "spec only", specDrift: true},
+			{name: "metadata only", metadataDrift: true},
+			{name: "spec and metadata", metadataDrift: true, specDrift: true},
+			{name: "policy update fails", metadataDrift: true, failKind: "ValidatingAdmissionPolicy"},
+			{name: "binding update fails", metadataDrift: true, failKind: "ValidatingAdmissionPolicyBinding"},
+			{name: "policy owner cleanup fails", ownerDrift: true, failKind: "ValidatingAdmissionPolicy"},
+			{name: "binding owner cleanup fails", ownerDrift: true, failKind: "ValidatingAdmissionPolicyBinding"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				observed.TakeAll()
+				policy := baseAdmissionPolicy.DeepCopy()
+				binding := desiredAdmissionPolicyBinding.DeepCopy()
+				objects := []client.Object{policy, binding}
+				retainedMetadata := metav1.ObjectMeta{
+					Name: policy.Name,
+					Annotations: map[string]string{
+						"example.com/retain":                         "value",
+						"release.openshift.io/feature-set-extra":     "retain",
+						"include.release.openshift.io/other-profile": "retain",
+					},
+					Labels:     map[string]string{"example.com/retain": "label"},
+					Finalizers: []string{"example.com/retain"},
+					ManagedFields: []metav1.ManagedFieldsEntry{{
+						Manager: "other", Operation: metav1.ManagedFieldsOperationUpdate,
+						APIVersion: "admissionregistration.k8s.io/v1", FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{}`)},
+					}},
+					CreationTimestamp: metav1.NewTime(time.Unix(1, 0)),
+				}
+				originalMetadata := make([]metav1.ObjectMeta, len(objects))
+				for index := range objects {
+					metadata := retainedMetadata.DeepCopy()
+					metadata.UID = types.UID(fmt.Sprintf("original-%d", index))
+					if tc.emptyOwners {
+						metadata.OwnerReferences = []metav1.OwnerReference{}
+					}
+					if tc.ownerDrift || tc.metadataDrift {
+						metadata.OwnerReferences = []metav1.OwnerReference{
+							{APIVersion: "config.openshift.io/v1", Kind: "ClusterVersion", Name: "other", UID: "other-version"},
+							{APIVersion: "other.example.com/v1", Kind: "ClusterVersion", Name: "version", UID: "other-group"},
+							{APIVersion: "config.openshift.io/v1", Kind: "Other", Name: "version", UID: "other-kind"},
+						}
+					}
+					if tc.metadataDrift {
+						for _, key := range []string{
+							"capability.openshift.io/name",
+							"include.release.openshift.io/ibm-cloud-managed",
+							"include.release.openshift.io/self-managed-high-availability",
+							"include.release.openshift.io/single-node-developer",
+							"release.openshift.io/feature-set",
+						} {
+							metadata.Annotations[key] = "payload"
+						}
+						metadata.OwnerReferences = append(metadata.OwnerReferences, metav1.OwnerReference{
+							APIVersion: "config.openshift.io/v1", Kind: "ClusterVersion", Name: "version", UID: "old-cvo",
+						})
+					}
+					originalMetadata[index] = *metadata
+				}
+				policy.ObjectMeta = originalMetadata[0]
+				binding.ObjectMeta = originalMetadata[1]
+				if tc.specDrift {
+					policy.Spec.Validations = nil
+					binding.Spec.ValidationActions = []admissionregistrationv1.ValidationAction{admissionregistrationv1.Warn}
+				}
+				infra := &configv1.Infrastructure{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Status:     configv1.InfrastructureStatus{ControlPlaneTopology: configv1.ExternalTopologyMode},
+				}
+				builder := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(infra).WithReturnManagedFields()
+				if !tc.absent {
+					builder.WithObjects(objects...)
+				}
+				fakeClient := builder.WithInterceptorFuncs(interceptor.Funcs{
+					Update: func(ctx context.Context, inner client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+						before := obj.DeepCopyObject().(client.Object)
+						require.NoError(t, inner.Get(ctx, client.ObjectKeyFromObject(obj), before))
+						assert.Equal(t, before.GetManagedFields(), obj.GetManagedFields(), "must preserve managedFields in the update request")
+						kind := "ValidatingAdmissionPolicy"
+						if _, binding := obj.(*admissionregistrationv1.ValidatingAdmissionPolicyBinding); binding {
+							kind = "ValidatingAdmissionPolicyBinding"
+						}
+						assert.Empty(t, observed.FilterMessage("transitioned "+kind+" from CVO to CIO management").All(), "must not log before the update succeeds")
+						if tc.failKind == kind {
+							return fmt.Errorf("injected %s update failure", kind)
+						}
+						return inner.Update(ctx, obj, opts...)
+					},
+				}).Build()
+				cl := &testutil.FakeClientRecorder{Client: fakeClient, T: t}
+				r := &reconciler{client: cl}
+				err := r.ensureAdmissionPolicy(context.Background())
+				if tc.failKind != "" {
+					require.ErrorContains(t, err, "injected "+tc.failKind+" update failure")
+				} else {
+					require.NoError(t, err)
+				}
+				wantUpdates := 0
+				if !tc.absent && (tc.metadataDrift || tc.ownerDrift || tc.specDrift) {
+					wantUpdates = 2
+					if tc.failKind == "ValidatingAdmissionPolicy" {
+						wantUpdates = 1
+					}
+				}
+				assert.Len(t, cl.Updated, wantUpdates, "combine spec and metadata into one update per object")
+				assert.Empty(t, cl.Deleted)
+				if tc.absent {
+					assert.Len(t, cl.Added, 2)
+				} else {
+					assert.Empty(t, cl.Added)
+				}
+				name := types.NamespacedName{Name: policy.Name}
+				currentPolicy := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+				currentBinding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
+				require.NoError(t, cl.Get(context.Background(), name, currentPolicy))
+				require.NoError(t, cl.Get(context.Background(), name, currentBinding))
+				for index, kind := range []string{"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"} {
+					succeeded := tc.failKind == "" || (index == 0 && tc.failKind == "ValidatingAdmissionPolicyBinding")
+					entries := observed.FilterMessage("transitioned " + kind + " from CVO to CIO management").All()
+					if (tc.metadataDrift || tc.ownerDrift) && succeeded {
+						require.Len(t, entries, 1)
+						require.Len(t, entries[0].Context, 1)
+						assert.Equal(t, "name", entries[0].Context[0].Key)
+						assert.Equal(t, name.MarshalLog(), entries[0].Context[0].Interface)
+					} else {
+						assert.Empty(t, entries)
+					}
+					metadata := currentPolicy.ObjectMeta
+					if index == 1 {
+						metadata = currentBinding.ObjectMeta
+					}
+					if !tc.absent {
+						want := originalMetadata[index].DeepCopy()
+						if succeeded {
+							want = retainedMetadata.DeepCopy()
+							want.UID = originalMetadata[index].UID
+							want.Generation = originalMetadata[index].Generation
+						}
+						want.ResourceVersion = metadata.ResourceVersion
+						want.ManagedFields = metadata.ManagedFields
+						assert.Equal(t, *want, metadata, "preserve identity and all unrelated metadata")
+					}
+				}
+				if tc.failKind == "" {
+					assert.Equal(t, baseAdmissionPolicy.Spec, currentPolicy.Spec)
+					assert.Equal(t, desiredAdmissionPolicyBinding.Spec, currentBinding.Spec)
+					cl.Updated = nil
+					cl.Added = nil
+					observed.TakeAll()
+					require.NoError(t, r.ensureAdmissionPolicy(context.Background()))
+					assert.Empty(t, cl.Updated, "repeat ensure must be a no-op")
+					assert.Empty(t, cl.Added)
+					assert.Empty(t, observed.All())
+				}
+			})
+		}
+	})
 }
 
 // TestDeleteAdmissionPolicy verifies the delete path removes both VAP

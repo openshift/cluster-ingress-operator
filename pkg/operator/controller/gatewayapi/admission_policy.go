@@ -81,11 +81,10 @@ func (r *reconciler) reconcileAdmissionPolicyTransition(ctx context.Context, sna
 }
 
 // ensureAdmissionPolicy ensures the ValidatingAdmissionPolicy and its
-// binding exist. Called on the Managed path when ShouldManageCRDs is
-// true. The desired VAP shape depends on the Infrastructure/cluster
-// controlPlaneTopology: non-External topologies include the
-// pod-bound token validation, while External topologies use the
-// SA-only base. Any failure to read Infrastructure fails the reconcile
+// binding exist whenever CIO manages Gateway API CRDs, including when the
+// management-mode gate is disabled. External topology and IBMCloud use the
+// SA-only base; other Infrastructure configurations include the pod-bound
+// token validation. Any failure to read Infrastructure fails the reconcile
 // to prevent silently weakening the admission policy.
 func (r *reconciler) ensureAdmissionPolicy(ctx context.Context) error {
 	infra := &configv1.Infrastructure{}
@@ -117,16 +116,20 @@ func (r *reconciler) ensureValidatingAdmissionPolicy(ctx context.Context, desire
 		return nil
 	}
 
-	if admissionPolicyUpToDate(&current, desired) {
+	updated := current.DeepCopy()
+	transitioned := removeCVOMetadata(&updated.ObjectMeta)
+	if admissionPolicyUpToDate(&current, desired) && !transitioned {
 		return nil
 	}
 
-	updated := current.DeepCopy()
 	updated.Spec = desired.Spec
 	if err := r.client.Update(ctx, updated); err != nil {
 		return fmt.Errorf("failed to update ValidatingAdmissionPolicy %s: %w", desired.Name, err)
 	}
 	log.Info("updated ValidatingAdmissionPolicy", "name", desired.Name)
+	if transitioned {
+		log.Info("transitioned ValidatingAdmissionPolicy from CVO to CIO management", "name", name)
+	}
 	return nil
 }
 
@@ -146,17 +149,45 @@ func (r *reconciler) ensureValidatingAdmissionPolicyBinding(ctx context.Context)
 		return nil
 	}
 
-	if admissionPolicyBindingUpToDate(&current, desired) {
+	updated := current.DeepCopy()
+	transitioned := removeCVOMetadata(&updated.ObjectMeta)
+	if admissionPolicyBindingUpToDate(&current, desired) && !transitioned {
 		return nil
 	}
 
-	updated := current.DeepCopy()
 	updated.Spec = desired.Spec
 	if err := r.client.Update(ctx, updated); err != nil {
 		return fmt.Errorf("failed to update ValidatingAdmissionPolicyBinding %s: %w", desired.Name, err)
 	}
 	log.Info("updated ValidatingAdmissionPolicyBinding", "name", desired.Name)
+	if transitioned {
+		log.Info("transitioned ValidatingAdmissionPolicyBinding from CVO to CIO management", "name", name)
+	}
 	return nil
+}
+
+// removeCVOMetadata clears all owner references so CIO exclusively manages the
+// policy and binding, and removes their former payload-selection annotations.
+// It preserves other metadata and reports whether cleanup was necessary.
+func removeCVOMetadata(metadata *metav1.ObjectMeta) bool {
+	changed := false
+	for _, key := range []string{
+		"capability.openshift.io/name",
+		"include.release.openshift.io/ibm-cloud-managed",
+		"include.release.openshift.io/self-managed-high-availability",
+		"include.release.openshift.io/single-node-developer",
+		"release.openshift.io/feature-set",
+	} {
+		if _, exists := metadata.Annotations[key]; exists {
+			delete(metadata.Annotations, key)
+			changed = true
+		}
+	}
+	if len(metadata.OwnerReferences) > 0 {
+		metadata.OwnerReferences = nil
+		changed = true
+	}
+	return changed
 }
 
 // deleteAdmissionPolicy deletes the ValidatingAdmissionPolicy and its
