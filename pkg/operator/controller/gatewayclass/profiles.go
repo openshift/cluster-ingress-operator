@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -22,6 +21,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// supportedProfileNames lists the managed profiles supported by the cluster platform.
 func supportedProfileNames(infra *configv1.Infrastructure) []string {
 	names := []string{operatorcontroller.OpenShiftExternalGatewayClassName, operatorcontroller.OpenShiftClusterIPGatewayClassName}
 	if infra != nil && infra.Status.PlatformStatus != nil {
@@ -33,14 +33,17 @@ func supportedProfileNames(infra *configv1.Infrastructure) []string {
 	return names
 }
 
+// isProfileName identifies the canonical OpenShift service profiles.
 func isProfileName(name string) bool {
 	return name == operatorcontroller.OpenShiftExternalGatewayClassName || name == operatorcontroller.OpenShiftInternalGatewayClassName || name == operatorcontroller.OpenShiftClusterIPGatewayClassName
 }
 
+// isInstallationAnchor reports whether a user class can retain the Sail installation.
 func isInstallationAnchor(class *gatewayapiv1.GatewayClass) bool {
 	return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName && class.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true"
 }
 
+// enrollInstallationAnchors protects eligible user classes until Sail cleanup completes.
 func (r *reconciler) enrollInstallationAnchors(ctx context.Context) error {
 	var classes gatewayapiv1.GatewayClassList
 	if err := r.client.List(ctx, &classes); err != nil {
@@ -73,6 +76,7 @@ func (r *reconciler) enrollInstallationAnchors(ctx context.Context) error {
 	return nil
 }
 
+// withDesiredProfiles adds supported profiles to Sail inputs before creating their classes.
 func withDesiredProfiles(infra *configv1.Infrastructure, classes []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
 	supported := supportedProfileNames(infra)
 	result := make([]gatewayapiv1.GatewayClass, 0, len(classes)+len(supported))
@@ -100,6 +104,7 @@ func withDesiredProfiles(infra *configv1.Infrastructure, classes []gatewayapiv1.
 	return result
 }
 
+// removeUnsupportedInternalProfile deletes only the managed internal class on unsupported platforms.
 func (r *reconciler) removeUnsupportedInternalProfile(ctx context.Context, infra *configv1.Infrastructure) (bool, error) {
 	if slices.Contains(supportedProfileNames(infra), operatorcontroller.OpenShiftInternalGatewayClassName) {
 		return false, nil
@@ -128,6 +133,7 @@ func (r *reconciler) removeUnsupportedInternalProfile(ctx context.Context, infra
 	return false, nil
 }
 
+// installationAnchor selects a live user class, preferring the triggering class.
 func (r *reconciler) installationAnchor(ctx context.Context, request reconcile.Request) (*gatewayapiv1.GatewayClass, error) {
 	var classes gatewayapiv1.GatewayClassList
 	if err := r.client.List(ctx, &classes); err != nil {
@@ -142,24 +148,20 @@ func (r *reconciler) installationAnchor(ctx context.Context, request reconcile.R
 	if len(anchors) == 0 {
 		return nil, nil
 	}
-	sort.Slice(anchors, func(first, second int) bool {
-		if anchors[first].CreationTimestamp.Equal(&anchors[second].CreationTimestamp) {
-			return anchors[first].Name < anchors[second].Name
-		}
-		return anchors[first].CreationTimestamp.Before(&anchors[second].CreationTimestamp)
-	})
 	for index := range anchors {
-		if anchors[index].Name == request.Name && r.config.GatewayAPIWithoutOLMEnabled {
+		if anchors[index].Name == request.Name {
 			return &anchors[index], nil
 		}
 	}
 	return &anchors[0], nil
 }
 
+// profileDefaultsName locates the defaults ConfigMap rendered by Sail for a profile.
 func profileDefaultsName(namespace, name string) types.NamespacedName {
 	return types.NamespacedName{Namespace: namespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + name}
 }
 
+// updateCustomized changes only CIO's condition on a live managed profile.
 func (r *reconciler) updateCustomized(ctx context.Context, name string, status metav1.ConditionStatus, reason, message string) error {
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var current gatewayapiv1.GatewayClass
@@ -180,6 +182,7 @@ func (r *reconciler) updateCustomized(ctx context.Context, name string, status m
 	})
 }
 
+// ensureManagedProfiles creates supported classes after verifying their defaults association.
 func (r *reconciler) ensureManagedProfiles(ctx context.Context, infra *configv1.Infrastructure) (reconcile.Result, error) {
 	r.sailLifecycleMu.Lock()
 	defer r.sailLifecycleMu.Unlock()

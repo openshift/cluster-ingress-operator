@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/stretchr/testify/require"
 	releasev1 "helm.sh/helm/v4/pkg/release/v1"
@@ -40,6 +39,12 @@ func teardownTestMapper(r *reconciler) {
 	mapper := r.client.RESTMapper().(*meta.DefaultRESTMapper)
 	mapper.Add(corev1.SchemeGroupVersion.WithKind("ConfigMap"), meta.RESTScopeNamespace)
 	mapper.Add(corev1.SchemeGroupVersion.WithKind("Service"), meta.RESTScopeNamespace)
+}
+
+func TestUninstallSailWithoutLibraryIsNoOp(t *testing.T) {
+	r := &reconciler{}
+	require.NoError(t, r.UninstallSail(context.Background()))
+	require.NoError(t, r.uninstallIstio(context.Background()))
 }
 
 func TestSailTeardownWaitsForReleaseInventoryAcrossRestart(t *testing.T) {
@@ -218,17 +223,15 @@ func TestDefaultsCleanupFailuresHoldAnchorFinalizer(t *testing.T) {
 	}
 }
 
-func TestEnrollsEveryOLMAnchorBeforeSelectingProvisioningAnchor(t *testing.T) {
+func TestEnrollsEverySailAnchorBeforeProvisioning(t *testing.T) {
 	ctx := context.Background()
 	first := profileTestClass("openshift-default", false)
 	second := profileTestClass("user-class", false)
 	first.Finalizers, second.Finalizers = nil, nil
 	profile := profileTestClass(operatorcontroller.OpenShiftClusterIPGatewayClassName, true)
 	r := profileTestReconciler(t, first, second, profile)
-	r.config.GatewayAPIWithoutOLMEnabled = false
-	r.sailInstaller = nil
-	r.startIstioWatch.Do(func() {})
-	_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(second)})
+	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(second)})
+	require.NoError(t, err)
 	for _, anchor := range []*gatewayapiv1.GatewayClass{first, second} {
 		var current gatewayapiv1.GatewayClass
 		require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(anchor), &current))
@@ -274,35 +277,4 @@ func TestSailTeardownWaitsForActualAggregationRole(t *testing.T) {
 	current.Finalizers = nil
 	require.NoError(t, r.client.Update(ctx, &current))
 	require.NoError(t, restarted.uninstallIstio(ctx))
-}
-
-func TestOLMTeardownDoesNotWaitForForeignOrReplacementRevision(t *testing.T) {
-	for _, replacement := range []bool{false, true} {
-		t.Run(fmt.Sprintf("replacement=%t", replacement), func(t *testing.T) {
-			ctx := context.Background()
-			anchor := profileTestClass("openshift-default", false)
-			istio := &sailv1.Istio{ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.IstioName("").Name, UID: "owned-istio", OwnerReferences: []metav1.OwnerReference{{APIVersion: gatewayapiv1.SchemeGroupVersion.String(), Kind: "GatewayClass", Name: anchor.Name, UID: anchor.UID}}}, Spec: sailv1.IstioSpec{Namespace: operatorcontroller.DefaultOperandNamespace}}
-			revision := &sailv1.IstioRevision{ObjectMeta: metav1.ObjectMeta{Name: istio.Name, UID: "first-revision", Finalizers: []string{"test/revision-delay"}}, Spec: sailv1.IstioRevisionSpec{Namespace: operatorcontroller.DefaultOperandNamespace}}
-			if replacement {
-				revision.OwnerReferences = []metav1.OwnerReference{{APIVersion: sailv1.GroupVersion.String(), Kind: "Istio", Name: istio.Name, UID: istio.UID}}
-			}
-			r := profileTestReconciler(t, anchor, istio, revision)
-			r.sailInstaller = nil
-			err := r.uninstallIstio(ctx)
-			if replacement {
-				require.ErrorContains(t, err, "IstioRevision")
-				require.NoError(t, r.client.Delete(ctx, revision))
-				var current sailv1.IstioRevision
-				require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(revision), &current))
-				current.Finalizers = nil
-				require.NoError(t, r.client.Update(ctx, &current))
-				revision = &sailv1.IstioRevision{ObjectMeta: metav1.ObjectMeta{Name: istio.Name, UID: "foreign-replacement"}}
-				require.NoError(t, r.client.Create(ctx, revision))
-			} else {
-				require.NoError(t, err)
-			}
-			require.NoError(t, r.uninstallIstio(ctx))
-			require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(revision), &sailv1.IstioRevision{}))
-		})
-	}
 }

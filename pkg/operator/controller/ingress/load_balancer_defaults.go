@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// applyLoadBalancerPlatformDefaults applies platform-specific annotations and traffic policy defaults.
 func applyLoadBalancerPlatformDefaults(service *corev1.Service, platform *configv1.PlatformStatus, internal bool) {
 	if platform == nil {
 		return
@@ -45,6 +46,7 @@ func applyLoadBalancerPlatformDefaults(service *corev1.Service, platform *config
 	}
 }
 
+// applyAWSLoadBalancerIPFamilies sets Service IP families for the load balancer type on dual-stack AWS clusters.
 func applyAWSLoadBalancerIPFamilies(service *corev1.Service, platform *configv1.PlatformStatus, loadBalancerType operatorv1.AWSLoadBalancerType) {
 	if platform == nil || platform.AWS == nil || !awsutil.IsDualStack(platform.AWS.IPFamily) {
 		return
@@ -64,6 +66,7 @@ func applyAWSLoadBalancerIPFamilies(service *corev1.Service, platform *configv1.
 	}
 }
 
+// LoadBalancerServiceDefaults builds platform-derived Service defaults without IngressController overrides.
 func LoadBalancerServiceDefaults(platform *configv1.PlatformStatus, internal bool) *corev1.Service {
 	service := &corev1.Service{Spec: corev1.ServiceSpec{
 		Type: corev1.ServiceTypeLoadBalancer, ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,

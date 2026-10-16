@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"testing"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -42,7 +41,7 @@ func profileTestClass(name string, managed bool) *gatewayapiv1.GatewayClass {
 func profileTestReconciler(t *testing.T, objects ...client.Object) *reconciler {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	for _, register := range []func(*runtime.Scheme) error{corev1.AddToScheme, networkingv1.AddToScheme, rbacv1.AddToScheme, configv1.Install, gatewayapiv1.Install, sailv1.AddToScheme, apiextensionsv1.AddToScheme} {
+	for _, register := range []func(*runtime.Scheme) error{corev1.AddToScheme, networkingv1.AddToScheme, rbacv1.AddToScheme, configv1.Install, gatewayapiv1.Install, apiextensionsv1.AddToScheme} {
 		require.NoError(t, register(scheme))
 	}
 	objects = append(objects, &configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})
@@ -306,49 +305,4 @@ func TestFinalAnchorWaitsForProfilesAndIstioCleanup(t *testing.T) {
 	_, err = r.Reconcile(ctx, request)
 	require.NoError(t, err)
 	require.True(t, apierrors.IsNotFound(r.client.Get(ctx, request.NamespacedName, &current)))
-}
-
-func TestOLMTeardownDeletesOnlyOwnedIstioAndWaits(t *testing.T) {
-	ctx := context.Background()
-	for _, owned := range []bool{true, false} {
-		t.Run(fmt.Sprintf("owned=%t", owned), func(t *testing.T) {
-			anchor := profileTestClass("openshift-default", false)
-			istio := &sailv1.Istio{ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.IstioName("").Name, UID: "istio-uid", Finalizers: []string{"sail-finalizer"}}, Spec: sailv1.IstioSpec{Namespace: operatorcontroller.DefaultOperandNamespace}}
-			if owned {
-				istio.OwnerReferences = []metav1.OwnerReference{{APIVersion: gatewayapiv1.SchemeGroupVersion.String(), Kind: "GatewayClass", Name: anchor.Name, UID: anchor.UID}}
-			}
-			revision := &sailv1.IstioRevision{ObjectMeta: metav1.ObjectMeta{Name: istio.Name, UID: "revision-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: sailv1.GroupVersion.String(), Kind: "Istio", Name: istio.Name, UID: istio.UID}}}, Spec: sailv1.IstioRevisionSpec{Namespace: operatorcontroller.DefaultOperandNamespace}}
-			r := profileTestReconciler(t, anchor, istio, revision)
-			r.sailInstaller = nil
-			deletions := 0
-			baseClient := r.client.(client.WithWatch)
-			r.client = interceptor.NewClient(baseClient, interceptor.Funcs{Delete: func(ctx context.Context, delegate client.WithWatch, object client.Object, options ...client.DeleteOption) error {
-				if _, isIstio := object.(*sailv1.Istio); isIstio {
-					deletions++
-				} else {
-					require.IsType(t, &corev1.ConfigMap{}, object)
-					require.Equal(t, r.teardownInventoryName(), client.ObjectKeyFromObject(object))
-				}
-				return delegate.Delete(ctx, object, options...)
-			}})
-			err := r.uninstallIstio(ctx)
-			if !owned {
-				require.ErrorContains(t, err, "not owned")
-				require.Zero(t, deletions)
-				return
-			}
-			require.ErrorContains(t, err, "waiting for CIO-managed Istio")
-			require.Equal(t, 1, deletions)
-			var current sailv1.Istio
-			require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(istio), &current))
-			require.False(t, current.DeletionTimestamp.IsZero())
-			require.Error(t, r.uninstallIstio(ctx))
-			require.Equal(t, 1, deletions)
-			current.Finalizers = nil
-			require.NoError(t, r.client.Update(ctx, &current))
-			require.ErrorContains(t, r.uninstallIstio(ctx), "IstioRevision")
-			require.NoError(t, baseClient.Delete(ctx, revision))
-			require.NoError(t, r.uninstallIstio(ctx))
-		})
-	}
 }

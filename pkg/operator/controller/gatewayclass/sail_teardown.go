@@ -34,6 +34,7 @@ type teardownResource struct {
 	UID        types.UID `json:"uid"`
 }
 
+// teardownInventoryName returns the Sail teardown checkpoint's namespace and name.
 func (r *reconciler) teardownInventoryName() types.NamespacedName {
 	namespace := r.config.OperatorNamespace
 	if namespace == "" {
@@ -42,6 +43,7 @@ func (r *reconciler) teardownInventoryName() types.NamespacedName {
 	return types.NamespacedName{Namespace: namespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-teardown"}
 }
 
+// teardownInventory loads the saved Sail resource inventory, rejecting foreign checkpoints.
 func (r *reconciler) teardownInventory(ctx context.Context) (*corev1.ConfigMap, []teardownResource, error) {
 	var checkpoint corev1.ConfigMap
 	if err := r.client.Get(ctx, r.teardownInventoryName(), &checkpoint); err != nil {
@@ -60,6 +62,7 @@ func (r *reconciler) teardownInventory(ctx context.Context) (*corev1.ConfigMap, 
 	return &checkpoint, inventory, nil
 }
 
+// captureSailTeardown checkpoints CIO-owned Istio release resources and aggregation roles for uninstall tracking.
 func (r *reconciler) captureSailTeardown(ctx context.Context) error {
 	if r.releaseReader == nil {
 		return fmt.Errorf("Sail release reader is not configured")
@@ -116,6 +119,7 @@ func (r *reconciler) captureSailTeardown(ctx context.Context) error {
 	return r.saveTeardownInventory(ctx, checkpoint, inventory)
 }
 
+// saveTeardownInventory persists a deduplicated resource inventory in the teardown checkpoint.
 func (r *reconciler) saveTeardownInventory(ctx context.Context, checkpoint *corev1.ConfigMap, inventory []teardownResource) error {
 	if len(inventory) == 0 {
 		return nil
@@ -145,6 +149,7 @@ func (r *reconciler) saveTeardownInventory(ctx context.Context, checkpoint *core
 	return r.client.Patch(ctx, updated, client.MergeFromWithOptions(checkpoint, client.MergeFromWithOptimisticLock{}))
 }
 
+// captureTeardownResource verifies ownership and records an existing resource's identity for teardown tracking.
 func (r *reconciler) captureTeardownResource(ctx context.Context, object *unstructured.Unstructured, aggregationRole bool, inventory *[]teardownResource) error {
 	if err := r.client.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -171,6 +176,7 @@ func (r *reconciler) captureTeardownResource(ctx context.Context, object *unstru
 	return nil
 }
 
+// finishSailTeardown removes the checkpoint once all recorded resource UIDs have disappeared.
 func (r *reconciler) finishSailTeardown(ctx context.Context) error {
 	checkpoint, inventory, err := r.teardownInventory(ctx)
 	if err != nil || checkpoint == nil {

@@ -15,6 +15,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// markProfilesUnmanaged sets managed profiles' Customized condition to False with reason Unmanaged.
 func (r *reconciler) markProfilesUnmanaged(ctx context.Context) error {
 	var classes gatewayapiv1.GatewayClassList
 	if err := r.client.List(ctx, &classes, client.MatchingLabels{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}); err != nil {

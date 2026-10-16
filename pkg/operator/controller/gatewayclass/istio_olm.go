@@ -28,30 +28,6 @@ const systemClusterCriticalPriorityClassName = "system-cluster-critical"
 // Boolean indicating whether it exists, the CR if it exists, and an error
 // value.
 func (r *reconciler) ensureIstioOLM(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, infraConfig *configv1.Infrastructure) (bool, *sailv1.Istio, error) {
-	r.sailLifecycleMu.Lock()
-	defer r.sailLifecycleMu.Unlock()
-	if !r.modeAccessor.AllowDependents() {
-		return false, nil, nil
-	}
-	var anchor gatewayapiv1.GatewayClass
-	if err := r.client.Get(ctx, types.NamespacedName{Name: gatewayclass.Name}, &anchor); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil, nil
-		}
-		return false, nil, err
-	}
-	if !isInstallationAnchor(&anchor) || !anchor.DeletionTimestamp.IsZero() {
-		return false, nil, nil
-	}
-	checkpoint, _, err := r.teardownInventory(ctx)
-	if err != nil {
-		return false, nil, err
-	}
-	if checkpoint != nil {
-		if err := r.uninstallIstio(ctx); err != nil {
-			return false, nil, err
-		}
-	}
 	name := controller.IstioName(r.config.OperandNamespace)
 	have, current, err := r.currentIstio(ctx, name)
 	if err != nil {
