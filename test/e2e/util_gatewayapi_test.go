@@ -18,7 +18,9 @@ import (
 	"time"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	configv1 "github.com/openshift/api/config/v1"
 	v1 "github.com/openshift/api/operatoringress/v1"
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -40,8 +42,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -96,7 +100,7 @@ func assertCRDExists(t *testing.T, crdname string) ([]string, error) {
 }
 
 // deleteExistingCRD deletes if the CRD of the given name exists and returns an error if not.
-func deleteExistingCRD(t *testing.T, crdName string) error {
+func deleteExistingCRD(t *testing.T, crdClient client.Client, crdName string) error {
 	t.Helper()
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	newCRD := &apiextensionsv1.CustomResourceDefinition{}
@@ -114,7 +118,7 @@ func deleteExistingCRD(t *testing.T, crdName string) error {
 		return err
 	}
 	// deleting CRD.
-	err = kclient.Delete(context.Background(), crd)
+	err = crdClient.Delete(context.Background(), crd)
 	if err != nil {
 		t.Errorf("failed to delete crd %s: %v", name, err)
 		return err
@@ -309,10 +313,19 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 }
 
 // createCRD creates the CRD with the given name or retrieves it if already exists.
-func createCRD(t *testing.T, name string) (*apiextensionsv1.CustomResourceDefinition, error) {
+func createCRD(t *testing.T, crdClient client.Client, name string) (*apiextensionsv1.CustomResourceDefinition, error) {
 	t.Helper()
 	crd := buildGWAPICRDFromName(name)
-	if err := createOrGetWithRetry(t, context.Background(), crd, DefaultRetryTimeout); err != nil {
+	if err := wait.PollUntilContextTimeout(t.Context(), 2*time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
+		if err := crdClient.Create(ctx, crd); err != nil {
+			if kerrors.IsAlreadyExists(err) {
+				return true, nil
+			}
+			t.Logf("failed to create CRD %s: %v; retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
 		return nil, fmt.Errorf("failed to create crd %q: %w", name, err)
 	}
 	return crd, nil
@@ -1510,7 +1523,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 func assertVAP(t *testing.T, name string) error {
 	t.Helper()
 	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
-	// Re-creation of VAP can take some time especially after CVO is scaled back up.
+	// Re-creation of VAP by the ingress operator can take some time.
 	// Use a large timeout of 5 minutes to avoid flakes.
 	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, types.NamespacedName{Name: name}, vap); err != nil {
@@ -1550,60 +1563,46 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	})
 }
 
-// vapManager helps to disable the VAP resource which is managed by CVO.
-type vapManager struct {
-	t    *testing.T
-	name string
-}
-
-// newVAPManager returns a new instance of VAPManager.
-func newVAPManager(t *testing.T, vapName string) *vapManager {
-	return &vapManager{
-		t:    t,
-		name: vapName,
+// gatewayAPICRDClient uses authorized service-account impersonation for test-only
+// CRD mutations without removing admission protection or stopping CIO. It includes
+// system:masters for RBAC and topology-required pod/node extras for admission;
+// the impersonated extras are not a real pod-bound token.
+func gatewayAPICRDClient(t *testing.T) client.Client {
+	t.Helper()
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
 	}
-}
-
-// disable scales down CVO and removes the VAP resource.
-func (m *vapManager) disable() (error, func()) {
-	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 0); err != nil {
-		return fmt.Errorf("failed to scale down cvo: %w", err), func() { /*scale down didn't work, nothing to do*/ }
+	kubeConfig.Impersonate = rest.ImpersonationConfig{
+		UserName: "system:serviceaccount:openshift-ingress-operator:ingress-operator",
+		Groups:   []string{"system:masters"},
 	}
-	if err := deleteExistingVAP(m.t, m.name); err != nil {
-		return fmt.Errorf("failed to delete vap %q: %w", m.name, err), func() {
-			if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
-				m.t.Errorf("failed to scale up cvo: %v", err)
+	skipPodBound := infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode ||
+		(infraConfig.Status.PlatformStatus != nil && infraConfig.Status.PlatformStatus.Type == configv1.IBMCloudPlatformType)
+	if !skipPodBound {
+		pods := &corev1.PodList{}
+		if err := kclient.List(context.Background(), pods, client.InNamespace(operatorcontroller.DefaultOperatorNamespace), client.MatchingLabels{"name": "ingress-operator"}); err != nil {
+			t.Fatalf("failed to list ingress operator pods: %v", err)
+		}
+		for _, pod := range pods.Items {
+			if pod.Spec.ServiceAccountName != "ingress-operator" || pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
+				continue
 			}
+			kubeConfig.Impersonate.Extra = map[string][]string{
+				"authentication.kubernetes.io/node-name": {pod.Spec.NodeName},
+				"authentication.kubernetes.io/pod-name":  {pod.Name},
+			}
+			break
+		}
+		if kubeConfig.Impersonate.Extra == nil {
+			t.Fatal("no scheduled ingress operator pod found")
 		}
 	}
-	return nil, nil
-}
-
-// Enable scales up CVO and waits until the VAP is recreated.
-func (m *vapManager) enable() {
-	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
-		m.t.Errorf("failed to scale up cvo: %v", err)
-	} else if err := assertVAP(m.t, m.name); err != nil {
-		m.t.Errorf("failed to find vap %q: %v", m.name, err)
+	crdClient, err := operatorclient.NewClient(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create CRD client: %v", err)
 	}
-}
-
-// bypassVAP temporarily removes the ingress operator's VAP, executes the given functions,
-// and then restores the VAP before returning.
-// The provided functions are expected to modify Gateway API CRDs, which are
-// normally protected from external modifications (any changes made by anything
-// other than the ingress operator) by the VAP.
-func bypassVAP(t *testing.T, fns ...func(t *testing.T)) {
-	vm := newVAPManager(t, gwapiCRDVAPName)
-	if err, recoverFn := vm.disable(); err != nil {
-		defer recoverFn()
-		t.Fatalf("failed to disable vap: %v", err)
-	}
-	defer vm.enable()
-
-	for _, fn := range fns {
-		fn(t)
-	}
+	return crdClient
 }
 
 func eventuallyClusterRoleContainsAggregatedPolicies(t *testing.T, destClusterRoleName, srcClusterRoleName string) error {
