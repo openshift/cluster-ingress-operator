@@ -379,15 +379,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// Only create/update CRDs and their aggregated RBAC when the
 		// resolved mode is Managed (not Unmanaged, not TakeoverBlocked).
 		if r.config.ModeAccessor.ShouldManageCRDs() {
-			if err := r.ensureAdmissionPolicy(ctx); err != nil {
-				r.setTransitionError(modeChanged, snapshot.desiredMode, err)
-				return reconcile.Result{}, err
-			}
-			if err := r.ensureGatewayAPICRDs(ctx); err != nil {
-				r.setTransitionError(modeChanged, snapshot.desiredMode, err)
-				return reconcile.Result{}, err
-			}
-			if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
+			if err := r.ensureManagedResources(ctx); err != nil {
 				r.setTransitionError(modeChanged, snapshot.desiredMode, err)
 				return reconcile.Result{}, err
 			}
@@ -411,10 +403,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		}
 	} else {
 		// Gate OFF: preserve legacy always-ensure behavior.
-		if err := r.ensureGatewayAPICRDs(ctx); err != nil {
-			return reconcile.Result{}, err
-		}
-		if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
+		if err := r.ensureManagedResources(ctx); err != nil {
 			return reconcile.Result{}, err
 		}
 	}
@@ -481,6 +470,16 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	return reconcile.Result{}, nil
+}
+
+func (r *reconciler) ensureManagedResources(ctx context.Context) error {
+	if err := r.ensureAdmissionPolicy(ctx); err != nil {
+		return err
+	}
+	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
+		return err
+	}
+	return r.ensureGatewayAPIRBAC(ctx)
 }
 
 // ensureDependentControllers creates the required Gateway API field indexes.
