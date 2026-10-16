@@ -64,11 +64,9 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 
 # Features NOT claimed in SUPPORTED_FEATURES (tests auto-skipped):
 # - GatewayStaticAddresses: we don't support specific address pool configuration (https://redhat.atlassian.net/browse/NE-2416).
-# - GatewayBackendClientCertificate, GatewayFrontendClientCertificateValidation,
-#   GatewayFrontendClientCertificateValidationInsecureFallback, GatewayHTTPSListenerDetectMisdirectedRequests:
-#   not supported by Istio 1.30.1 (https://github.com/istio/istio/blob/1.30.1/pilot/pkg/config/kube/gateway/supported_features.go#L22).
-# - ListenerSet: CRD is installed as part of Gateway API v1.5.1 standard channel, but Istio does not yet support it.
-SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
+# - GatewayBackendClientCertificate, GatewayHTTPSListenerDetectMisdirectedRequests:
+#   not supported by Istio 1.31.1 (https://github.com/istio/istio/blob/1.31.1/pilot/pkg/config/kube/gateway/supported_features.go#L22).
+SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPListenerIsolation,GatewayInfrastructure,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteRetry,HTTPRouteRetryBackendTimeout,HTTPRouteRetryConnectionError,HTTPRouteSchemeRedirect,ListenerSet,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
 SKIPPED_TESTS=""
 
 echo "Start Gateway API Conformance Testing"
