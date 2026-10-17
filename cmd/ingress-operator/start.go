@@ -158,6 +158,10 @@ func start(opts *StartOptions) error {
 	if err := routemetricscontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for route_metrics_controller")
 	}
+	log.Info("registering Prometheus metrics for status_controller")
+	if err := statuscontroller.RegisterMetrics(); err != nil {
+		log.Error(err, "unable to register metrics for status_controller")
+	}
 
 	// Set up and start the file watcher.
 	watcher, err := fsnotify.NewWatcher()
