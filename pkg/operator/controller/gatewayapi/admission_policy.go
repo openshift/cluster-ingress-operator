@@ -72,9 +72,6 @@ func (r *reconciler) reconcileAdmissionPolicyTransition(ctx context.Context, sna
 			return fmt.Errorf("cannot complete transition to Unmanaged, Sail uninstall failed: %w", err)
 		}
 	}
-	if err := r.markManagedProfileUnmanaged(ctx); err != nil {
-		return err
-	}
 
 	// Step 2: Remove the ValidatingAdmissionPolicy and binding.
 	if err := r.deleteAdmissionPolicy(ctx); err != nil {

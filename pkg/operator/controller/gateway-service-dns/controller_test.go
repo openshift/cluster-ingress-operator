@@ -7,6 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -14,6 +15,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -301,6 +303,37 @@ func Test_Reconcile(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestClusterIPManagedProfileDoesNotCreateDNS verifies exclusion and cleanup of stale public DNS records.
+func TestClusterIPManagedProfileDoesNotCreateDNS(t *testing.T) {
+	t.Parallel()
+	// Set up a ClusterIP Gateway and its Service without external DNS configuration.
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, iov1.Install(scheme))
+	require.NoError(t, gatewayapiv1.Install(scheme))
+	gateway := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: operatorcontroller.DefaultOperandNamespace}, Spec: gatewayapiv1.GatewaySpec{GatewayClassName: operatorcontroller.OpenShiftClusterIPGatewayClassName, Listeners: []gatewayapiv1.Listener{{Hostname: new(gatewayapiv1.Hostname("example.com"))}}}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "gateway-service", Namespace: gateway.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: gateway.Name}}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway, service).Build()
+	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
+	mode.SetCRDsEstablished(true)
+	r := &reconciler{client: cl, cache: &testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, config: Config{OperandNamespace: gateway.Namespace}, modeAccessor: mode}
+	// Reconcile the Service and verify no DNS record is created.
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: service.Name, Namespace: service.Namespace}})
+	require.NoError(t, err)
+	var records iov1.DNSRecordList
+	require.NoError(t, cl.List(context.Background(), &records))
+	require.Empty(t, records.Items)
+	// Reconcile stale records, removing only the record for this Gateway.
+	stale := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: "stale", Namespace: gateway.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: gateway.Name}}, Spec: iov1.DNSRecordSpec{DNSName: "example.com.", Targets: []string{"old.example.com"}}}
+	unrelated := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: gateway.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: "other-gateway"}}}
+	require.NoError(t, cl.Create(context.Background(), stale))
+	require.NoError(t, cl.Create(context.Background(), unrelated))
+	_, err = r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: service.Name, Namespace: service.Namespace}})
+	require.NoError(t, err)
+	require.True(t, apierrors.IsNotFound(cl.Get(context.Background(), types.NamespacedName{Name: stale.Name, Namespace: stale.Namespace}, &iov1.DNSRecord{})))
+	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: unrelated.Name, Namespace: unrelated.Namespace}, &iov1.DNSRecord{}))
 }
 
 func Test_gatewayListenersHostnamesChanged(t *testing.T) {

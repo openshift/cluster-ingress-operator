@@ -1212,7 +1212,7 @@ func Test_Reconcile(t *testing.T) {
 			var res reconcile.Result
 			var err error
 			if reconciler.config.GatewayAPIWithoutOLMEnabled {
-				res, err = reconciler.reconcileWithSailLibrary(context.Background(), tc.request)
+				res, err = reconciler.ensureSailInstallation(context.Background(), tc.request)
 			} else {
 				res, err = reconciler.Reconcile(context.Background(), tc.request)
 			}

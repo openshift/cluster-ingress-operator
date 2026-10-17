@@ -8,6 +8,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 
 	"k8s.io/client-go/tools/record"
@@ -364,6 +365,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			if err := r.reconcileAdmissionPolicyTransition(ctx, snapshot); err != nil {
 				r.setTransitionError(modeChanged, snapshot.desiredMode, err)
 				return reconcile.Result{}, err
+			}
+			// Profile status is part of mode completion, not admission policy reconciliation.
+			if snapshot.desiredMode == operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
+				if err := gatewayclasscontroller.SetManagedProfilesUnmanagedCustomizedStatus(ctx, r.client); err != nil {
+					r.setTransitionError(modeChanged, snapshot.desiredMode, err)
+					return reconcile.Result{}, err
+				}
 			}
 		}
 

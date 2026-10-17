@@ -20,6 +20,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -29,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -1963,4 +1965,122 @@ func TestReconcile_RestartInSteadyStateUnmanaged_VerifiesTransitionOps(t *testin
 	assert.NoError(t, err)
 	assert.True(t, uninstaller.called, "restart must verify teardown and profile status before trusting persisted CRD status")
 	assert.False(t, modeAccessor.GetTransitionState().InProgress, "successful verification must complete the transition")
+}
+
+// TestManagedProfileUnmanagedTransitionRetriesRestartsAndStopsObserving verifies mode completion and retry ordering.
+func TestManagedProfileUnmanagedTransitionRetriesRestartsAndStopsObserving(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	for _, register := range []func(*runtime.Scheme) error{configv1.Install, operatorv1alpha1.Install, gatewayapiv1.Install, admissionregistrationv1.AddToScheme, rbacv1.AddToScheme, apiextensionsv1.AddToScheme} {
+		require.NoError(t, register(scheme))
+	}
+	ingress := &operatorv1alpha1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: operatorv1alpha1.IngressSpec{GatewayAPI: operatorv1alpha1.GatewayAPIIngressConfig{ManagementMode: operatorv1alpha1.GatewayAPIManagementModeUnmanaged}}}
+	ingress.Status.Conditions = []metav1.Condition{{Type: conditionTypeGatewayAPICRDsManaged, Status: metav1.ConditionTrue, Reason: reasonManagedByIngressOperator, LastTransitionTime: metav1.Now()}}
+	var objects []client.Object
+	objects = append(objects, ingress, &configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}, &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "ingress"}})
+	for _, crd := range managedCRDs {
+		current := crd.DeepCopy()
+		current.Status.Conditions = []apiextensionsv1.CustomResourceDefinitionCondition{{Type: apiextensionsv1.Established, Status: apiextensionsv1.ConditionTrue}}
+		objects = append(objects, current)
+	}
+	names := []string{operatorcontroller.OpenShiftClusterIPGatewayClassName, operatorcontroller.OpenShiftDefaultGatewayClassName}
+	for _, name := range names {
+		managedProfile := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName}}
+		if name != operatorcontroller.OpenShiftDefaultGatewayClassName {
+			managedProfile.Labels = map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}
+		}
+		managedProfile.Status.Conditions = []metav1.Condition{{Type: "Customized", Status: metav1.ConditionTrue, Reason: "Configured", LastTransitionTime: metav1.Now()}, {Type: "Accepted", Status: metav1.ConditionTrue, Reason: "Accepted", LastTransitionTime: metav1.Now()}}
+		objects = append(objects, managedProfile)
+	}
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&operatorv1alpha1.Ingress{}, &gatewayapiv1.GatewayClass{}).WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, func(object client.Object) []string {
+		return []string{}
+	}).Build()
+	failStatus := true
+	managedProfileWrites, managedProfileLists, managedProfileReads := 0, 0, 0
+	var operations []string
+	wrapped := interceptor.NewClient(base, interceptor.Funcs{
+		Get: func(ctx context.Context, delegate client.WithWatch, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+			if _, managedProfile := object.(*gatewayapiv1.GatewayClass); managedProfile {
+				managedProfileReads++
+			}
+			return delegate.Get(ctx, key, object, options...)
+		},
+		List: func(ctx context.Context, delegate client.WithWatch, list client.ObjectList, options ...client.ListOption) error {
+			if _, managedProfiles := list.(*gatewayapiv1.GatewayClassList); managedProfiles {
+				managedProfileLists++
+			}
+			return delegate.List(ctx, list, options...)
+		},
+		SubResourcePatch: func(ctx context.Context, delegate client.Client, subresource string, object client.Object, patch client.Patch, options ...client.SubResourcePatchOption) error {
+			if _, managedProfile := object.(*gatewayapiv1.GatewayClass); managedProfile {
+				managedProfileWrites++
+				operations = append(operations, "CustomizedStatus")
+				if failStatus && object.GetName() == operatorcontroller.OpenShiftClusterIPGatewayClassName {
+					return fmt.Errorf("transient managed-profile status failure")
+				}
+			}
+			return delegate.SubResource(subresource).Patch(ctx, object, patch, options...)
+		},
+	})
+	uninstallCalls := 0
+	uninstaller := &fakeSailUninstaller{onUninstall: func() {
+		uninstallCalls++
+		operations = append(operations, "uninstall")
+	}}
+	newReconciler := func() *reconciler {
+		mode := operatorcontroller.NewGatewayAPIModeAccessor(true)
+		informers := &informertest.FakeInformers{Scheme: scheme}
+		return &reconciler{client: wrapped, cache: &testutil.FakeCache{Informers: informers, Reader: wrapped}, config: Config{ModeAccessor: mode, SailUninstaller: uninstaller}}
+	}
+	r := newReconciler()
+	uninstaller.err = fmt.Errorf("teardown pending")
+	_, err := r.Reconcile(ctx, reconcile.Request{})
+	require.ErrorContains(t, err, "teardown pending")
+	require.Zero(t, managedProfileWrites)
+	require.Zero(t, managedProfileReads)
+	uninstaller.err = nil
+	operations = nil
+	_, err = r.Reconcile(ctx, reconcile.Request{})
+	require.ErrorContains(t, err, "transient managed-profile status failure")
+	require.Equal(t, []string{"uninstall", "CustomizedStatus"}, operations)
+	require.Nil(t, r.config.ModeAccessor.GetLastAppliedMode())
+	require.True(t, r.config.ModeAccessor.GetTransitionState().InProgress)
+	var current operatorv1alpha1.Ingress
+	require.NoError(t, base.Get(ctx, types.NamespacedName{Name: "cluster"}, &current))
+	require.Equal(t, metav1.ConditionTrue, meta.FindStatusCondition(current.Status.Conditions, conditionTypeGatewayAPICRDsManaged).Status)
+	failStatus = false
+	r = newReconciler()
+	_, err = r.Reconcile(ctx, reconcile.Request{})
+	require.NoError(t, err)
+	require.Equal(t, operatorv1alpha1.GatewayAPIManagementModeUnmanaged, *r.config.ModeAccessor.GetLastAppliedMode())
+	for _, name := range names {
+		var managedProfile gatewayapiv1.GatewayClass
+		require.NoError(t, base.Get(ctx, types.NamespacedName{Name: name}, &managedProfile))
+		require.Equal(t, metav1.ConditionTrue, meta.FindStatusCondition(managedProfile.Status.Conditions, "Accepted").Status)
+		condition := meta.FindStatusCondition(managedProfile.Status.Conditions, "Customized")
+		if name == operatorcontroller.OpenShiftDefaultGatewayClassName {
+			require.Equal(t, "Configured", condition.Reason)
+		} else {
+			require.Equal(t, metav1.ConditionFalse, condition.Status)
+			require.Equal(t, "Unmanaged", condition.Reason)
+		}
+	}
+	priorWrites, priorLists, priorReads, priorUninstalls := managedProfileWrites, managedProfileLists, managedProfileReads, uninstallCalls
+	_, err = r.Reconcile(ctx, reconcile.Request{})
+	require.NoError(t, err)
+	require.Equal(t, priorWrites, managedProfileWrites)
+	require.Equal(t, priorLists, managedProfileLists)
+	require.Equal(t, priorReads, managedProfileReads)
+	require.Equal(t, priorUninstalls, uninstallCalls)
+	r = newReconciler()
+	_, err = r.Reconcile(ctx, reconcile.Request{})
+	require.NoError(t, err)
+	require.Equal(t, priorWrites, managedProfileWrites)
+	require.Greater(t, uninstallCalls, priorUninstalls)
+	require.NoError(t, base.Get(ctx, types.NamespacedName{Name: "cluster"}, &current))
+	current.Spec.GatewayAPI.ManagementMode = operatorv1alpha1.GatewayAPIManagementModeManaged
+	require.NoError(t, base.Update(ctx, &current))
+	_, err = r.Reconcile(ctx, reconcile.Request{})
+	require.NoError(t, err)
+	require.True(t, r.config.ModeAccessor.AllowDependents())
 }

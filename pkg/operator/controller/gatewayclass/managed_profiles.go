@@ -3,6 +3,7 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -11,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -18,9 +20,11 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-// isManagedProfileName identifies the managed ClusterIP GatewayClass.
+var managedProfileNames = []string{operatorcontroller.OpenShiftClusterIPGatewayClassName}
+
+// isManagedProfileName identifies an enabled managed GatewayClass profile.
 func isManagedProfileName(name string) bool {
-	return name == operatorcontroller.OpenShiftClusterIPGatewayClassName
+	return slices.Contains(managedProfileNames, name)
 }
 
 // isInstallationAnchor reports whether a user class can retain the Sail installation.
@@ -61,17 +65,18 @@ func (r *reconciler) enrollInstallationAnchors(ctx context.Context) error {
 	return nil
 }
 
-// withDesiredManagedProfile includes ClusterIP defaults in Sail inputs before class creation.
-func withDesiredManagedProfile(classes []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
-	for _, class := range classes {
-		if isManagedProfileName(class.Name) {
-			return classes
+// withDesiredManagedProfiles includes enabled profile defaults in Sail inputs before class creation.
+func withDesiredManagedProfiles(classes []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
+	classes = slices.Clone(classes)
+	for _, name := range managedProfileNames {
+		if !slices.ContainsFunc(classes, func(class gatewayapiv1.GatewayClass) bool { return class.Name == name }) {
+			classes = append(classes, gatewayapiv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}},
+				Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
+			})
 		}
 	}
-	return append(append([]gatewayapiv1.GatewayClass(nil), classes...), gatewayapiv1.GatewayClass{
-		ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.OpenShiftClusterIPGatewayClassName, Labels: map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}},
-		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
-	})
+	return classes
 }
 
 // installationAnchor selects a live user class, preferring the triggering class.
@@ -102,12 +107,23 @@ func managedProfileDefaultsName(namespace, name string) types.NamespacedName {
 	return types.NamespacedName{Namespace: namespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + name}
 }
 
-// updateManagedProfileCustomized changes only CIO's condition on a live managed profile.
-func (r *reconciler) updateManagedProfileCustomized(ctx context.Context, name string, status metav1.ConditionStatus, reason, message string) error {
+// SetManagedProfilesUnmanagedCustomizedStatus marks owned profiles' CustomizedStatus as Unmanaged during a mode transition.
+func SetManagedProfilesUnmanagedCustomizedStatus(ctx context.Context, cl client.Client) error {
+	var errs []error
+	for _, name := range managedProfileNames {
+		if err := updateManagedProfileCustomizedStatus(ctx, cl, name, metav1.ConditionFalse, "Unmanaged", "Customization is not managed by the Ingress Operator in Unmanaged mode."); err != nil {
+			errs = append(errs, fmt.Errorf("cannot mark GatewayClass %q customization Unmanaged: %w", name, err))
+		}
+	}
+	return utilerrors.NewAggregate(errs)
+}
+
+// updateManagedProfileCustomizedStatus changes only CIO's CustomizedStatus on a live owned profile.
+func updateManagedProfileCustomizedStatus(ctx context.Context, cl client.Client, name string, status metav1.ConditionStatus, reason, message string) error {
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		var current gatewayapiv1.GatewayClass
-		if err := r.client.Get(ctx, types.NamespacedName{Name: name}, &current); err != nil {
-			if apierrors.IsNotFound(err) {
+		if err := cl.Get(ctx, types.NamespacedName{Name: name}, &current); err != nil {
+			if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 				return nil
 			}
 			return err
@@ -119,12 +135,12 @@ func (r *reconciler) updateManagedProfileCustomized(ctx context.Context, name st
 		if !meta.SetStatusCondition(&updated.Status.Conditions, metav1.Condition{Type: "Customized", Status: status, Reason: reason, Message: message, ObservedGeneration: current.Generation, LastTransitionTime: metav1.Now()}) {
 			return nil
 		}
-		return r.client.Status().Patch(ctx, updated, client.MergeFromWithOptions(&current, client.MergeFromWithOptimisticLock{}))
+		return cl.Status().Patch(ctx, updated, client.MergeFromWithOptions(&current, client.MergeFromWithOptimisticLock{}))
 	})
 }
 
-// ensureManagedProfile creates the managed ClusterIP class after verifying its defaults association.
-func (r *reconciler) ensureManagedProfile(ctx context.Context) (reconcile.Result, error) {
+// ensureManagedProfiles reconciles enabled profiles while an installation anchor remains.
+func (r *reconciler) ensureManagedProfiles(ctx context.Context) (reconcile.Result, error) {
 	r.sailLifecycleMu.Lock()
 	defer r.sailLifecycleMu.Unlock()
 	if !r.modeAccessor.AllowDependents() {
@@ -134,9 +150,22 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context) (reconcile.Result
 	if err != nil || anchor == nil {
 		return reconcile.Result{}, err
 	}
-	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
+	result := reconcile.Result{}
+	var errs []error
+	for _, name := range managedProfileNames {
+		profileResult, err := r.ensureManagedProfile(ctx, name)
+		if result.RequeueAfter == 0 || (profileResult.RequeueAfter > 0 && profileResult.RequeueAfter < result.RequeueAfter) {
+			result.RequeueAfter = profileResult.RequeueAfter
+		}
+		errs = append(errs, err)
+	}
+	return result, utilerrors.NewAggregate(errs)
+}
+
+// ensureManagedProfile creates a managed class after verifying its defaults association.
+func (r *reconciler) ensureManagedProfile(ctx context.Context, name string) (reconcile.Result, error) {
 	var class gatewayapiv1.GatewayClass
-	err = r.client.Get(ctx, types.NamespacedName{Name: name}, &class)
+	err := r.client.Get(ctx, types.NamespacedName{Name: name}, &class)
 	missing := apierrors.IsNotFound(err)
 	if err != nil && !missing {
 		return reconcile.Result{}, err
@@ -166,21 +195,23 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context) (reconcile.Result
 			return result, err
 		}
 	}
-	return result, r.updateManagedProfileCustomized(ctx, name, status, reason, message)
+	return result, updateManagedProfileCustomizedStatus(ctx, r.client, name, status, reason, message)
 }
 
 // cleanupInstallation waits for managed resources, then delegates completion to Sail uninstall.
 func (r *reconciler) cleanupInstallation(ctx context.Context) (reconcile.Result, error) {
 	if r.modeAccessor.AllowDependents() {
-		pending, err := r.deleteManagedProfile(ctx)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-		if pending {
-			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
-		}
-		if err := r.deleteManagedProfileDefaults(ctx); err != nil {
-			return reconcile.Result{}, err
+		for _, name := range managedProfileNames {
+			pending, err := r.deleteManagedProfile(ctx, name)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+			if pending {
+				return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+			if err := r.deleteManagedProfileDefaults(ctx, name); err != nil {
+				return reconcile.Result{}, err
+			}
 		}
 	}
 	if r.sailInstaller != nil {
@@ -191,10 +222,10 @@ func (r *reconciler) cleanupInstallation(ctx context.Context) (reconcile.Result,
 	return reconcile.Result{}, nil
 }
 
-// deleteManagedProfile deletes CIO's ClusterIP class and reports pending deletion.
-func (r *reconciler) deleteManagedProfile(ctx context.Context) (bool, error) {
+// deleteManagedProfile deletes an owned managed class and reports pending deletion.
+func (r *reconciler) deleteManagedProfile(ctx context.Context, name string) (bool, error) {
 	var class gatewayapiv1.GatewayClass
-	key := types.NamespacedName{Name: operatorcontroller.OpenShiftClusterIPGatewayClassName}
+	key := types.NamespacedName{Name: name}
 	if err := r.client.Get(ctx, key, &class); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
@@ -218,8 +249,7 @@ func (r *reconciler) deleteManagedProfile(ctx context.Context) (bool, error) {
 }
 
 // deleteManagedProfileDefaults waits for owned Sail profile defaults to disappear.
-func (r *reconciler) deleteManagedProfileDefaults(ctx context.Context) error {
-	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
+func (r *reconciler) deleteManagedProfileDefaults(ctx context.Context, name string) error {
 	var defaults corev1.ConfigMap
 	key := managedProfileDefaultsName(r.config.OperandNamespace, name)
 	if err := r.client.Get(ctx, key, &defaults); err != nil {

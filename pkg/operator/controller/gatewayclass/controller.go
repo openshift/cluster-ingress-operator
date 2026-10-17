@@ -464,51 +464,10 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	if !r.config.GatewayAPIWithoutOLMEnabled {
-		return r.reconcileWithOLM(ctx, request)
+	if r.config.GatewayAPIWithoutOLMEnabled {
+		return r.reconcileWithSailLibrary(ctx, request)
 	}
-	var current gatewayapiv1.GatewayClass
-	if err := r.client.Get(ctx, request.NamespacedName, &current); err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
-	if current.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
-		return reconcile.Result{}, nil
-	}
-	if !current.DeletionTimestamp.IsZero() && isInstallationAnchor(&current) {
-		return r.ensureGatewayClassDeleted(ctx, &current)
-	}
-	if !r.modeAccessor.AllowDependents() {
-		return reconcile.Result{}, nil
-	}
-	if err := r.enrollInstallationAnchors(ctx); err != nil {
-		return reconcile.Result{}, err
-	}
-	anchor, err := r.installationAnchor(ctx, request)
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-	if anchor == nil {
-		r.sailLifecycleMu.Lock()
-		defer r.sailLifecycleMu.Unlock()
-		if !r.modeAccessor.AllowDependents() {
-			return reconcile.Result{}, nil
-		}
-		anchor, err = r.installationAnchor(ctx, request)
-		if err != nil || anchor != nil {
-			return reconcile.Result{}, err
-		}
-		return r.cleanupInstallation(ctx)
-	}
-	request.NamespacedName = types.NamespacedName{Name: anchor.Name}
-	result, err := r.reconcileWithSailLibrary(ctx, request)
-	managedProfileResult, managedProfileErr := r.ensureManagedProfile(ctx)
-	if result.RequeueAfter == 0 || (managedProfileResult.RequeueAfter > 0 && managedProfileResult.RequeueAfter < result.RequeueAfter) {
-		result.RequeueAfter = managedProfileResult.RequeueAfter
-	}
-	return result, utilerrors.NewAggregate([]error{err, managedProfileErr})
+	return r.reconcileWithOLM(ctx, request)
 }
 
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
@@ -619,6 +578,56 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 // reconcileWithSailLibrary reconciles a GatewayClass using the Sail Library
 // for direct Helm-based installation of Istio.
 func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	// Handle deleting user anchors even when management is disabled.
+	var current gatewayapiv1.GatewayClass
+	if err := r.client.Get(ctx, request.NamespacedName, &current); err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, err
+	}
+	if current.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+		return reconcile.Result{}, nil
+	}
+	if !current.DeletionTimestamp.IsZero() && isInstallationAnchor(&current) {
+		return r.ensureGatewayClassDeleted(ctx, &current)
+	}
+	if !r.modeAccessor.AllowDependents() {
+		return reconcile.Result{}, nil
+	}
+	// Protect every live user anchor before provisioning shared resources.
+	if err := r.enrollInstallationAnchors(ctx); err != nil {
+		return reconcile.Result{}, err
+	}
+	anchor, err := r.installationAnchor(ctx, request)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	// With no anchor, serialize cleanup against in-flight installs.
+	if anchor == nil {
+		r.sailLifecycleMu.Lock()
+		defer r.sailLifecycleMu.Unlock()
+		if !r.modeAccessor.AllowDependents() {
+			return reconcile.Result{}, nil
+		}
+		anchor, err = r.installationAnchor(ctx, request)
+		if err != nil || anchor != nil {
+			return reconcile.Result{}, err
+		}
+		return r.cleanupInstallation(ctx)
+	}
+	// Reconcile Sail using a live anchor, then verify managed-profile defaults.
+	request.NamespacedName = types.NamespacedName{Name: anchor.Name}
+	result, err := r.ensureSailInstallation(ctx, request)
+	managedProfileResult, managedProfileErr := r.ensureManagedProfiles(ctx)
+	if result.RequeueAfter == 0 || (managedProfileResult.RequeueAfter > 0 && managedProfileResult.RequeueAfter < result.RequeueAfter) {
+		result.RequeueAfter = managedProfileResult.RequeueAfter
+	}
+	return result, utilerrors.NewAggregate([]error{err, managedProfileErr})
+}
+
+// ensureSailInstallation applies Sail inputs and reports installation status for a user anchor.
+func (r *reconciler) ensureSailInstallation(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling with sail library", "request", request)
 
 	var infraConfig configv1.Infrastructure
@@ -675,7 +684,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		return reconcile.Result{}, err
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion, withDesiredManagedProfile(gatewayclasses.Items), &infraConfig); err != nil {
+	if err := r.ensureIstio(ctx, istioVersion, withDesiredManagedProfiles(gatewayclasses.Items), &infraConfig); err != nil {
 		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}

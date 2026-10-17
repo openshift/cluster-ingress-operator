@@ -429,7 +429,7 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
 		classConfig := gatewayclassConfig
-		if isManagedProfileName(gatewayclass.Name) {
+		if gatewayclass.Name == controller.OpenShiftClusterIPGatewayClassName {
 			classConfig = maps.Clone(gatewayclassConfig)
 			classConfig["service"] = map[string]any{"spec": map[string]any{"type": v1.ServiceTypeClusterIP}}
 		}
