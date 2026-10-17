@@ -1,0 +1,46 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openshift-ingress-operator-gatewayclasses
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-set: Default
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+    - apiGroups: [gateway.networking.k8s.io]
+      apiVersions: [v1]
+      operations: [CREATE, UPDATE, DELETE]
+      resources: [gatewayclasses]
+      scope: Cluster
+  variables:
+  - name: gatewayClass
+    expression: "request.operation == 'DELETE' ? oldObject : object"
+  - name: isOpenShiftName
+    expression: "variables.gatewayClass.metadata.name.startsWith('openshift-')"
+  - name: isManagedOpenShiftGatewayClass
+    expression: "variables.isOpenShiftName && variables.gatewayClass.metadata.name != 'openshift-default'"
+  validations:
+  - expression: >-
+      !variables.isOpenShiftName ||
+      variables.gatewayClass.spec.controllerName == 'openshift.io/gateway-controller/v1'
+    message: OpenShift GatewayClasses must use openshift.io/gateway-controller/v1
+    reason: Invalid
+  - expression: >-
+      !variables.isManagedOpenShiftGatewayClass ||
+      (has(request.userInfo.username) && request.userInfo.username ==
+      'system:serviceaccount:openshift-ingress-operator:ingress-operator')
+    message: Only the Ingress Operator may create, modify, or delete managed OpenShift GatewayClasses
+    reason: Forbidden
+  - expression: >-
+      !variables.isManagedOpenShiftGatewayClass ||
+      (has(request.userInfo.extra) &&
+      'authentication.kubernetes.io/node-name' in request.userInfo.extra &&
+      'authentication.kubernetes.io/pod-name' in request.userInfo.extra)
+    message: The Ingress Operator must use a pod-bound service account token
+    reason: Forbidden

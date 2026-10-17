@@ -66,7 +66,10 @@ const (
 
 	// OpenShiftDefaultGatewayClassName is the name of the default
 	// gatewayclass that Istio creates when it is installed.
-	OpenShiftDefaultGatewayClassName = "openshift-default"
+	OpenShiftDefaultGatewayClassName   = "openshift-default"
+	OpenShiftClusterIPGatewayClassName = "openshift-clusterip"
+	ManagedGatewayClassProfileLabel    = "ingress.operator.openshift.io/managed-gatewayclass-profile"
+	GatewayClassDefaultsLabel          = "gateway.istio.io/defaults-for-class"
 
 	// OpenShiftGatewayCARootCertName is the name of the configmap with the
 	// CA bundle that Istio creates for the Istio CR that this operator

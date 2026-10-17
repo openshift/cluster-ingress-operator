@@ -273,7 +273,13 @@ func createGatewayWithListeners(t *testing.T, gatewayClass *gatewayapiv1.Gateway
 // If it can, it is returned.  If it can't an error is returned.
 func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv1.GatewayClass, error) {
 	t.Helper()
+	gatewayClass, _, err := createOrGetGatewayClass(t, name, controllerName)
+	return gatewayClass, err
+}
 
+// createOrGetGatewayClass also reports whether this call created the fixture.
+func createOrGetGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv1.GatewayClass, bool, error) {
+	t.Helper()
 	gatewayClass := buildGatewayClass(name, controllerName)
 	customCatalog := os.Getenv("CUSTOM_CATALOG_SOURCE")
 	ossmVersion := os.Getenv("CUSTOM_OSSM_VERSION")
@@ -288,6 +294,7 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 		}
 	}
 	nsName := types.NamespacedName{Namespace: "", Name: name}
+	created := false
 	if err := wait.PollUntilContextTimeout(t.Context(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Create(ctx, gatewayClass); err != nil {
 			if kerrors.IsAlreadyExists(err) {
@@ -300,12 +307,13 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 			t.Logf("error creating gatewayclass %s: %v; retrying...", nsName.Name, err)
 			return false, nil
 		}
+		created = true
 		return true, nil
 	}); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return gatewayClass, nil
+	return gatewayClass, created, nil
 }
 
 // createCRD creates the CRD with the given name or retrieves it if already exists.

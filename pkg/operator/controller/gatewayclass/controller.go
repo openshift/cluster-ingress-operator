@@ -24,6 +24,7 @@ import (
 	"github.com/istio-ecosystem/sail-operator/chart"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
+	corev1 "k8s.io/api/core/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -128,6 +129,13 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	// gatewayclass controller from reacting to operational resource
 	// changes while in Unmanaged mode.
 	dependentPred := modeAccessor.DependentPredicate()
+	if config.GatewayAPIWithoutOLMEnabled {
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, reconciler.enqueueRequestForSomeGatewayClass(), predicate.NewPredicateFuncs(func(object client.Object) bool {
+			return object.GetNamespace() == config.OperandNamespace
+		}), dependentPred)); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
@@ -398,8 +406,6 @@ func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.O
 			continue
 		}
 
-		// If we ever added the sail library finalizer, this means this is a rollback so
-		// we need to be sure that the OLM process removes the finalizer and the status
 		if controllerutil.ContainsFinalizer(&gatewayClasses.Items[i], sailLibraryFinalizer) {
 			request := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -572,6 +578,56 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 // reconcileWithSailLibrary reconciles a GatewayClass using the Sail Library
 // for direct Helm-based installation of Istio.
 func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	// Handle deleting user anchors even when management is disabled.
+	var current gatewayapiv1.GatewayClass
+	if err := r.client.Get(ctx, request.NamespacedName, &current); err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, err
+	}
+	if current.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+		return reconcile.Result{}, nil
+	}
+	if !current.DeletionTimestamp.IsZero() && isInstallationAnchor(&current) {
+		return r.ensureGatewayClassDeleted(ctx, &current)
+	}
+	if !r.modeAccessor.AllowDependents() {
+		return reconcile.Result{}, nil
+	}
+	// Protect every live user anchor before provisioning shared resources.
+	if err := r.enrollInstallationAnchors(ctx); err != nil {
+		return reconcile.Result{}, err
+	}
+	anchor, err := r.installationAnchor(ctx, request)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	// With no anchor, serialize cleanup against in-flight installs.
+	if anchor == nil {
+		r.sailLifecycleMu.Lock()
+		defer r.sailLifecycleMu.Unlock()
+		if !r.modeAccessor.AllowDependents() {
+			return reconcile.Result{}, nil
+		}
+		anchor, err = r.installationAnchor(ctx, request)
+		if err != nil || anchor != nil {
+			return reconcile.Result{}, err
+		}
+		return r.cleanupInstallation(ctx)
+	}
+	// Reconcile Sail using a live anchor, then verify managed-profile defaults.
+	request.NamespacedName = types.NamespacedName{Name: anchor.Name}
+	result, err := r.ensureSailInstallation(ctx, request)
+	managedProfileResult, managedProfileErr := r.ensureManagedProfiles(ctx)
+	if result.RequeueAfter == 0 || (managedProfileResult.RequeueAfter > 0 && managedProfileResult.RequeueAfter < result.RequeueAfter) {
+		result.RequeueAfter = managedProfileResult.RequeueAfter
+	}
+	return result, utilerrors.NewAggregate([]error{err, managedProfileErr})
+}
+
+// ensureSailInstallation applies Sail inputs and reports installation status for a user anchor.
+func (r *reconciler) ensureSailInstallation(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling with sail library", "request", request)
 
 	var infraConfig configv1.Infrastructure
@@ -628,7 +684,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		return reconcile.Result{}, err
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion, gatewayclasses.Items, &infraConfig); err != nil {
+	if err := r.ensureIstio(ctx, istioVersion, withDesiredManagedProfiles(gatewayclasses.Items), &infraConfig); err != nil {
 		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}
@@ -648,13 +704,13 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
-// countActiveGatewayClasses returns the number of managed GatewayClasses that
+// countActiveGatewayClasses returns the number of non-profile GatewayClasses that
 // are not being deleted, excluding the given name.
 func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName string) int {
 	count := 0
 	for i := range list.Items {
 		gc := &list.Items[i]
-		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() {
+		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() || gc.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] == "true" {
 			continue
 		}
 		count++
@@ -663,8 +719,10 @@ func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName 
 }
 
 // ensureGatewayClassDeleted handles cleanup when a GatewayClass is being deleted.
-// Uninstalls Istio if this is the last managed GatewayClass, then removes the finalizer.
+// Uninstalls Istio if this is the last user anchor, then removes the finalizer.
 func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
+	r.sailLifecycleMu.Lock()
+	defer r.sailLifecycleMu.Unlock()
 	if !controllerutil.ContainsFinalizer(gatewayClass, sailLibraryFinalizer) {
 		// No finalizer present; nothing to clean up
 		return reconcile.Result{}, nil
@@ -673,14 +731,19 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 	// Check if this is the last active GatewayClass - if so, uninstall Istio
 	updatedGatewayClass := gatewayClass.DeepCopy()
 	gatewayClassList := gatewayapiv1.GatewayClassList{}
-	if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
-		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
-	}); err != nil {
+	if err := r.client.List(ctx, &gatewayClassList); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
 	}
-	if countActiveGatewayClasses(&gatewayClassList, gatewayClass.Name) == 0 {
-		if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to uninstall Istio: %w", err)
+	anchors := gatewayapiv1.GatewayClassList{}
+	for _, class := range gatewayClassList.Items {
+		if isInstallationAnchor(&class) {
+			anchors.Items = append(anchors.Items, class)
+		}
+	}
+	if countActiveGatewayClasses(&anchors, gatewayClass.Name) == 0 {
+		result, err := r.cleanupInstallation(ctx)
+		if err != nil || result.RequeueAfter > 0 {
+			return result, err
 		}
 	}
 
@@ -702,13 +765,12 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 // AllowDependents()==true before this transition cannot land an Apply()
 // after this Uninstall() completes.
 func (r *reconciler) UninstallSail(ctx context.Context) error {
-	r.sailLifecycleMu.Lock()
-	defer r.sailLifecycleMu.Unlock()
-
-	// OLM path: sailInstaller is nil, nothing to uninstall
 	if r.sailInstaller == nil {
 		return nil
 	}
+	r.sailLifecycleMu.Lock()
+	defer r.sailLifecycleMu.Unlock()
+
 	if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
 		return err
 	}
@@ -735,7 +797,13 @@ func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
 		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 			current := &gatewayapiv1.GatewayClass{}
 			if err := r.client.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+				if errors.IsNotFound(err) {
+					return nil
+				}
 				return err
+			}
+			if !current.DeletionTimestamp.IsZero() {
+				return nil
 			}
 
 			updated := current.DeepCopy()

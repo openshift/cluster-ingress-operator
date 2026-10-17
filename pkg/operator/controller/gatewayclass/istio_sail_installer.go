@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -171,6 +173,10 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 	if !r.modeAccessor.AllowDependents() {
 		log.Info("management mode no longer allows dependents, skipping Istio install")
 		return nil
+	}
+	anchor, err := r.installationAnchor(ctx, reconcile.Request{})
+	if err != nil || anchor == nil {
+		return err
 	}
 
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
@@ -422,7 +428,12 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 	}
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
-		gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+		classConfig := gatewayclassConfig
+		if gatewayclass.Name == controller.OpenShiftClusterIPGatewayClassName {
+			classConfig = maps.Clone(gatewayclassConfig)
+			classConfig["service"] = map[string]any{"spec": map[string]any{"type": v1.ServiceTypeClusterIP}}
+		}
+		gatewayclassesConfig[gatewayclass.Name] = classConfig
 	}
 
 	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
