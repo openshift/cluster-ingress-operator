@@ -1563,6 +1563,10 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	})
 }
 
+// gatewayAPICRDClient uses authorized service-account impersonation for test-only
+// CRD mutations without removing admission protection or stopping CIO. It includes
+// system:masters for RBAC and topology-required pod/node extras for admission;
+// the impersonated extras are not a real pod-bound token.
 func gatewayAPICRDClient(t *testing.T) client.Client {
 	t.Helper()
 	kubeConfig, err := config.GetConfig()

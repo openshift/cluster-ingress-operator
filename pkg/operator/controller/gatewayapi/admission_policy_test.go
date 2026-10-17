@@ -590,9 +590,9 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestReconcile_GateOff_AdoptsVAP verifies that gate-off reconciliation
+// TestReconcile_AdoptsExistingVAP verifies that reconciliation
 // updates an existing policy in place without deleting the policy or binding.
-func TestReconcile_GateOff_AdoptsVAP(t *testing.T) {
+func TestReconcile_AdoptsExistingVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -624,12 +624,6 @@ func TestReconcile_GateOff_AdoptsVAP(t *testing.T) {
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
-		config: Config{
-			MarketplaceEnabled:              true,
-			OperatorLifecycleManagerEnabled: true,
-			ModeAccessor:                    nil, // gate OFF
-		},
-		fieldIndexer: FakeIndexer{},
 	}
 
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
@@ -639,17 +633,17 @@ func TestReconcile_GateOff_AdoptsVAP(t *testing.T) {
 	for _, obj := range cl.Added {
 		switch obj.(type) {
 		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be created when gate is OFF")
+			t.Fatal("existing VAP must not be recreated")
 		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be created when gate is OFF")
+			t.Fatal("existing VAPBinding must not be recreated")
 		}
 	}
 	for _, obj := range cl.Deleted {
 		switch obj.(type) {
 		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be deleted when gate is OFF")
+			t.Fatal("existing VAP must not be deleted")
 		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be deleted when gate is OFF")
+			t.Fatal("existing VAPBinding must not be deleted")
 		}
 	}
 	assert.Len(t, cl.Updated, 1, "existing policy must be updated in place")
