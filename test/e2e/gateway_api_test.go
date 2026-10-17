@@ -112,7 +112,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Fatalf("error checking without olm feature gate enabled status: %v", err)
 	}
 
-	gatewayAPIManagementModeEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
+	gatewayAPIManagementModeFGEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
 	if err != nil {
 		t.Fatalf("error checking GatewayAPIManagementMode feature gate enabled status: %v", err)
 	}
@@ -134,9 +134,7 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
-	if !gatewayAPIManagementModeEnabled {
-		t.Run("testGatewayAPIResources", testGatewayAPIResources)
-	}
+	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -149,17 +147,17 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
-	if !gatewayAPIManagementModeEnabled {
+	if !gatewayAPIManagementModeFGEnabled {
 		t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	}
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
-	if !gatewayAPIManagementModeEnabled {
+	if !gatewayAPIManagementModeFGEnabled {
 		t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	}
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
-	if gatewayAPIManagementModeEnabled && ingressesAPIExists {
+	if gatewayAPIManagementModeFGEnabled && ingressesAPIExists {
 		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
 		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
 		t.Run("testGatewayAPIManagementModeCRDCompliance", testGatewayAPIManagementModeCRDCompliance)
