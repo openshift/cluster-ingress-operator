@@ -67,8 +67,6 @@ const (
 	// OpenShiftDefaultGatewayClassName is the name of the default
 	// gatewayclass that Istio creates when it is installed.
 	OpenShiftDefaultGatewayClassName   = "openshift-default"
-	OpenShiftExternalGatewayClassName  = "openshift-loadbalancer-external"
-	OpenShiftInternalGatewayClassName  = "openshift-loadbalancer-internal"
 	OpenShiftClusterIPGatewayClassName = "openshift-clusterip"
 	ManagedGatewayClassProfileLabel    = "ingress.operator.openshift.io/managed-gatewayclass-profile"
 	GatewayClassDefaultsLabel          = "gateway.istio.io/defaults-for-class"

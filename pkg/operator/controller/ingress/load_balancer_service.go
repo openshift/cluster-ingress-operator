@@ -457,9 +457,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Annotations = map[string]string{}
 	}
 
-	applyLoadBalancerPlatformDefaults(service, platform, isInternal)
 	if platform != nil {
 		if isInternal {
+			annotation := InternalLBAnnotations[platform.Type]
+			for name, value := range annotation {
+				service.Annotations[name] = value
+			}
 
 			// Set the GCP Global Access annotation for internal load balancers on GCP only
 			if platform.Type == configv1.GCPPlatformType {
@@ -470,9 +473,15 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
+		} else {
+			annotation := externalLBAnnotations[platform.Type]
+			for name, value := range annotation {
+				service.Annotations[name] = value
+			}
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
+			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			effectiveLBType := getEffectiveAWSLoadBalancerType(ci, currentService)
 			nlbProtocol := getAWSNLBProtocol(ci.Status.EndpointPublishingStrategy)
 			switch effectiveLBType {
@@ -527,9 +536,51 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 				}
 			}
 
-			if lbStatus != nil && lbStatus.ProviderParameters != nil && lbStatus.ProviderParameters.AWS != nil {
-				applyAWSLoadBalancerIPFamilies(service, platform, lbStatus.ProviderParameters.AWS.Type)
+			if platform.AWS != nil && len(platform.AWS.ResourceTags) > 0 {
+				var additionalTags []string
+				for _, userTag := range platform.AWS.ResourceTags {
+					if len(userTag.Key) > 0 {
+						additionalTags = append(additionalTags, userTag.Key+"="+userTag.Value)
+					}
+				}
+				if len(additionalTags) > 0 {
+					service.Annotations[awsLBAdditionalResourceTags] = strings.Join(additionalTags, ",")
+				}
 			}
+
+			// Set ipFamilies and ipFamilyPolicy for dual-stack clusters.
+			if platform.AWS != nil && awsutil.IsDualStack(platform.AWS.IPFamily) {
+				if lbStatus != nil && lbStatus.ProviderParameters != nil && lbStatus.ProviderParameters.AWS != nil {
+					switch lbStatus.ProviderParameters.AWS.Type {
+					case operatorv1.AWSNetworkLoadBalancer:
+						// NLB supports dual-stack natively.
+						ipFamilyPolicy := corev1.IPFamilyPolicyRequireDualStack
+						service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+						if platform.AWS.IPFamily == configv1.DualStackIPv4Primary {
+							service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}
+						} else {
+							service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv6Protocol, corev1.IPv4Protocol}
+						}
+					case operatorv1.AWSClassicLoadBalancer:
+						// CLB does not support dual-stack and only forwards
+						// IPv4 traffic. On DualStackIPv4Primary clusters,
+						// the service defaults to SingleStack/IPv4, which
+						// is correct. However on DualStackIPv6Primary, the
+						// default would be SingleStack/IPv6, causing OVN to
+						// refuse IPv4 traffic on the service's NodePort.
+						// Explicitly set SingleStack/IPv4 to ensure CLB
+						// traffic is always accepted.
+						ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
+						service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+						service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+					}
+				}
+			}
+
+			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
+			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
+			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
+			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
 		case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 			// Set ExternalTrafficPolicy to type Cluster - IBM's LoadBalancer impl is created within the cluster.
 			// LB places VIP on one of the worker nodes, using keepalived to maintain the VIP and ensuring redundancy

@@ -244,7 +244,7 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 	require.NoError(t, gatewayapiv1.Install(scheme))
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(profileTestClass("openshift-default", false)).
+		WithObjects(managedProfileTestClass("openshift-default", false)).
 		WithStatusSubresource(&gatewayapiv1.GatewayClass{}).
 		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
 			gc := o.(*gatewayapiv1.GatewayClass)

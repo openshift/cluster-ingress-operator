@@ -18,7 +18,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func TestClusterIPProfileDoesNotCreateDNS(t *testing.T) {
+func TestClusterIPManagedProfileDoesNotCreateDNS(t *testing.T) {
 	t.Parallel()
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))

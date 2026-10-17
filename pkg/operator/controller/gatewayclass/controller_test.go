@@ -214,17 +214,14 @@ func Test_Reconcile(t *testing.T) {
 	sailGatewayclassesConfig := func(config string, gatewayclasses ...string) json.RawMessage {
 		var payload map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(gatewayclassesConfig(config, gatewayclasses...), &payload))
-		for _, name := range []string{operatorcontroller.OpenShiftExternalGatewayClassName, operatorcontroller.OpenShiftClusterIPGatewayClassName} {
+		for _, name := range []string{operatorcontroller.OpenShiftClusterIPGatewayClassName} {
 			var overlay map[string]any
 			require.NoError(t, json.Unmarshal([]byte(config), &overlay))
-			service := map[string]any{"metadata": map[string]any{"annotations": nil}, "spec": map[string]any{"type": "ClusterIP"}}
-			if name == operatorcontroller.OpenShiftExternalGatewayClassName {
-				service = map[string]any{"metadata": map[string]any{"annotations": map[string]string{"traffic-policy.network.alpha.openshift.io/local-with-fallback": ""}}, "spec": map[string]any{"type": "LoadBalancer", "externalTrafficPolicy": "Local"}}
-			}
+			service := map[string]any{"spec": map[string]any{"type": "ClusterIP"}}
 			overlay["service"] = service
-			profile, err := json.Marshal(overlay)
+			managedProfile, err := json.Marshal(overlay)
 			require.NoError(t, err)
-			payload[name] = profile
+			payload[name] = managedProfile
 		}
 		b, err := json.Marshal(payload)
 		if err != nil {

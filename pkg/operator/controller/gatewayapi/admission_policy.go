@@ -72,7 +72,7 @@ func (r *reconciler) reconcileAdmissionPolicyTransition(ctx context.Context, sna
 			return fmt.Errorf("cannot complete transition to Unmanaged, Sail uninstall failed: %w", err)
 		}
 	}
-	if err := r.markProfilesUnmanaged(ctx); err != nil {
+	if err := r.markManagedProfileUnmanaged(ctx); err != nil {
 		return err
 	}
 

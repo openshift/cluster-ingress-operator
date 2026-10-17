@@ -15,8 +15,8 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-// markProfilesUnmanaged sets managed profiles' Customized condition to False with reason Unmanaged.
-func (r *reconciler) markProfilesUnmanaged(ctx context.Context) error {
+// markManagedProfileUnmanaged sets the managed ClusterIP class's Customized condition to False with reason Unmanaged.
+func (r *reconciler) markManagedProfileUnmanaged(ctx context.Context) error {
 	var classes gatewayapiv1.GatewayClassList
 	if err := r.client.List(ctx, &classes, client.MatchingLabels{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
@@ -27,7 +27,7 @@ func (r *reconciler) markProfilesUnmanaged(ctx context.Context) error {
 	var errs []error
 	for _, class := range classes.Items {
 		name := class.Name
-		if name != operatorcontroller.OpenShiftExternalGatewayClassName && name != operatorcontroller.OpenShiftInternalGatewayClassName && name != operatorcontroller.OpenShiftClusterIPGatewayClassName {
+		if name != operatorcontroller.OpenShiftClusterIPGatewayClassName {
 			continue
 		}
 		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {

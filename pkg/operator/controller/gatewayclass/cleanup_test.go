@@ -23,7 +23,7 @@ import (
 func teardownTestDefaults() *corev1.ConfigMap {
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Name:      profileDefaultsName(operatorcontroller.DefaultOperandNamespace, name).Name,
+		Name:      managedProfileDefaultsName(operatorcontroller.DefaultOperandNamespace, name).Name,
 		Namespace: operatorcontroller.DefaultOperandNamespace, UID: "defaults-uid",
 		Labels:      map[string]string{operatorcontroller.GatewayClassDefaultsLabel: name, "managed-by": "sail-library", "release": operatorcontroller.IstioName("").Name + "-istiod"},
 		Annotations: map[string]string{"meta.helm.sh/release-name": operatorcontroller.IstioName("").Name + "-istiod", "meta.helm.sh/release-namespace": operatorcontroller.DefaultOperandNamespace},
@@ -47,14 +47,34 @@ func TestUninstallSailWithoutLibraryIsNoOp(t *testing.T) {
 	require.NoError(t, r.uninstallIstio(context.Background()))
 }
 
+func TestManagedProfileCleanupPreservesForeignClasses(t *testing.T) {
+	for _, scenario := range []string{"user-created", "other-controller"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			managedProfile := managedProfileTestClass(operatorcontroller.OpenShiftClusterIPGatewayClassName, scenario != "user-created")
+			if scenario == "other-controller" {
+				managedProfile.Spec.ControllerName = "example.com/other"
+			}
+			r := managedProfileTestReconciler(t, managedProfile)
+			pending, err := r.deleteManagedProfile(ctx)
+			require.NoError(t, err)
+			require.False(t, pending)
+			var current gatewayapiv1.GatewayClass
+			require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(managedProfile), &current))
+			require.True(t, current.DeletionTimestamp.IsZero())
+			require.Equal(t, managedProfile.UID, current.UID)
+		})
+	}
+}
+
 func TestSailTeardownWaitsForReleaseInventoryAcrossRestart(t *testing.T) {
 	ctx := context.Background()
-	anchor := profileTestClass("openshift-default", false)
+	anchor := managedProfileTestClass("openshift-default", false)
 	defaults := teardownTestDefaults()
 	service := &corev1.Service{ObjectMeta: *defaults.ObjectMeta.DeepCopy()}
 	service.Name, service.UID = "istiod-openshift-gateway", "service-uid"
 	service.Finalizers = []string{"test/delayed-delete"}
-	r := profileTestReconciler(t, anchor, defaults, service)
+	r := managedProfileTestReconciler(t, anchor, defaults, service)
 	teardownTestMapper(r)
 	reader := &fakeHelmReleaseReader{current: teardownTestRelease(defaults)}
 	reader.current.(*releasev1.Release).Manifest += fmt.Sprintf("---\napiVersion: v1\nkind: Service\nmetadata:\n  name: %s\n", service.Name)
@@ -92,10 +112,10 @@ func TestSailTeardownWaitsForReleaseInventoryAcrossRestart(t *testing.T) {
 
 func TestManagedReturnFinishesPendingSailTeardownBeforeApply(t *testing.T) {
 	ctx := context.Background()
-	anchor := profileTestClass("openshift-default", false)
+	anchor := managedProfileTestClass("openshift-default", false)
 	defaults := teardownTestDefaults()
 	defaults.Finalizers = []string{"test/pending"}
-	r := profileTestReconciler(t, anchor, defaults)
+	r := managedProfileTestReconciler(t, anchor, defaults)
 	teardownTestMapper(r)
 	reader := &fakeHelmReleaseReader{current: teardownTestRelease(defaults)}
 	r.releaseReader = reader
@@ -123,7 +143,7 @@ func TestSailTeardownPreflightErrorsDoNotUninstall(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			ctx := context.Background()
 			defaults := teardownTestDefaults()
-			r := profileTestReconciler(t, defaults)
+			r := managedProfileTestReconciler(t, defaults)
 			teardownTestMapper(r)
 			reader := &fakeHelmReleaseReader{current: teardownTestRelease(defaults)}
 			r.releaseReader = reader
@@ -152,7 +172,7 @@ func TestSailTeardownDoesNotWaitForReplacementOrUnrelatedResources(t *testing.T)
 	ctx := context.Background()
 	defaults := teardownTestDefaults()
 	other := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "user-settings", Namespace: defaults.Namespace, Finalizers: []string{"test/user-finalizer"}}}
-	r := profileTestReconciler(t, defaults, other)
+	r := managedProfileTestReconciler(t, defaults, other)
 	teardownTestMapper(r)
 	r.releaseReader = &fakeHelmReleaseReader{current: teardownTestRelease(defaults)}
 	require.NoError(t, r.captureSailTeardown(ctx))
@@ -168,7 +188,7 @@ func TestDefaultsCleanupFailuresHoldAnchorFinalizer(t *testing.T) {
 	for _, failure := range []string{"delay", "get-error", "delete-error", "foreign"} {
 		t.Run(failure, func(t *testing.T) {
 			ctx := context.Background()
-			anchor := profileTestClass("openshift-default", false)
+			anchor := managedProfileTestClass("openshift-default", false)
 			defaults := teardownTestDefaults()
 			if failure == "delay" {
 				defaults.Finalizers = []string{"test/delayed-delete"}
@@ -176,7 +196,7 @@ func TestDefaultsCleanupFailuresHoldAnchorFinalizer(t *testing.T) {
 			if failure == "foreign" {
 				defaults.Labels["managed-by"] = "user"
 			}
-			r := profileTestReconciler(t, anchor, defaults)
+			r := managedProfileTestReconciler(t, anchor, defaults)
 			base := r.client.(client.WithWatch)
 			fail := true
 			deleted := false
@@ -225,11 +245,11 @@ func TestDefaultsCleanupFailuresHoldAnchorFinalizer(t *testing.T) {
 
 func TestEnrollsEverySailAnchorBeforeProvisioning(t *testing.T) {
 	ctx := context.Background()
-	first := profileTestClass("openshift-default", false)
-	second := profileTestClass("user-class", false)
+	first := managedProfileTestClass("openshift-default", false)
+	second := managedProfileTestClass("user-class", false)
 	first.Finalizers, second.Finalizers = nil, nil
-	profile := profileTestClass(operatorcontroller.OpenShiftClusterIPGatewayClassName, true)
-	r := profileTestReconciler(t, first, second, profile)
+	managedProfile := managedProfileTestClass(operatorcontroller.OpenShiftClusterIPGatewayClassName, true)
+	r := managedProfileTestReconciler(t, first, second, managedProfile)
 	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(second)})
 	require.NoError(t, err)
 	for _, anchor := range []*gatewayapiv1.GatewayClass{first, second} {
@@ -239,19 +259,19 @@ func TestEnrollsEverySailAnchorBeforeProvisioning(t *testing.T) {
 		require.NoError(t, r.client.Delete(ctx, &current))
 	}
 	var current gatewayapiv1.GatewayClass
-	require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(profile), &current))
+	require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(managedProfile), &current))
 	require.Empty(t, current.Finalizers)
 	for _, anchor := range []*gatewayapiv1.GatewayClass{first, second} {
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(anchor)})
 		require.NoError(t, err)
 		require.True(t, apierrors.IsNotFound(r.client.Get(ctx, client.ObjectKeyFromObject(anchor), &current)))
 	}
-	require.True(t, apierrors.IsNotFound(r.client.Get(ctx, client.ObjectKeyFromObject(profile), &current)))
+	require.True(t, apierrors.IsNotFound(r.client.Get(ctx, client.ObjectKeyFromObject(managedProfile), &current)))
 }
 
 func TestSailTeardownManifestSkipsRetainedResources(t *testing.T) {
 	ctx := context.Background()
-	r := profileTestReconciler(t)
+	r := managedProfileTestReconciler(t)
 	teardownTestMapper(r)
 	retained := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: operatorcontroller.DefaultOperandNamespace}}
 	require.NoError(t, r.client.Create(ctx, retained))
@@ -266,7 +286,7 @@ func TestSailTeardownManifestSkipsRetainedResources(t *testing.T) {
 func TestSailTeardownWaitsForActualAggregationRole(t *testing.T) {
 	ctx := context.Background()
 	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "istio-crd-view-" + operatorcontroller.IstioName("").Name, UID: "owned-role", Labels: map[string]string{"managed-by": "sail-library"}, Finalizers: []string{"test/role-delay"}}}
-	r := profileTestReconciler(t, role)
+	r := managedProfileTestReconciler(t, role)
 	installer := r.sailInstaller.(*fakeSailInstaller)
 	installer.onUninstall = func() error { return r.client.Delete(ctx, role) }
 	require.ErrorContains(t, r.uninstallIstio(ctx), "waiting for CIO Istio release resource ClusterRole")

@@ -141,6 +141,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioInstallationSailLibrary", testGatewayAPIIstioInstallationSailLibrary)
+		t.Run("testGatewayAPIManagedProfileClusterIP", testGatewayAPIManagedProfileClusterIP)
 	} else {
 		t.Run("testGatewayAPIIstioInstallationOLM", testGatewayAPIIstioInstallationOLM)
 	}

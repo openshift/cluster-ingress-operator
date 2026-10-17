@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -18,7 +18,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
@@ -444,43 +443,12 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 	}
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
-		if isProfileName(gatewayclass.Name) && !slices.Contains(supportedProfileNames(infraConfig), gatewayclass.Name) {
-			continue
+		classConfig := gatewayclassConfig
+		if isManagedProfileName(gatewayclass.Name) {
+			classConfig = maps.Clone(gatewayclassConfig)
+			classConfig["service"] = map[string]any{"spec": map[string]any{"type": v1.ServiceTypeClusterIP}}
 		}
-		if !isProfileName(gatewayclass.Name) {
-			gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
-			continue
-		}
-		var profileConfig map[string]any
-		common, err := json.Marshal(gatewayclassConfig)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(common, &profileConfig); err != nil {
-			return nil, err
-		}
-		service := &v1.Service{Spec: v1.ServiceSpec{Type: v1.ServiceTypeClusterIP}}
-		if gatewayclass.Name != controller.OpenShiftClusterIPGatewayClassName {
-			var platform *configv1.PlatformStatus
-			if infraConfig != nil {
-				platform = infraConfig.Status.PlatformStatus
-			}
-			service = ingress.LoadBalancerServiceDefaults(platform, gatewayclass.Name == controller.OpenShiftInternalGatewayClassName)
-			if platform != nil && platform.Type == configv1.AWSPlatformType {
-				template := profileConfig["deployment"].(map[string]any)["spec"].(map[string]any)["template"].(map[string]any)
-				template["metadata"] = map[string]any{"annotations": map[string]string{"proxy.istio.io/config": `{"gatewayTopology":{"proxyProtocol":{}}}`}}
-			}
-		}
-		serviceSpec := map[string]any{"type": service.Spec.Type}
-		if service.Spec.Type == v1.ServiceTypeLoadBalancer {
-			serviceSpec["externalTrafficPolicy"] = service.Spec.ExternalTrafficPolicy
-			if service.Spec.IPFamilyPolicy != nil {
-				serviceSpec["ipFamilyPolicy"] = *service.Spec.IPFamilyPolicy
-				serviceSpec["ipFamilies"] = service.Spec.IPFamilies
-			}
-		}
-		profileConfig["service"] = map[string]any{"metadata": map[string]any{"annotations": service.Annotations}, "spec": serviceSpec}
-		gatewayclassesConfig[gatewayclass.Name] = profileConfig
+		gatewayclassesConfig[gatewayclass.Name] = classConfig
 	}
 
 	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)

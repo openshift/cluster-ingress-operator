@@ -509,15 +509,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 	request.NamespacedName = types.NamespacedName{Name: anchor.Name}
 	result, err := r.reconcileWithSailLibrary(ctx, request)
-	var infra configv1.Infrastructure
-	if infraErr := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &infra); infraErr != nil {
-		return result, utilerrors.NewAggregate([]error{err, infraErr})
+	managedProfileResult, managedProfileErr := r.ensureManagedProfile(ctx)
+	if result.RequeueAfter == 0 || (managedProfileResult.RequeueAfter > 0 && managedProfileResult.RequeueAfter < result.RequeueAfter) {
+		result.RequeueAfter = managedProfileResult.RequeueAfter
 	}
-	profileResult, profileErr := r.ensureManagedProfiles(ctx, &infra)
-	if result.RequeueAfter == 0 || (profileResult.RequeueAfter > 0 && profileResult.RequeueAfter < result.RequeueAfter) {
-		result.RequeueAfter = profileResult.RequeueAfter
-	}
-	return result, utilerrors.NewAggregate([]error{err, profileErr})
+	return result, utilerrors.NewAggregate([]error{err, managedProfileErr})
 }
 
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
@@ -684,7 +680,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		return reconcile.Result{}, err
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion, withDesiredProfiles(&infraConfig, gatewayclasses.Items), &infraConfig); err != nil {
+	if err := r.ensureIstio(ctx, istioVersion, withDesiredManagedProfile(gatewayclasses.Items), &infraConfig); err != nil {
 		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}
