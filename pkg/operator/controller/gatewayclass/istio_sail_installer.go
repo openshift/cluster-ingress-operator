@@ -178,21 +178,6 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 	if err != nil || anchor == nil {
 		return err
 	}
-	checkpoint, _, err := r.teardownInventory(ctx)
-	if err != nil {
-		return err
-	}
-	if checkpoint != nil {
-		if err := r.uninstallIstio(ctx); err != nil {
-			return err
-		}
-	}
-	if r.sailStopped {
-		if _, err := sailInstaller.Start(r.config.Context); err != nil {
-			return fmt.Errorf("failed to restart Sail library: %w", err)
-		}
-		r.sailStopped = false
-	}
 
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
 	// if options or values have changed. Status is checked later via r.sailInstaller.Status()

@@ -1208,7 +1208,6 @@ func Test_Reconcile(t *testing.T) {
 			if tc.fakeSailInstaller != nil {
 				reconciler.config.GatewayAPIWithoutOLMEnabled = true
 				reconciler.sailInstaller = tc.fakeSailInstaller
-				reconciler.releaseReader = &fakeHelmReleaseReader{}
 			}
 			var res reconcile.Result
 			var err error

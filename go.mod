@@ -51,7 +51,6 @@ require (
 	google.golang.org/grpc v1.84.0
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
-	helm.sh/helm/v4 v4.1.4
 	k8s.io/api v0.36.2
 	k8s.io/apiextensions-apiserver v0.36.2
 	k8s.io/apimachinery v0.36.2
@@ -232,6 +231,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	helm.sh/helm/v4 v4.1.4 // indirect
 	istio.io/api v1.30.5 // indirect
 	istio.io/client-go v1.30.5 // indirect
 	istio.io/istio v0.0.0-20260918160134-55b832fad2bc // indirect

@@ -29,6 +29,9 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 		}
 		return meta.IsStatusConditionTrue(managedProfile.Status.Conditions, "Customized")
 	}, time.Minute, time.Second, "managed ClusterIP defaults must be associated")
+	var defaults corev1.ConfigMap
+	require.NoError(t, kclient.Get(t.Context(), client.ObjectKey{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + managedProfile.Name}, &defaults))
+	require.Equal(t, managedProfile.Name, defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel])
 
 	gateway, err := createGateway(t, managedProfile, names.SimpleNameGenerator.GenerateName("managed-profile-clusterip-"), operatorcontroller.DefaultOperandNamespace, "clusterip.example.com")
 	require.NoError(t, err)

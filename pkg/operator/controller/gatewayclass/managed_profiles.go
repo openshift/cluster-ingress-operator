@@ -168,3 +168,77 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context) (reconcile.Result
 	}
 	return result, r.updateManagedProfileCustomized(ctx, name, status, reason, message)
 }
+
+// cleanupInstallation waits for managed resources, then delegates completion to Sail uninstall.
+func (r *reconciler) cleanupInstallation(ctx context.Context) (reconcile.Result, error) {
+	if r.modeAccessor.AllowDependents() {
+		pending, err := r.deleteManagedProfile(ctx)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		if pending {
+			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		if err := r.deleteManagedProfileDefaults(ctx); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+	if r.sailInstaller != nil {
+		if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to uninstall Istio: %w", err)
+		}
+	}
+	return reconcile.Result{}, nil
+}
+
+// deleteManagedProfile deletes CIO's ClusterIP class and reports pending deletion.
+func (r *reconciler) deleteManagedProfile(ctx context.Context) (bool, error) {
+	var class gatewayapiv1.GatewayClass
+	key := types.NamespacedName{Name: operatorcontroller.OpenShiftClusterIPGatewayClassName}
+	if err := r.client.Get(ctx, key, &class); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if class.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true" || class.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+		return false, nil
+	}
+	if class.DeletionTimestamp.IsZero() {
+		if err := r.client.Delete(ctx, &class, client.Preconditions{UID: &class.UID}); err != nil && !apierrors.IsNotFound(err) {
+			return false, err
+		}
+	}
+	if err := r.client.Get(ctx, key, &class); err == nil {
+		return true, nil
+	} else if !apierrors.IsNotFound(err) {
+		return false, err
+	}
+	return false, nil
+}
+
+// deleteManagedProfileDefaults waits for owned Sail profile defaults to disappear.
+func (r *reconciler) deleteManagedProfileDefaults(ctx context.Context) error {
+	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
+	var defaults corev1.ConfigMap
+	key := managedProfileDefaultsName(r.config.OperandNamespace, name)
+	if err := r.client.Get(ctx, key, &defaults); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	managedBy := defaults.Labels["managed-by"]
+	if defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] != name || managedBy != "sail-library" || defaults.Labels["release"] != operatorcontroller.IstioName("").Name+"-istiod" {
+		return fmt.Errorf("cannot delete profile defaults %s: ConfigMap is not owned by the CIO Istio release", key)
+	}
+	if err := r.client.Delete(ctx, &defaults, client.Preconditions{UID: &defaults.UID}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := r.client.Get(ctx, key, &corev1.ConfigMap{}); err == nil {
+		return fmt.Errorf("waiting for profile defaults %s to be deleted", key)
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}

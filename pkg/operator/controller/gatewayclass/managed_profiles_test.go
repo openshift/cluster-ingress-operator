@@ -49,7 +49,7 @@ func managedProfileTestReconciler(t *testing.T, objects ...client.Object) *recon
 	informers := &informertest.FakeInformers{Scheme: scheme}
 	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	mode.SetCRDsEstablished(true)
-	return &reconciler{client: client, cache: &testutil.FakeCache{Informers: informers, Reader: client}, modeAccessor: mode, config: Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace, GatewayAPIWithoutOLMEnabled: true, IstioVersion: "v1.30.5"}, sailInstaller: &fakeSailInstaller{}, releaseReader: &fakeHelmReleaseReader{}}
+	return &reconciler{client: client, cache: &testutil.FakeCache{Informers: informers, Reader: client}, modeAccessor: mode, config: Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace, GatewayAPIWithoutOLMEnabled: true, IstioVersion: "v1.30.5"}, sailInstaller: &fakeSailInstaller{}}
 }
 
 func TestManagedProfileOverlaysPreserveDefaultAndCommonConfiguration(t *testing.T) {

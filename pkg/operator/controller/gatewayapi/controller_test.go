@@ -1909,9 +1909,8 @@ func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 		"steady-state reconcile must NOT set InProgress=true")
 }
 
-// TestReconcile_RestartInSteadyStateUnmanaged_SkipsTransitionOps verifies
-// that the persisted Ingress status, rather than process-local state, prevents
-// a CIO restart from repeating an already-completed Unmanaged transition.
+// TestReconcile_RestartInSteadyStateUnmanaged_VerifiesTransitionOps verifies
+// that a restarted CIO checks the Unmanaged transition before resuming steady state.
 func TestReconcile_RestartInSteadyStateUnmanaged_VerifiesTransitionOps(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayapiv1.Install(scheme))

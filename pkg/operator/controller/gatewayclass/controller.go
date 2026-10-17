@@ -22,7 +22,6 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/chart"
-	sailhelm "github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
 	corev1 "k8s.io/api/core/v1"
@@ -113,12 +112,11 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	operatorCache := mgr.GetCache()
 
 	reconciler := &reconciler{
-		config:        config,
-		client:        mgr.GetClient(),
-		cache:         operatorCache,
-		recorder:      mgr.GetEventRecorderFor(controllerName),
-		modeAccessor:  modeAccessor,
-		releaseReader: sailhelm.NewChartManager(mgr.GetConfig(), "secret"),
+		config:       config,
+		client:       mgr.GetClient(),
+		cache:        operatorCache,
+		recorder:     mgr.GetEventRecorderFor(controllerName),
+		modeAccessor: modeAccessor,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -328,7 +326,6 @@ type SailLibraryInstaller interface {
 	Uninstall(ctx context.Context, namespace, revision string) error
 	Status() install.Status
 	Enqueue()
-	Stop()
 }
 
 // reconciler reconciles gatewayclasses.
@@ -343,8 +340,6 @@ type reconciler struct {
 
 	// sailInstaller manages Istio control plane lifecycle (install, upgrade, uninstall) via the sail library.
 	sailInstaller SailLibraryInstaller
-	releaseReader helmReleaseReader
-	sailStopped   bool
 
 	// sailLifecycleMu serializes "check AllowDependents, then act" between
 	// UninstallSail and ensureIstio's Apply call, so a concurrent Uninstall
@@ -767,7 +762,7 @@ func (r *reconciler) UninstallSail(ctx context.Context) error {
 	r.sailLifecycleMu.Lock()
 	defer r.sailLifecycleMu.Unlock()
 
-	if err := r.uninstallIstio(ctx); err != nil {
+	if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
 		return err
 	}
 

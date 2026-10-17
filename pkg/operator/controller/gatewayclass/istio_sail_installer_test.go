@@ -18,7 +18,6 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
-	"helm.sh/helm/v4/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -103,15 +102,6 @@ func (i *fakeSailInstaller) Enqueue() {}
 
 func (i *fakeSailInstaller) Stop() { i.stopCalls++ }
 
-type fakeHelmReleaseReader struct {
-	current release.Releaser
-	err     error
-}
-
-func (reader *fakeHelmReleaseReader) GetRelease(context.Context, string, string) (release.Releaser, error) {
-	return reader.current, reader.err
-}
-
 // updateGatewayClassStatusBeforeFirstPatchWriter simulates another controller
 // updating an externally-owned GatewayClass condition between the live read
 // and the first status patch.
@@ -190,9 +180,9 @@ func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 		client:        fakeClient,
 		cache:         fakeCache,
 		sailInstaller: installer,
-		releaseReader: &fakeHelmReleaseReader{},
-		modeAccessor:  modeAccessor,
-		config:        Config{OperandNamespace: "test-ns"},
+
+		modeAccessor: modeAccessor,
+		config:       Config{OperandNamespace: "test-ns"},
 	}
 
 	const iterations = 100
@@ -272,7 +262,6 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 		sailInstaller: installer,
 		modeAccessor:  modeAccessor,
 		config:        Config{OperandNamespace: "test-ns"},
-		releaseReader: &fakeHelmReleaseReader{},
 	}
 
 	ensureDone := make(chan error, 1)
@@ -376,9 +365,9 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 		client:        fakeClient,
 		cache:         fakeCache,
 		sailInstaller: &fakeSailInstaller{},
-		releaseReader: &fakeHelmReleaseReader{},
-		modeAccessor:  operatorcontroller.NewGatewayAPIModeAccessor(true),
-		config:        Config{OperandNamespace: "test-ns"},
+
+		modeAccessor: operatorcontroller.NewGatewayAPIModeAccessor(true),
+		config:       Config{OperandNamespace: "test-ns"},
 	}
 
 	require.NoError(t, r.UninstallSail(context.Background()))

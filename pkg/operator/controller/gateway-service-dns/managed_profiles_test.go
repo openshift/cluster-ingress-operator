@@ -9,6 +9,7 @@ import (
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,4 +36,12 @@ func TestClusterIPManagedProfileDoesNotCreateDNS(t *testing.T) {
 	var records iov1.DNSRecordList
 	require.NoError(t, cl.List(context.Background(), &records))
 	require.Empty(t, records.Items)
+	stale := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: "stale", Namespace: gateway.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: gateway.Name}}, Spec: iov1.DNSRecordSpec{DNSName: "example.com.", Targets: []string{"old.example.com"}}}
+	unrelated := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: gateway.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: "other-gateway"}}}
+	require.NoError(t, cl.Create(context.Background(), stale))
+	require.NoError(t, cl.Create(context.Background(), unrelated))
+	_, err = r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: service.Name, Namespace: service.Namespace}})
+	require.NoError(t, err)
+	require.True(t, apierrors.IsNotFound(cl.Get(context.Background(), types.NamespacedName{Name: stale.Name, Namespace: stale.Namespace}, &iov1.DNSRecord{})))
+	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: unrelated.Name, Namespace: unrelated.Namespace}, &iov1.DNSRecord{}))
 }
