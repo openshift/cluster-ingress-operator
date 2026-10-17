@@ -112,7 +112,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Fatalf("error checking without olm feature gate enabled status: %v", err)
 	}
 
-	gatewayAPIManagementModeEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
+	gatewayAPIManagementModeFGEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
 	if err != nil {
 		t.Fatalf("error checking GatewayAPIManagementMode feature gate enabled status: %v", err)
 	}
@@ -134,9 +134,7 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
-	if !gatewayAPIManagementModeEnabled {
-		t.Run("testGatewayAPIResources", testGatewayAPIResources)
-	}
+	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -149,17 +147,17 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
-	if !gatewayAPIManagementModeEnabled {
+	if !gatewayAPIManagementModeFGEnabled {
 		t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	}
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
-	if !gatewayAPIManagementModeEnabled {
+	if !gatewayAPIManagementModeFGEnabled {
 		t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	}
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
-	if gatewayAPIManagementModeEnabled && ingressesAPIExists {
+	if gatewayAPIManagementModeFGEnabled && ingressesAPIExists {
 		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
 		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
 		t.Run("testGatewayAPIManagementModeCRDCompliance", testGatewayAPIManagementModeCRDCompliance)
@@ -184,7 +182,7 @@ func testGatewayAPIResources(t *testing.T) {
 	assertAllGatewayAPICRDsCovered(t, crdNames)
 
 	// Deleting CRDs to ensure they gets recreated again
-	bypassVAP(t, deleteCRDs)
+	deleteCRDs(t)
 
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since they should be recreated after manual deletion.
 	ensureCRDs(t)
@@ -466,9 +464,9 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 	// of the update verb for the experimental Gateway API group.
 	// Since an API `Get` is called before the update, the CRD must exist in the cluster,
 	// just like standard Gateway API CRDs.
-	bypassVAP(t, ensureTestCRDs)
+	ensureTestCRDs(t)
 	t.Cleanup(func() {
-		bypassVAP(t, deleteTestCRDs)
+		deleteTestCRDs(t)
 	})
 	// Get kube client which impersonates the ingress operator's service
 	// account with cluster-admin RBAC.  The "system:masters" group
@@ -1658,7 +1656,7 @@ func testOperatorDegradedCondition(t *testing.T) {
 
 	// Create test CRDs to check if the ingress cluster operator
 	// transitions to the Degraded state.
-	bypassVAP(t, ensureTestCRDs)
+	ensureTestCRDs(t)
 	expectedDegraded = []configv1.ClusterOperatorStatusCondition{
 		{
 			Type:   configv1.OperatorDegraded,
@@ -1672,7 +1670,7 @@ func testOperatorDegradedCondition(t *testing.T) {
 
 	// Remove the experimental CRDs to checks that the ingress cluster operator
 	// recovers from the Degraded state.
-	bypassVAP(t, deleteTestCRDs)
+	deleteTestCRDs(t)
 	expectedDegraded = []configv1.ClusterOperatorStatusCondition{
 		{
 			Type:   configv1.OperatorDegraded,
@@ -1700,9 +1698,10 @@ func ensureCRDs(t *testing.T) {
 // deleteCRDs deletes Gateway API custom resource definitions.
 func deleteCRDs(t *testing.T) {
 	t.Helper()
+	crdClient := gatewayAPICRDClient(t)
 
 	for _, crdName := range crdNames {
-		err := deleteExistingCRD(t, crdName)
+		err := deleteExistingCRD(t, crdClient, crdName)
 		if err != nil {
 			t.Errorf("failed to delete crd %s: %v", crdName, err)
 		}
@@ -1749,9 +1748,10 @@ func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 // deleteTestCRDs deletes test Gateway API custom resource definitions.
 func deleteTestCRDs(t *testing.T) {
 	t.Helper()
+	crdClient := gatewayAPICRDClient(t)
 
 	for _, crdName := range testCRDNames {
-		err := deleteExistingCRD(t, crdName)
+		err := deleteExistingCRD(t, crdClient, crdName)
 		if err != nil {
 			t.Errorf("failed to delete crd %s: %v", crdName, err)
 		}
@@ -1760,8 +1760,9 @@ func deleteTestCRDs(t *testing.T) {
 
 // ensureTestCRDs creates test Gateway API custom resource definitions.
 func ensureTestCRDs(t *testing.T) {
+	crdClient := gatewayAPICRDClient(t)
 	for _, crdName := range testCRDNames {
-		if _, err := createCRD(t, crdName); err != nil {
+		if _, err := createCRD(t, crdClient, crdName); err != nil {
 			t.Fatalf("failed to create test crd %q: %v", crdName, err)
 		} else {
 			t.Logf("created test crd %q", crdName)

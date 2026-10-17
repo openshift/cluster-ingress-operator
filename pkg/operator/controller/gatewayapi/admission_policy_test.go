@@ -590,10 +590,9 @@ func TestReconcile_GateOn_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestReconcile_GateOff_NoVAPOps verifies that when the management
-// mode gate is OFF, the reconciler does not create, update, or delete
-// any ValidatingAdmissionPolicy or binding resources.
-func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
+// TestReconcile_AdoptsExistingVAP verifies that reconciliation
+// updates an existing policy in place without deleting the policy or binding.
+func TestReconcile_AdoptsExistingVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
@@ -603,6 +602,7 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	var objs []runtime.Object
 	objs = append(objs, &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "ingress"}})
 	objs = append(objs, baseAdmissionPolicy.DeepCopy(), desiredAdmissionPolicyBinding.DeepCopy())
+	objs = append(objs, &configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -624,12 +624,6 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	r := &reconciler{
 		client: cl,
 		cache:  fakeCache,
-		config: Config{
-			MarketplaceEnabled:              true,
-			OperatorLifecycleManagerEnabled: true,
-			ModeAccessor:                    nil, // gate OFF
-		},
-		fieldIndexer: FakeIndexer{},
 	}
 
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
@@ -639,27 +633,24 @@ func TestReconcile_GateOff_NoVAPOps(t *testing.T) {
 	for _, obj := range cl.Added {
 		switch obj.(type) {
 		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be created when gate is OFF")
+			t.Fatal("existing VAP must not be recreated")
 		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be created when gate is OFF")
+			t.Fatal("existing VAPBinding must not be recreated")
 		}
 	}
 	for _, obj := range cl.Deleted {
 		switch obj.(type) {
 		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be deleted when gate is OFF")
+			t.Fatal("existing VAP must not be deleted")
 		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be deleted when gate is OFF")
+			t.Fatal("existing VAPBinding must not be deleted")
 		}
 	}
-	for _, obj := range cl.Updated {
-		switch obj.(type) {
-		case *admissionregistrationv1.ValidatingAdmissionPolicy:
-			t.Fatal("VAP must NOT be updated when gate is OFF")
-		case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
-			t.Fatal("VAPBinding must NOT be updated when gate is OFF")
-		}
-	}
+	assert.Len(t, cl.Updated, 1, "existing policy must be updated in place")
+	assert.IsType(t, &admissionregistrationv1.ValidatingAdmissionPolicy{}, cl.Updated[0])
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	assert.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: baseAdmissionPolicy.Name}, policy))
+	assert.Equal(t, desiredAdmissionPolicyForTopology(false).Spec, policy.Spec)
 }
 
 // TestEnsureAdmissionPolicy verifies the ensure path creates both VAP
