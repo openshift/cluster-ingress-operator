@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	condutils "k8s.io/apimachinery/pkg/api/meta"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -137,6 +138,15 @@ func TestGatewayAPI(t *testing.T) {
 	if !gatewayAPIManagementModeEnabled {
 		t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	}
+	// Only uninstall an anchor this suite created, never an adopted user class.
+	var uninstallAnchorUID types.UID
+	if gatewayAPIWithoutOLMEnabled {
+		anchor, created, err := createOrGetGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+		require.NoError(t, err)
+		if created {
+			uninstallAnchorUID = anchor.UID
+		}
+	}
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -168,7 +178,12 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIManagementModeTakeover", testGatewayAPIManagementModeTakeover)
 	}
 	if gatewayAPIWithoutOLMEnabled {
-		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
+		t.Run("testGatewayAPIIstioUninstallSailLibrary", func(t *testing.T) {
+			if uninstallAnchorUID == "" {
+				t.Skip("openshift-default predated this suite; do not uninstall a user-owned fixture")
+			}
+			testGatewayAPIIstioUninstallSailLibrary(t, uninstallAnchorUID)
+		})
 	}
 
 }
@@ -287,27 +302,85 @@ func testGatewayAPIIstioInstallationSailLibrary(t *testing.T) {
 	}
 }
 
-// testGatewayAPIIstioUninstallSailLibrary verifies that when the GatewayClass
-// is deleted, Istio is fully uninstalled via the Sail Library.
-func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
-	t.Log("Deleting the GatewayClass openshift-default...")
-	gwc := &gatewayapiv1.GatewayClass{}
-	gwc.Name = "openshift-default"
-	if err := kclient.Delete(context.Background(), gwc); err != nil {
-		t.Fatalf("failed to delete GatewayClass: %v", err)
+// testGatewayAPIIstioUninstallSailLibrary verifies last-anchor cleanup of managed profiles and Istio.
+func testGatewayAPIIstioUninstallSailLibrary(t *testing.T, anchorUID types.UID) {
+	// Observe restored Managed resources before exercising last-anchor deletion.
+	managedProfile, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftClusterIPGatewayClassName)
+	require.NoError(t, err)
+	var defaults corev1.ConfigMap
+	defaultsName := client.ObjectKey{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + managedProfile.Name}
+	err = wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := kclient.Get(ctx, client.ObjectKeyFromObject(managedProfile), managedProfile); err != nil {
+			return false, err
+		}
+		if err := kclient.Get(ctx, defaultsName, &defaults); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return condutils.IsStatusConditionTrue(managedProfile.Status.Conditions, "Customized"), nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName), managedProfile.Spec.ControllerName)
+	require.Equal(t, "true", managedProfile.Labels[operatorcontroller.ManagedGatewayClassProfileLabel])
+	require.Equal(t, managedProfile.Name, defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel])
+	require.Equal(t, "sail-library", defaults.Labels["managed-by"])
+	require.Equal(t, operatorcontroller.IstioName("").Name+"-istiod", defaults.Labels["release"])
+	require.NoError(t, assertIstiodControlPlane(t), "Istiod must be running before uninstall")
+	require.NoError(t, assertGatewayClassFinalizer(t, operatorcontroller.OpenShiftDefaultGatewayClassName))
+	anchor, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
+	require.NoError(t, err)
+	require.Equal(t, anchorUID, anchor.UID, "refusing to delete a replacement for the suite's anchor")
+	require.Equal(t, gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName), anchor.Spec.ControllerName)
+	require.NotEqual(t, "true", anchor.Labels[operatorcontroller.ManagedGatewayClassProfileLabel])
+	var classes gatewayapiv1.GatewayClassList
+	require.NoError(t, kclient.List(t.Context(), &classes))
+	for _, class := range classes.Items {
+		if class.Name != anchor.Name && class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName && class.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true" && class.DeletionTimestamp.IsZero() {
+			t.Fatalf("another user GatewayClass %q retains Istio; refusing to delete unrelated anchors", class.Name)
+		}
 	}
-	t.Log("Waiting for Istiod deployment to be removed...")
-	if err := assertIstiodControlPlaneRemoved(t); err != nil {
-		t.Fatalf("Istiod was not removed: %v", err)
+
+	// Delete only the suite's enablement class; CIO must remove its own resources.
+	require.NoError(t, kclient.Delete(t.Context(), anchor, client.Preconditions{UID: &anchor.UID}))
+	require.NoError(t, assertGatewayClassDeleted(t, managedProfile.Name))
+	resources := []client.Object{anchor, managedProfile, &defaults, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: openshiftIstiodDeploymentName, Namespace: operatorcontroller.DefaultOperandNamespace}}}
+	resourcesAbsent := func(ctx context.Context) (bool, error) {
+		for _, resource := range resources {
+			readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := kclient.Get(readCtx, client.ObjectKeyFromObject(resource), resource)
+			cancel()
+			if err == nil {
+				t.Logf("waiting for %T %s to disappear", resource, client.ObjectKeyFromObject(resource))
+				return false, nil
+			}
+			if !errors.IsNotFound(err) {
+				return false, err
+			}
+		}
+		return true, nil
 	}
-	t.Log("Verifying GatewayClass is deleted...")
-	if err := assertGatewayClassDeleted(t, "openshift-default"); err != nil {
-		t.Fatalf("GatewayClass was not deleted: %v", err)
-	}
-	t.Log("Verifying Istio CRDs still exist after uninstall...")
-	if err := assertIstioCRDs(t); err != nil {
-		t.Fatalf("Istio CRDs should persist after uninstall: %v", err)
-	}
+	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, resourcesAbsent))
+	require.NoError(t, assertIstiodControlPlaneRemoved(t))
+	require.NoError(t, assertGatewayClassDeleted(t, anchor.Name), "anchor finalizer must complete")
+	require.NoError(t, assertIstioCRDs(t), "Istio CRDs should persist after uninstall")
+
+	// Managed profiles must neither retain Istio nor recreate it after cleanup.
+	absenceStart := time.Now()
+	err = wait.PollUntilContextTimeout(t.Context(), time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		absent, err := resourcesAbsent(ctx)
+		if err != nil {
+			return false, err
+		}
+		if !absent {
+			return false, fmt.Errorf("GatewayClass, defaults or Istiod reappeared after last-anchor cleanup")
+		}
+		return time.Since(absenceStart) >= time.Minute, nil
+	})
+	require.NoError(t, err, "uninstalled resources must remain absent without an anchor")
 }
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
