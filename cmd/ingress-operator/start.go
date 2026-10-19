@@ -41,7 +41,7 @@ const (
 	defaultGatewayAPIOperatorCatalog = "redhat-operators"
 	defaultGatewayAPIOperatorChannel = "stable"
 	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.5.0"
-	defaultIstioVersion              = "v1.30-latest"
+	defaultIstioVersion              = "v1.31-latest"
 )
 
 type StartOptions struct {
