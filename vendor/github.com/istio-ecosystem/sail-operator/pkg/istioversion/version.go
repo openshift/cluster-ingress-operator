@@ -183,8 +183,10 @@ func mustParseVersionsYaml(yamlBytes []byte) (
 	return list, defaultVersion, baseVersion, newVersion, versionMap, aliasList, eolVersions
 }
 
-// GetLatestPatchVersions returns the latest patch versions for all the Major.Minor versions
-func GetLatestPatchVersions() []VersionInfo {
+// allLatestPatchVersions returns the latest patch version for every Major.Minor,
+// sorted descending. This is the unlimited internal helper used by functions
+// that need the full list (e.g. GetTwoConsecutiveMinorVersions).
+func allLatestPatchVersions() []VersionInfo {
 	latestPatchVersions := make(map[string]VersionInfo)
 	for _, version := range List {
 		majorMinorVersion := fmt.Sprintf("%d.%d", version.Version.Major(), version.Version.Minor())
@@ -193,54 +195,98 @@ func GetLatestPatchVersions() []VersionInfo {
 			latestPatchVersions[majorMinorVersion] = version
 		}
 	}
-
 	latestSlice := slices.Collect(maps.Values(latestPatchVersions))
-
-	// Sort the slice in descending order based on the version.
 	sort.Slice(latestSlice, func(i, j int) bool {
 		return latestSlice[i].Version.GreaterThan(latestSlice[j].Version)
 	})
-
 	return latestSlice
 }
 
-// GetTwoConsecutiveMinorVersions returns two consecutive minor versions (with their latest patches)
-// that are greater than or equal to the specified minimum version.
-// Returns the base (older) and new (newer) versions suitable for upgrade testing.
-func GetTwoConsecutiveMinorVersions(minVersion *semver.Version) (baseVer, newVer VersionInfo, err error) {
-	allLatestPatches := GetLatestPatchVersions()
+// GetLatestPatchVersions returns the latest patch versions for all the Major.Minor versions.
+// When E2E_VERSIONS_LIMIT=1 only the newest version is returned, reducing test cycle time
+// in resource-constrained CI environments.
+// To be used also to run smoke tests to limit the number of versions tested.
+func GetLatestPatchVersions() []VersionInfo {
+	latestSlice := allLatestPatchVersions()
+	if env.Get("E2E_VERSIONS_LIMIT", "") == "1" && len(latestSlice) > 1 {
+		return latestSlice[:1]
+	}
+	return latestSlice
+}
 
-	// Filter: only keep versions >= minVersion
+// latestPatchVersionsFrom returns the latest patch version for every Major.Minor that is greater
+// than or equal to minVersion, sorted descending. EOL versions are never included, because they
+// are not part of List.
+func latestPatchVersionsFrom(minVersion *semver.Version) []VersionInfo {
 	var filtered []VersionInfo
-	for _, v := range allLatestPatches {
+	for _, v := range allLatestPatchVersions() {
 		if !v.Version.LessThan(minVersion) {
 			filtered = append(filtered, v)
 		}
 	}
+	return filtered
+}
+
+// DataPlaneMode is the data plane a test runs against. It selects the minimum Istio version the
+// returned versions have to satisfy, which is the only thing that differs between the two modes.
+type DataPlaneMode int
+
+const (
+	// Sidecar is supported by every version, so it imposes no lower bound.
+	Sidecar DataPlaneMode = iota
+	// Ambient requires Istio 1.24+, and 1.28+ on FIPS clusters.
+	Ambient
+)
+
+// minVersion returns the lowest Istio version that supports the mode.
+func (m DataPlaneMode) minVersion() *semver.Version {
+	if m == Ambient {
+		if env.GetBool("FIPS_CLUSTER", false) {
+			return semver.MustParse("1.28.0")
+		}
+		return semver.MustParse("1.24.0")
+	}
+	return semver.MustParse("0.0.0")
+}
+
+// GetTwoConsecutiveMinorVersions returns two consecutive minor versions (with their latest patches)
+// that are supported by the given data plane mode.
+// Returns the base (older) and new (newer) versions suitable for upgrade testing.
+func GetTwoConsecutiveMinorVersions(mode DataPlaneMode) (baseVer, newVer VersionInfo, err error) {
+	filtered := latestPatchVersionsFrom(mode.minVersion())
 
 	if len(filtered) < 2 {
 		return baseVer, newVer, fmt.Errorf("insufficient versions available (need 2, found %d)", len(filtered))
 	}
 
-	// GetLatestPatchVersions() returns versions sorted descending, so:
+	// latestPatchVersionsFrom() returns versions sorted descending, so:
 	// filtered[0] = newest version
 	// filtered[1] = second newest (previous minor)
 	return filtered[1], filtered[0], nil
+}
+
+// GetOldestAndNewestMinorVersions returns the oldest and the newest minor versions (with their
+// latest patches) that are supported by the given data plane mode.
+// Unless only two minor versions qualify, the two are not consecutive, which makes them suitable for
+// testing an update that skips over every minor in between.
+func GetOldestAndNewestMinorVersions(mode DataPlaneMode) (oldestVer, newestVer VersionInfo, err error) {
+	filtered := latestPatchVersionsFrom(mode.minVersion())
+
+	if len(filtered) < 2 {
+		return oldestVer, newestVer, fmt.Errorf("insufficient versions available (need 2, found %d)", len(filtered))
+	}
+
+	return filtered[len(filtered)-1], filtered[0], nil
 }
 
 // GetLatestAmbientVersion returns the latest supported version for ambient mode
 // Ambient mode requires Istio 1.24+, and FIPS clusters require 1.28+
 func GetLatestAmbientVersion() VersionInfo {
 	versions := GetLatestPatchVersions()
-	fipsCluster := env.GetBool("FIPS_CLUSTER", false)
+	minVer := Ambient.minVersion()
 
 	for _, version := range versions {
-		// Minimum supported version is 1.24
-		if version.Version.LessThan(semver.MustParse("1.24.0")) {
-			continue
-		}
-		// FIPS clusters require v1.28+
-		if fipsCluster && version.Version.LessThan(semver.MustParse("1.28.0")) {
+		if version.Version.LessThan(minVer) {
 			continue
 		}
 		return version

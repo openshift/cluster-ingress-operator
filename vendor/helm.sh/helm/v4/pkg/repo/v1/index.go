@@ -80,7 +80,7 @@ func (c ChartVersions) Less(a, b int) bool {
 // IndexFile represents the index file in a chart repository
 type IndexFile struct {
 	// This is used ONLY for validation against chartmuseum's index files and is discarded after validation.
-	ServerInfo map[string]interface{}   `json:"serverInfo,omitempty"`
+	ServerInfo map[string]any           `json:"serverInfo,omitempty"`
 	APIVersion string                   `json:"apiVersion"`
 	Generated  time.Time                `json:"generated"`
 	Entries    map[string]ChartVersions `json:"entries"`
@@ -175,6 +175,19 @@ func (i IndexFile) SortEntries() {
 	}
 }
 
+// isVersionRange checks if the version string is a range constraint (e.g., "^1", "~1.10")
+// rather than an exact version (e.g., "1.10.0").
+func isVersionRange(version string) bool {
+	if strings.ContainsAny(version, "^~<>=!*") || strings.Contains(version, "||") || strings.Contains(version, " - ") {
+		return true
+	}
+	core := version
+	if idx := strings.IndexAny(version, "-+"); idx != -1 {
+		core = version[:idx]
+	}
+	return strings.ContainsAny(core, "xX")
+}
+
 // Get returns the ChartVersion for the given name.
 //
 // If version is empty, this will return the chart with the latest stable version,
@@ -215,8 +228,10 @@ func (i IndexFile) Get(name, version string) (*ChartVersion, error) {
 		}
 
 		if constraint.Check(test) {
-			if len(version) != 0 {
+			if len(version) != 0 && !isVersionRange(version) {
 				slog.Warn("unable to find exact version requested; falling back to closest available version", "chart", name, "requested", version, "selected", ver.Version)
+			} else if len(version) != 0 && isVersionRange(version) {
+				slog.Debug("selected version matching constraint", "chart", name, "constraint", version, "selected", ver.Version)
 			}
 			return ver, nil
 		}
@@ -270,7 +285,7 @@ func (i *IndexFile) Merge(f *IndexFile) {
 type ChartVersion struct {
 	*chart.Metadata
 	URLs    []string  `json:"urls"`
-	Created time.Time `json:"created,omitempty"`
+	Created time.Time `json:"created"`
 	Removed bool      `json:"removed,omitempty"`
 	Digest  string    `json:"digest,omitempty"`
 
@@ -391,7 +406,7 @@ func loadIndex(data []byte, source string) (*IndexFile, error) {
 // checking its validity as JSON. If the data is valid JSON, it will use the
 // `encoding/json` package to unmarshal it. Otherwise, it will use the
 // `sigs.k8s.io/yaml` package to unmarshal the YAML data.
-func jsonOrYamlUnmarshal(b []byte, i interface{}) error {
+func jsonOrYamlUnmarshal(b []byte, i any) error {
 	if json.Valid(b) {
 		return json.Unmarshal(b, i)
 	}

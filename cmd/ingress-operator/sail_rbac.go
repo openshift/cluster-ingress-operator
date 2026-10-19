@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"sort"
 	"strings"
 
@@ -14,8 +15,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/istio-ecosystem/sail-operator/chart"
+	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
 	resources "github.com/istio-ecosystem/sail-operator/resources"
 
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -25,10 +28,11 @@ import (
 )
 
 const (
-	generatedMarker = "# --- BEGIN GENERATED: do not edit below; run hack/update-sail-rbac.sh to regenerate ---"
-	istiodChartPath = "charts/istiod"
-	renderNamespace = "openshift-ingress"
-	renderRelease   = "istiod"
+	generatedMarker  = "# --- BEGIN GENERATED: do not edit below; run hack/update-sail-rbac.sh to regenerate ---"
+	istiodChartPath  = "charts/istiod"
+	renderNamespace  = "openshift-ingress"
+	renderRelease    = "istiod"
+	openshiftProfile = "openshift"
 )
 
 type renderedRBACObject struct {
@@ -210,11 +214,23 @@ func aggregationUserRBACRules() ([]rbacv1.PolicyRule, error) {
 	return rules, nil
 }
 
-// renderAndExtract renders one supported Istiod chart with the same defaults the
-// library uses, so the generated superset tracks the roles it will create.
+// renderAndExtract renders one supported Istiod chart with the same values the
+// library computes at install time (see revision.ComputeValues), so the
+// generated superset tracks the roles it will create.
 func renderAndExtract(chartPath string) ([]renderedRBACObject, error) {
 	values := install.GatewayAPIDefaults(renderNamespace)
 	helmValues := helm.FromValues(values)
+
+	// Apply the default and openshift profiles and set global.platform=openshift,
+	// mirroring the library's ComputeValues. Platform-gated chart rules (for
+	// example, the SecurityContextConstraints reads Istiod requires on OpenShift)
+	// must be part of the no-escalate superset, or the chart install is rejected
+	// with "attempting to grant RBAC permissions not currently held".
+	version := path.Dir(path.Dir(chartPath))
+	helmValues, err := istiovalues.ApplyProfilesAndPlatform(resources.FS, version, config.PlatformOpenShift, openshiftProfile, "", helmValues)
+	if err != nil {
+		return nil, fmt.Errorf("applying profiles and platform: %w", err)
+	}
 
 	rendered, err := helm.RenderChart(resources.FS, chartPath, helmValues, renderNamespace, renderRelease)
 	if err != nil {
