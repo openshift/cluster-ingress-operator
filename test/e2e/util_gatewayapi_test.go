@@ -1198,8 +1198,8 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 }
 
 // assertRouteConnection checks if the xRoute of the given name and type replies successfully,
-// and returns an error if not.
-func assertRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway, routeType string) error {
+// and returns an error if not. An optional client TLS certificate can be provided for mTLS.
+func assertRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway, routeType string, clientCert ...tls.Certificate) error {
 	domain := ""
 
 	// Get gateway listener hostname to use for dnsRecord.
@@ -1240,8 +1240,15 @@ func assertRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.
 		}
 	}
 
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	if len(clientCert) > 0 {
+		cert := clientCert[0]
+		tlsConfig.GetClientCertificate = func(_ *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return &cert, nil
+		}
+	}
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: tlsConfig,
 	}
 
 	if !managedDns {

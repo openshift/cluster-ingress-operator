@@ -124,6 +124,7 @@ func ensureGatewayTLSSecret(t *testing.T, namespace, name, dnsName string) (*cor
 			"tls.crt": []byte(certPEM),
 			"tls.key": []byte(keyPEM),
 			"ca.crt":  []byte(caCertPEM),
+			"ca.key":  []byte(caKeyPEM),
 		},
 	}
 	if err := createOrGetWithRetry(t, t.Context(), secret, DefaultRetryTimeout); err != nil {

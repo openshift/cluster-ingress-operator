@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"context"
+	cryptotls "crypto/tls"
 	"fmt"
 	"math/rand/v2"
 	"net/netip"
@@ -1657,8 +1658,18 @@ func testTLSRouteDNS(t *testing.T) {
 		t.Fatalf("Failed to create gatewayclass: %v", err)
 	}
 
-	if _, err := ensureGatewayTLSSecret(t, ns.Name, secretName, "*."+domain); err != nil {
+	tlsSecret, err := ensureGatewayTLSSecret(t, ns.Name, secretName, "*."+domain)
+	if err != nil {
 		t.Fatalf("Failed to create secret %s: %v", secretName, err)
+	}
+
+	clientCertPEM, clientKeyPEM, err := generateClientKeyPair(string(tlsSecret.Data["ca.crt"]), string(tlsSecret.Data["ca.key"]), "e2e-tls-client")
+	if err != nil {
+		t.Fatalf("Failed to generate client certificate: %v", err)
+	}
+	clientCert, err := cryptotls.X509KeyPair([]byte(clientCertPEM), []byte(clientKeyPEM))
+	if err != nil {
+		t.Fatalf("Failed to parse client certificate: %v", err)
 	}
 
 	echoPod := buildTLSPod("tls-echo", ns.Name, secretName)
@@ -1688,7 +1699,7 @@ func testTLSRouteDNS(t *testing.T) {
 	if _, err = assertTLSRouteSuccessful(t, ns.Name, tlsroutename, gateway); err != nil {
 		t.Fatalf("Failed to observe success status for tlsroute %s: %v", tlsroutename, err)
 	}
-	if err = assertRouteConnection(t, hostname, gateway, "tls"); err != nil {
+	if err = assertRouteConnection(t, hostname, gateway, "tls", clientCert); err != nil {
 		t.Fatalf("Failed to observe success status for tlsroute %s: %v", tlsroutename, err)
 	}
 
