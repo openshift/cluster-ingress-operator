@@ -71,11 +71,15 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 #   marks them NotAccepted (see PILOT_IGNORE_RESOURCES in
 #   pkg/operator/controller/gatewayclass/istio_olm.go). Downstream enablement is tracked
 #   by https://redhat.atlassian.net/browse/NE-2598.
+# - HTTPRouteRetry, HTTPRouteRetryBackendTimeout, HTTPRouteRetryConnectionError: retry is
+#   only in the experimental-channel HTTPRoute CRD; the operator installs the standard
+#   channel, so routes cannot express retry configuration (the API server rejects the
+#   field: unknown field "spec.rules[N].retry").
 # - UDPRoute: the UDPRoute conformance tests are part of the GATEWAY-UDP profile,
 #   which is not run because the OpenShift Gateway API implementation does not
 #   support UDPRoute; the operator configures Istio to ignore udproutes
 #   (see PILOT_IGNORE_RESOURCES in pkg/operator/controller/gatewayclass/istio_olm.go).
-SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPListenerIsolation,GatewayInfrastructure,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteRetry,HTTPRouteRetryBackendTimeout,HTTPRouteRetryConnectionError,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
+SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPListenerIsolation,GatewayInfrastructure,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
 SKIPPED_TESTS=""
 
 echo "Start Gateway API Conformance Testing"
