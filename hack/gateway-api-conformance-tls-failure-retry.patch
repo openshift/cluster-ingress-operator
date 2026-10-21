@@ -1,0 +1,32 @@
+diff --git a/conformance/utils/tls/tls.go b/conformance/utils/tls/tls.go
+index 866327c7..e6cb00fa 100644
+--- a/conformance/utils/tls/tls.go
++++ b/conformance/utils/tls/tls.go
+@@ -121,9 +121,24 @@ func MakeTLSRequestAndExpectFailureResponse(t *testing.T, r roundtripper.RoundTr
+ 		}
+ 	}
+ 
+-	_, _, err := r.CaptureRoundTrip(req)
+-	if err == nil {
+-		t.Fatalf("Request should fail")
++	// A failed request only proves the expected rejection once the TLS handshake
++	// reached the certificate-request stage; connection-level failures (for
++	// example, DNS propagation lag for freshly provisioned load balancers) must
++	// not be mistaken for the expected rejection. Retry until the client
++	// certificate hook fires or the deadline passes.
++	deadline := time.Now().Add(2 * time.Minute)
++	for {
++		_, _, err := r.CaptureRoundTrip(req)
++		if err == nil {
++			t.Fatalf("Request should fail")
++		}
++		if clientCertificate == nil || clientCertificateKey == nil || clientCertificatePresented {
++			break
++		}
++		if time.Now().After(deadline) {
++			break
++		}
++		time.Sleep(time.Second)
+ 	}
+ 
+ 	if clientCertificate != nil && clientCertificateKey != nil {
