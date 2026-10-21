@@ -1535,6 +1535,52 @@ func assertVAP(t *testing.T, name string) error {
 	})
 }
 
+// assertAdmissionPolicyRecreated deletes the Gateway API admission policy and
+// binding and waits for both to be recreated with new UIDs while CIO is running.
+func assertAdmissionPolicyRecreated(t *testing.T) error {
+	t.Helper()
+	name := types.NamespacedName{Name: gwapiCRDVAPName}
+	originals := []client.Object{
+		&admissionregistrationv1.ValidatingAdmissionPolicy{},
+		&admissionregistrationv1.ValidatingAdmissionPolicyBinding{},
+	}
+	for _, original := range originals {
+		if err := kclient.Get(context.Background(), name, original); err != nil {
+			return fmt.Errorf("failed to get %T %q: %w", original, name, err)
+		}
+		if original.GetUID() == "" {
+			return fmt.Errorf("%T %q has no UID", original, name)
+		}
+	}
+	for _, original := range originals {
+		if err := kclient.Delete(context.Background(), original); err != nil {
+			return fmt.Errorf("failed to delete %T %q: %w", original, name, err)
+		}
+	}
+	err := wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		recreated := []client.Object{
+			&admissionregistrationv1.ValidatingAdmissionPolicy{},
+			&admissionregistrationv1.ValidatingAdmissionPolicyBinding{},
+		}
+		for index, current := range recreated {
+			if err := kclient.Get(ctx, name, current); err != nil {
+				t.Logf("failed to get %T %q: %v, retrying...", current, name, err)
+				return false, nil
+			}
+			if current.GetUID() == "" || current.GetUID() == originals[index].GetUID() || current.GetDeletionTimestamp() != nil {
+				t.Logf("waiting for %T %q to be recreated", current, name)
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to verify admission policy and binding %q recreation: %w", name, err)
+	}
+	t.Logf("admission policy and binding %q recreated", name)
+	return nil
+}
+
 // scaleDeployment scales the deployment with the given name to the specified number of replicas.
 func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error {
 	t.Helper()

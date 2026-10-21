@@ -184,6 +184,12 @@ func testGatewayAPIResources(t *testing.T) {
 
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since they should be recreated after manual deletion.
 	ensureCRDs(t)
+
+	// CVO previously managed the admission policy and binding; CIO now manages
+	// them, so verify that CIO reconciles both resources after deletion.
+	if err := assertAdmissionPolicyRecreated(t); err != nil {
+		t.Fatalf("failed to verify admission policy and binding recreation: %v", err)
+	}
 }
 
 // testGatewayAPIIstioInstallationOLM verifies that once the gatewayclass is
