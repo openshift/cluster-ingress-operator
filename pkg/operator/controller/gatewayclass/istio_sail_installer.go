@@ -7,6 +7,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istioversion"
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -137,6 +138,9 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 	})
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
+	if err := r.reconcileIstioAccess(ctx, false); err != nil {
+		return fmt.Errorf("failed to reconcile Istio access: %w", err)
+	}
 
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
 	// if options or values have changed. Status is checked later via r.sailInstaller.Status()
@@ -149,6 +153,9 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 // buildInstallerOptions creates Sail Library installation options by merging
 // Gateway API defaults with OpenShift-specific overrides
 func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, extraConfig *extraIstioConfig) install.Options {
+	if concreteVersion, err := istioversion.Resolve(istioVersion); err == nil {
+		istioVersion = concreteVersion
+	}
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 

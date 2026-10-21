@@ -47,6 +47,8 @@ require (
 	sigs.k8s.io/gateway-api v1.4.0 // Replaced at bottom of file; see replace directives for actual version used.
 )
 
+require sigs.k8s.io/yaml v1.6.0
+
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
@@ -193,7 +195,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	helm.sh/helm/v3 v3.18.6 // indirect
-	istio.io/istio v0.0.0-20260306174229-7da666217518 // indirect
+	istio.io/istio v0.0.0-20260410103559-db606cedf03c // indirect
 	k8s.io/cli-runtime v0.33.3 // indirect
 	k8s.io/component-base v0.34.3 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
@@ -207,7 +209,6 @@ require (
 	sigs.k8s.io/kustomize/kyaml v0.19.0 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.7.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 // This replace stanza is necessary to import
@@ -229,7 +230,7 @@ replace (
 	sigs.k8s.io/gateway-api => sigs.k8s.io/gateway-api v1.2.1
 )
 
-// Use OSSM 3.3.1 for Sail Library integration.
-replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260327145107-d4059b965c68
+// Use the published OSSM 3.3.3 library with a separately pinned runtime image catalog.
+replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260514074659-64a8e9662f03
 
 replace golang.org/x/net => github.com/openshift-sustaining/net v0.50.0-sec.3
