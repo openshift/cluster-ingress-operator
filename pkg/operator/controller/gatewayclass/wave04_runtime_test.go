@@ -37,8 +37,8 @@ func TestWave04PublishedRuntimeInputs(t *testing.T) {
 	require.NoError(t, install.LoadImageDigestsFromCSV(ossmLiteRuntimeCSV))
 	reconciler := &reconciler{config: Config{OperandNamespace: "openshift-ingress"}}
 	for _, target := range []struct{ alias, version, pilot, proxy string }{
-		{"v1.27-latest", "v1.27.9", "8e98ca24cc00ccfcfdc66277e6e96aa5c8b77bd0561c1cbdbf5856871fa6908b", "e5262c8626da775e0e20118dce7c8ddfc339a1b9a46de80a4684fdeafc95a365"},
-		{"v1.26-latest", "v1.26.8", "502d19f968c7beb81d022c232df68d0328ac6a15b6c3264e5dc6539082f5fdda", "8984bcbaa09f966f949cf96fb444c33a29321ae849a16bb68f9d87100f36e81c"},
+		{"v1.27-latest", "v1.27.9", "ba05e86f6fee9ae173b199c843710241b7c2c0ad4203031d2f085a9c44f0f7ab", "f7795a4b73e9ffec1eb1ec71ec43812f976d77832cd56d49076f228d8f7b1220"},
+		{"v1.26-latest", "v1.26.8", "8246611548b0cf0fef5c5aff363aa311981a55119c253dd2d6ff64d625e337bb", "5d69e03e98f17e9d253444a8009db20c3efbe9657d77736a8d4be076c7f91165"},
 	} {
 		t.Run(target.alias, func(t *testing.T) {
 			for _, inference := range []bool{false, true} {
