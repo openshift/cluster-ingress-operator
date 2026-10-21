@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Absolute path to this script's directory, used to locate carried gateway-api
+# patches after the script cds into the clone directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Get Gateway API CRD bundle-version
 BUNDLE_VERSION=$(oc get crds gateways.gateway.networking.k8s.io -ojson | jq -r '.metadata.annotations."gateway.networking.k8s.io/bundle-version"')
 
@@ -48,6 +52,18 @@ if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
     git fetch origin 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
     git cherry-pick 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
 fi
+
+# Carry a local fix for MakeTLSRequestAndExpectFailureResponse in the conformance
+# suite: the helper is one-shot and treats any request error as the expected TLS
+# rejection, so pre-handshake connection failures (DNS propagation lag for freshly
+# provisioned AWS ELBs) false-fail the Gateway client-certificate validation tests.
+# The patch makes the helper retry until the TLS handshake reaches the
+# certificate-request stage (the GetClientCertificateHook fires) or a deadline
+# passes, while preserving the original semantics otherwise. Applied with git
+# apply so a diverging upstream branch fails the job loudly instead of silently
+# regressing to the flaky behavior. Drop once the fix lands on the cloned branch.
+git apply "${SCRIPT_DIR}/gateway-api-conformance-tls-failure-retry.patch"
+echo "Applied gateway-api TLS failure-retry patch"
 
 echo "Go version: $(go version)"
 if [[ -f go.work ]]; then
