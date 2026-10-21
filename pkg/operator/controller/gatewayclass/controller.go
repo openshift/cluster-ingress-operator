@@ -21,6 +21,7 @@ import (
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -177,12 +178,21 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
 		// Returns a notification channel that signals when library reconciliation completes,
 		// allowing us to update GatewayClass status conditions accordingly.
+		if err := install.LoadImageDigestsFromCSV(ossmLiteRuntimeCSV); err != nil {
+			return nil, fmt.Errorf("failed to load OSSM-Lite runtime image catalog: %w", err)
+		}
 		installer, err := install.New(mgr.GetConfig(), resources.FS)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
 		}
 		notifyCh := installer.Start(config.Context)
 		reconciler.sailInstaller = installer
+		isIstioAggregationRole := predicate.NewPredicateFuncs(func(object client.Object) bool {
+			return strings.HasPrefix(object.GetName(), istioAccessRolePrefix)
+		})
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &rbacv1.ClusterRole{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstioAggregationRole)); err != nil {
+			return nil, err
+		}
 
 		// Reconciliation Triggers with the Sail Library:
 		//
@@ -411,6 +421,9 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	// Clean up Sail Library finalizers and status to allow OLM to take over.
 	updatedGatewayClass := gatewayclass.DeepCopy()
 	if controllerutil.ContainsFinalizer(updatedGatewayClass, sailLibraryFinalizer) {
+		if err := r.reconcileIstioAccess(ctx, true); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to clean up Istio access during OLM rollback: %w", err)
+		}
 		removeSailInstallConditions(&updatedGatewayClass.Status.Conditions)
 		if err := r.client.Status().Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayclass)); err != nil {
 			log.Error(err, "error patching the gatewayclass status")
@@ -518,13 +531,18 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		istioVersion = v
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion); err != nil {
-		log.Error(err, "failed to ensure Istio")
-		errs = append(errs, err)
+	ensureErr := r.ensureIstio(ctx, istioVersion)
+	if ensureErr != nil {
+		log.Error(ensureErr, "failed to ensure Istio")
+		errs = append(errs, ensureErr)
 	}
 
 	// Update status for indicating installation success, CRD management, etc.
 	status := r.sailInstaller.Status()
+	if ensureErr != nil {
+		status.Installed = false
+		status.Error = utilerrors.NewAggregate([]error{status.Error, ensureErr})
+	}
 	if changed := mapStatusToConditions(status, gatewayClass.Generation, &updatedGatewayClass.Status.Conditions); changed {
 		if err := r.client.Status().Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayClass)); err != nil {
 			log.Error(err, "error patching the gatewayclass status")
@@ -568,6 +586,9 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 	if countActiveGatewayClasses(&gatewayClassList, gatewayClass.Name) == 0 {
 		if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to uninstall Istio: %w", err)
+		}
+		if err := r.reconcileIstioAccess(ctx, true); err != nil {
+			return reconcile.Result{}, err
 		}
 	}
 

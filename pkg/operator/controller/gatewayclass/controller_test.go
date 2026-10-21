@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -606,6 +607,7 @@ func Test_Reconcile(t *testing.T) {
 	operatorsv1alpha1.AddToScheme(scheme)
 	sailv1.AddToScheme(scheme)
 	apiextensionsv1.AddToScheme(scheme)
+	require.NoError(t, rbacv1.AddToScheme(scheme))
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -669,7 +671,15 @@ func Test_Reconcile(t *testing.T) {
 				cmpopts.IgnoreFields(operatorsv1alpha1.SubscriptionSpec{}, "Config"),
 				cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinition{}, "Spec"),
 			}
-			if diff := cmp.Diff(tc.expectCreate, cl.Added, cmpOpts...); diff != "" {
+			expectedCreates := append([]client.Object{}, tc.expectCreate...)
+			if tc.expectedSailLibraryOptions != nil && tc.expectedSailLibraryOptions.Version != "" {
+				roles, err := istioAccessRoles()
+				require.NoError(t, err)
+				for _, role := range roles {
+					expectedCreates = append(expectedCreates, role)
+				}
+			}
+			if diff := cmp.Diff(expectedCreates, cl.Added, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual creates: %s", diff)
 			}
 			if diff := cmp.Diff(tc.expectUpdate, cl.Updated, cmpOpts...); diff != "" {
