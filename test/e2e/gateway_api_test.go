@@ -139,6 +139,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioInstallationSailLibrary", testGatewayAPIIstioInstallationSailLibrary)
+		t.Run("testGatewayAPIManagedProfileClusterIP", testGatewayAPIManagedProfileClusterIP)
 	} else {
 		t.Run("testGatewayAPIIstioInstallationOLM", testGatewayAPIIstioInstallationOLM)
 	}
@@ -148,6 +149,10 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
+	if gatewayAPIWithoutOLMEnabled {
+		t.Run("testGatewayAPIManagedProfileProtection", testGatewayAPIManagedProfileProtection)
+		t.Run("testGatewayAPIManagedProfilesLifecycle", testGatewayAPIManagedProfilesLifecycle)
+	}
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
 	if !gatewayAPIManagementModeFGEnabled {
@@ -286,6 +291,10 @@ func testGatewayAPIIstioInstallationSailLibrary(t *testing.T) {
 	if err := assertNoIstio(t); err != nil {
 		t.Fatalf("unexpected Istio CR found: %v", err)
 	}
+	t.Log("Checking managed GatewayClass profiles and ConfigMap defaults...")
+	if err := assertManagedGatewayClassProfiles(t); err != nil {
+		t.Fatalf("managed GatewayClass profiles are not installed: %v", err)
+	}
 }
 
 // testGatewayAPIIstioUninstallSailLibrary verifies that when the GatewayClass
@@ -296,6 +305,10 @@ func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
 	gwc.Name = "openshift-default"
 	if err := kclient.Delete(context.Background(), gwc); err != nil {
 		t.Fatalf("failed to delete GatewayClass: %v", err)
+	}
+	t.Log("Waiting for managed GatewayClass profiles and ConfigMap defaults to be removed...")
+	if err := assertManagedGatewayClassProfilesRemoved(t); err != nil {
+		t.Fatalf("managed profiles were not removed: %v", err)
 	}
 	t.Log("Waiting for Istiod deployment to be removed...")
 	if err := assertIstiodControlPlaneRemoved(t); err != nil {
@@ -309,6 +322,70 @@ func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
 	if err := assertIstioCRDs(t); err != nil {
 		t.Fatalf("Istio CRDs should persist after uninstall: %v", err)
 	}
+}
+
+// testGatewayAPIManagedProfileClusterIP verifies fresh ClusterIP provisioning and both class transitions.
+func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
+	managedProfile, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftClusterIPGatewayClassName)
+	require.NoError(t, err)
+
+	// Provision the Gateway with the ClusterIP profile from the outset.
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("managed-profile-clusterip-"))
+	domain := namespace.Name + ".gws." + dnsConfig.Spec.BaseDomain
+	hostname := "echo." + domain
+	gateway, err := createGateway(t, managedProfile, namespace.Name, operatorcontroller.DefaultOperandNamespace, domain)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gateway); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete test Gateway %s: %v", client.ObjectKeyFromObject(gateway), err)
+		}
+	})
+
+	// Attach a ready echo backend through an accepted HTTPRoute.
+	_, err = createHttpRoute(t, namespace.Name, "echo", gateway.Namespace, hostname, "echo", gateway)
+	require.NoError(t, err)
+	backend := buildEchoReplicaSet("echo", namespace.Name)
+	require.NoError(t, waitForReplicaSetReady(t, kclient, backend, DefaultRetryTimeout))
+	clientPod := buildExecPod("client", namespace.Name, backend.Spec.Template.Spec.Containers[0].Image)
+	require.NoError(t, createWithRetryOnError(t, t.Context(), clientPod, DefaultRetryTimeout))
+	require.NoError(t, waitForPodReady(t, kclient, clientPod, DefaultRetryTimeout))
+	assertClusterIPGatewayClassGatewaySuccess(t, gateway, clientPod, hostname, domain)
+	clusterIPService, err := gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
+	require.NoError(t, err)
+
+	// Change the GatewayClass to openshift-default and verify LoadBalancer traffic and supported DNS publication.
+	_, err = assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
+	require.NoError(t, err)
+	require.NoError(t, updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.GatewayClassName = operatorcontroller.OpenShiftDefaultGatewayClassName
+	}))
+	loadBalancerService, err := gatewayClassService(t, gateway, operatorcontroller.OpenShiftDefaultGatewayClassName, corev1.ServiceTypeLoadBalancer)
+	require.NoError(t, err)
+	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
+	require.NoError(t, err)
+
+	// Manually delete the previous class's Service as setup for the LoadBalancer checks.
+	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), clusterIPService, client.Preconditions{UID: &clusterIPService.UID})))
+	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeLoadBalancer))
+	assertGatewayServiceEchoTraffic(t, []corev1.Service{*loadBalancerService}, clientPod, hostname)
+	if isDNSManagementSupported(t) {
+		require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+			{dnsName: "*." + domain + ".", gatewayName: gateway.Name}: expectDNSRecordPublished(),
+		}))
+	}
+
+	// Switching back restores ClusterIP traffic and removes stale external DNS.
+	require.NoError(t, updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.GatewayClassName = gatewayapiv1.ObjectName(managedProfile.Name)
+	}))
+	_, err = gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
+	require.NoError(t, err)
+	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
+	require.NoError(t, err)
+
+	// Manually delete the previous class's Service as setup for the ClusterIP checks.
+	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), loadBalancerService, client.Preconditions{UID: &loadBalancerService.UID})))
+	assertClusterIPGatewayClassGatewaySuccess(t, gateway, clientPod, hostname, domain)
 }
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
@@ -458,6 +535,34 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 	}); err != nil {
 		t.Errorf("Failed to observe the expected condition for service %v: %v", serviceName, err)
 	}
+}
+
+// testGatewayAPIManagedProfileProtection verifies users cannot create a reserved managed profile.
+func testGatewayAPIManagedProfileProtection(t *testing.T) {
+	// Use a fresh reserved name so an existing profile cannot cause AlreadyExists.
+	profile := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: names.SimpleNameGenerator.GenerateName("openshift-admission-test-")},
+		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
+	}
+	assertManagedProfileAdmissionDenied(t, kclient.Create(t.Context(), profile, client.DryRunAll))
+}
+
+// testGatewayAPIManagedProfilesLifecycle verifies class recreation and Sail defaults regeneration.
+func testGatewayAPIManagedProfilesLifecycle(t *testing.T) {
+	require.NoError(t, assertManagedGatewayClassProfiles(t))
+	profile := &gatewayapiv1.GatewayClass{}
+	key := client.ObjectKey{Name: operatorcontroller.OpenShiftClusterIPGatewayClassName}
+	require.NoError(t, kclient.Get(t.Context(), key, profile))
+
+	// Delete the class directly; the controller must recreate a configured profile.
+	assertManagedProfileRecreated(t, profile)
+
+	// Repair a status-only mutation on the recreated class without replacing it.
+	assertManagedProfileStatusRepair(t, profile)
+
+	// Defaults replacement must recover association and current profile status.
+	assertManagedProfileDefaultsReplacement(t, profile)
+	require.NoError(t, assertManagedGatewayClassProfiles(t))
 }
 
 // testGatewayAPIResourcesProtection verifies that the ingress operator's Validating Admission Policy
