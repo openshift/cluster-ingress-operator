@@ -935,20 +935,29 @@ func Test_mapStatusToConditions(t *testing.T) {
 // proxy images for all configured Istio versions use a downstream (Red Hat)
 // registry. The sail library silently defaults to upstream images
 // (registry.istio.io) via images.gen.go, which must be patched to use
-// registry.redhat.io during the downstream build. Without this test,
-// upstream images slip through undetected and only surface as failures
-// in CI or production.
+// registry.redhat.io during the downstream build. Pre-release testing pins
+// images from registry.stage.redhat.io, which is also a downstream registry.
+// Without this test, upstream images slip through undetected and only surface
+// as failures in CI or production.
 func TestSailLibraryImageDigestsAreDownstream(t *testing.T) {
 	require.NotEmpty(t, config.Config.ImageDigests, "config.Config.ImageDigests must not be empty")
 
 	for version, images := range config.Config.ImageDigests {
 		t.Run(version, func(t *testing.T) {
-			assert.True(t, strings.HasPrefix(images.IstiodImage, "registry.redhat.io/"),
-				"IstiodImage %q is not from registry.redhat.io", images.IstiodImage)
-			assert.True(t, strings.HasPrefix(images.ProxyImage, "registry.redhat.io/"),
-				"ProxyImage %q is not from registry.redhat.io", images.ProxyImage)
+			assert.True(t, isDownstreamRegistry(images.IstiodImage),
+				"IstiodImage %q is not from a Red Hat registry", images.IstiodImage)
+			assert.True(t, isDownstreamRegistry(images.ProxyImage),
+				"ProxyImage %q is not from a Red Hat registry", images.ProxyImage)
 		})
 	}
+}
+
+// isDownstreamRegistry reports whether the image reference points at a
+// downstream Red Hat registry, either GA (registry.redhat.io) or pre-release
+// (registry.stage.redhat.io).
+func isDownstreamRegistry(image string) bool {
+	return strings.HasPrefix(image, "registry.redhat.io/") ||
+		strings.HasPrefix(image, "registry.stage.redhat.io/")
 }
 
 // TestSailLibraryCipherForTLS verifies that the sail library is properly parsing the TLS
