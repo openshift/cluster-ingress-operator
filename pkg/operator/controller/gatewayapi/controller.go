@@ -8,6 +8,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 
 	"k8s.io/client-go/tools/record"
@@ -331,7 +332,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// flaps that block upgrades and fire alerts.
 		lastApplied := r.config.ModeAccessor.GetLastAppliedMode()
 		if lastApplied == nil {
-			if appliedMode, applied := appliedModeFromIngressStatus(snapshot); applied {
+			if appliedMode, applied := appliedModeFromIngressStatus(snapshot); applied && snapshot.desiredMode != operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
 				r.config.ModeAccessor.SetLastAppliedMode(appliedMode)
 				lastApplied = &appliedMode
 			}
@@ -361,6 +362,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// these operations already completed on a prior reconcile and
 		// repeating them every 30s wastes resources.
 		if modeChanged {
+			// Report profile configuration as unmanaged before Sail removes its defaults.
+			if err := r.reconcileManagedGatewayClassesTransition(ctx, snapshot); err != nil {
+				r.setTransitionError(modeChanged, snapshot.desiredMode, err)
+				return reconcile.Result{}, err
+			}
 			if err := r.reconcileAdmissionPolicyTransition(ctx, snapshot); err != nil {
 				r.setTransitionError(modeChanged, snapshot.desiredMode, err)
 				return reconcile.Result{}, err
@@ -480,6 +486,14 @@ func (r *reconciler) ensureManagedResources(ctx context.Context) error {
 		return err
 	}
 	return r.ensureGatewayAPIRBAC(ctx)
+}
+
+// reconcileManagedGatewayClassesTransition updates profile status before completing an Unmanaged transition.
+func (r *reconciler) reconcileManagedGatewayClassesTransition(ctx context.Context, snapshot ingressModeSnapshot) error {
+	if snapshot.desiredMode != operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
+		return nil
+	}
+	return gatewayclasscontroller.SetManagedProfilesUnmanagedConfiguredStatus(ctx, r.client)
 }
 
 // ensureDependentControllers creates the required Gateway API field indexes.
