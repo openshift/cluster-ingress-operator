@@ -206,6 +206,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	dnsConfig := &configv1.DNS{}
+	// ClusterIP gateways have no external load balancer address for DNS records.
+	// Remove stale records when a DNS-supported class transitions to ClusterIP.
+	if gateway.Spec.GatewayClassName == operatorcontroller.OpenShiftClusterIPGatewayClassName {
+		errs := r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, sets.NewString())
+		return reconcile.Result{}, utilerrors.NewAggregate(errs)
+	}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}

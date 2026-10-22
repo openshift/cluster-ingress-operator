@@ -12,6 +12,7 @@ import (
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -24,6 +25,7 @@ import (
 	"github.com/istio-ecosystem/sail-operator/chart"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
+	corev1 "k8s.io/api/core/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -206,6 +208,10 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 		}
 		reconciler.sailInstaller = installer
 
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForManagedProfileConfigMapDefaults), predicate.NewPredicateFuncs(reconciler.isManagedProfileConfigMapDefaults), dependentPred)); err != nil {
+			return nil, nil, err
+		}
+
 		// Reconciliation Triggers with the Sail Library:
 		//
 		// 1. CIO-initiated reconciliation (GatewayClass controller triggers):
@@ -364,11 +370,17 @@ func (r *reconciler) enqueueRequestForCRDOwnershipChange() handler.EventHandler 
 }
 
 // enqueueRequestForSomeGatewayClass enqueues GatewayClass reconciliation.
-// Sail Library mode: all classes. OLM mode: oldest class only (to avoid subscription conflicts).
+// NoOLM mode maps class events to their own key.
+// Shared events fan out; OLM mode selects the oldest class to avoid subscription conflicts.
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
 			if r.config.GatewayAPIWithoutOLMEnabled {
+				// If the event object is a GatewayClass, reconcile only that GatewayClass.
+				if _, ok := obj.(*gatewayapiv1.GatewayClass); ok {
+					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
+				}
+				// Otherwise, enqueue all OpenShift GatewayClasses, including desired profiles.
 				return r.requestsForAllManagedGatewayClasses(ctx, obj)
 			}
 			return r.requestsForSomeGatewayClass(ctx, obj)
@@ -442,6 +454,11 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 		return requests
 	}
 
+	// Include desired managed profiles so shared events can reconcile them
+	// even when their GatewayClasses have not been created yet.
+	if r.config.GatewayAPIWithoutOLMEnabled {
+		gatewayClasses.Items = withDesiredManagedProfiles(gatewayClasses.Items)
+	}
 	for _, class := range gatewayClasses.Items {
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
@@ -458,10 +475,20 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	var result reconcile.Result
+	var err error
 	if r.config.GatewayAPIWithoutOLMEnabled {
-		return r.reconcileWithSailLibrary(ctx, request)
+		result, err = r.reconcileWithSailLibrary(ctx, request)
+	} else {
+		result, err = r.reconcileWithOLM(ctx, request)
 	}
-	return r.reconcileWithOLM(ctx, request)
+	switch retry := err.(type) {
+	case retryable.Error:
+		log.Error(retry, "got retryable error; requeueing", "after", retry.After())
+		return reconcile.Result{RequeueAfter: retry.After()}, nil
+	default:
+		return result, err
+	}
 }
 
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
@@ -573,6 +600,11 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 // for direct Helm-based installation of Istio.
 func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling with sail library", "request", request)
+	// Sync managed profiles separately, including before the GatewayClass
+	// exists. They do not trigger Sail installation or uninstallation.
+	if isManagedProfileName(request.Name) {
+		return r.syncManagedProfile(ctx, request.Name)
+	}
 
 	var infraConfig configv1.Infrastructure
 	if err := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
@@ -628,7 +660,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		return reconcile.Result{}, err
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion, gatewayclasses.Items, &infraConfig); err != nil {
+	if err := r.ensureIstio(ctx, istioVersion, withDesiredManagedProfiles(gatewayclasses.Items), &infraConfig); err != nil {
 		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}
@@ -648,13 +680,14 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
-// countActiveGatewayClasses returns the number of managed GatewayClasses that
-// are not being deleted, excluding the given name.
-func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName string) int {
+// countActiveUserCreatedGatewayClasses counts active user-created GatewayClasses in an
+// OpenShift-controller-filtered list, excluding the given name.
+func countActiveUserCreatedGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName string) int {
 	count := 0
 	for i := range list.Items {
 		gc := &list.Items[i]
-		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() {
+		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() ||
+			isManagedProfile(gc) {
 			continue
 		}
 		count++
@@ -663,7 +696,7 @@ func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName 
 }
 
 // ensureGatewayClassDeleted handles cleanup when a GatewayClass is being deleted.
-// Uninstalls Istio if this is the last managed GatewayClass, then removes the finalizer.
+// Uninstalls Istio if this is the last user-created OpenShift GatewayClass, then removes its finalizer.
 func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
 	if !controllerutil.ContainsFinalizer(gatewayClass, sailLibraryFinalizer) {
 		// No finalizer present; nothing to clean up
@@ -678,7 +711,11 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 	}); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
 	}
-	if countActiveGatewayClasses(&gatewayClassList, gatewayClass.Name) == 0 {
+	if countActiveUserCreatedGatewayClasses(&gatewayClassList, gatewayClass.Name) == 0 {
+		// Profiles must disappear before stopping Sail.
+		if err := r.deleteAllManagedProfiles(ctx); err != nil {
+			return reconcile.Result{}, err
+		}
 		if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to uninstall Istio: %w", err)
 		}
@@ -735,6 +772,9 @@ func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
 		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 			current := &gatewayapiv1.GatewayClass{}
 			if err := r.client.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+				if errors.IsNotFound(err) {
+					return nil
+				}
 				return err
 			}
 
