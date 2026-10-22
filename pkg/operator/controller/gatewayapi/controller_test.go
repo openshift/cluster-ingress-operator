@@ -249,12 +249,15 @@ func Test_Reconcile(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
+	admissionregistrationv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithRuntimeObjects(tc.existingObjects...).
+				WithRuntimeObjects(append(tc.existingObjects,
+					&configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}},
+					desiredAdmissionPolicyForTopology(false), desiredAdmissionPolicyBinding.DeepCopy())...).
 				WithStatusSubresource(tc.existingStatusSubresource...).
 				WithIndex(&apiextensionsv1.CustomResourceDefinition{}, "gatewayAPICRD", client.IndexerFunc(func(o client.Object) []string {
 					// Assume that test.gateway group CRD is unmanaged.
@@ -336,9 +339,11 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
+	admissionregistrationv1.AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(append(establishedManagedCRDs(),
+			&configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}},
 			&configv1.ClusterOperator{
 				ObjectMeta: metav1.ObjectMeta{Name: "ingress"},
 			},
@@ -695,7 +700,7 @@ func TestReconcile_UnmanagedCRDsMetricGatedByFeatureGate(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithRuntimeObjects(objs...).
+			WithRuntimeObjects(append(objs, &configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})...).
 			WithStatusSubresource(&configv1.ClusterOperator{}).
 			WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
 				if strings.Contains(o.GetName(), unmanagedCRDName) {
@@ -1103,61 +1108,79 @@ func TestReconcile_PartialPresenceNonCompliant_TakeoverBlocked(t *testing.T) {
 }
 
 // TestReconcile_GateOff_AlwaysEnsures verifies that when the
-// management mode gate is OFF, CRDs and RBAC are always ensured
+// management mode gate is OFF, admission policy, CRDs and RBAC are always ensured
 // (legacy behavior preserved).
 func TestReconcile_GateOff_AlwaysEnsures(t *testing.T) {
-	scheme := runtime.NewScheme()
-	configv1.Install(scheme)
-	apiextensionsv1.AddToScheme(scheme)
-	rbacv1.AddToScheme(scheme)
-
-	var objs []runtime.Object
-	objs = append(objs, &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "ingress"}})
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithRuntimeObjects(objs...).
-		WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
-			return []string{}
-		})).
-		Build()
-	cl := &testutil.FakeClientRecorder{
-		Client:  fakeClient,
-		T:       t,
-		Added:   []client.Object{},
-		Updated: []client.Object{},
-		Deleted: []client.Object{},
-	}
-
-	informer := informertest.FakeInformers{Scheme: scheme}
-	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
-	r := &reconciler{
-		client: cl,
-		cache:  fakeCache,
-		config: Config{
-			MarketplaceEnabled:              true,
-			OperatorLifecycleManagerEnabled: true,
-			ModeAccessor:                    nil,
-		},
-		fieldIndexer: FakeIndexer{},
-	}
-
-	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
-	_, err := r.Reconcile(context.Background(), req)
-	assert.NoError(t, err)
-
-	assert.NotEmpty(t, cl.Added, "CRDs and RBAC must be created when gate is off (legacy behavior)")
-	var crdCount, rbacCount int
-	for _, obj := range cl.Added {
-		switch obj.(type) {
-		case *apiextensionsv1.CustomResourceDefinition:
-			crdCount++
-		case *rbacv1.ClusterRole:
-			rbacCount++
+	for _, accessor := range []*operatorcontroller.GatewayAPIModeAccessor{nil, operatorcontroller.NewGatewayAPIModeAccessor(false)} {
+		name := "nil accessor"
+		if accessor != nil {
+			name = "disabled accessor"
 		}
+		t.Run(name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			configv1.Install(scheme)
+			apiextensionsv1.AddToScheme(scheme)
+			rbacv1.AddToScheme(scheme)
+			admissionregistrationv1.AddToScheme(scheme)
+
+			var objs []runtime.Object
+			objs = append(objs, &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "ingress"}})
+			objs = append(objs, &configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(objs...).
+				WithIndex(&apiextensionsv1.CustomResourceDefinition{}, gatewayAPICRDIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+					return []string{}
+				})).
+				Build()
+			cl := &testutil.FakeClientRecorder{
+				Client:  fakeClient,
+				T:       t,
+				Added:   []client.Object{},
+				Updated: []client.Object{},
+				Deleted: []client.Object{},
+			}
+
+			informer := informertest.FakeInformers{Scheme: scheme}
+			fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
+			r := &reconciler{
+				client: cl,
+				cache:  fakeCache,
+				config: Config{
+					MarketplaceEnabled:              true,
+					OperatorLifecycleManagerEnabled: true,
+					ModeAccessor:                    accessor,
+				},
+				fieldIndexer: FakeIndexer{},
+			}
+
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
+			_, err := r.Reconcile(context.Background(), req)
+			assert.NoError(t, err)
+
+			assert.NotEmpty(t, cl.Added, "CRDs and RBAC must be created when gate is off (legacy behavior)")
+			var crdCount, rbacCount, vapCount, bindingCount int
+			for _, obj := range cl.Added {
+				switch obj.(type) {
+				case *admissionregistrationv1.ValidatingAdmissionPolicy:
+					vapCount++
+				case *admissionregistrationv1.ValidatingAdmissionPolicyBinding:
+					bindingCount++
+				case *apiextensionsv1.CustomResourceDefinition:
+					crdCount++
+				case *rbacv1.ClusterRole:
+					rbacCount++
+				}
+			}
+			assert.Equal(t, len(managedCRDs), crdCount, "all managed CRDs must be created")
+			assert.Equal(t, len(managedClusterRoles), rbacCount, "all managed ClusterRoles must be created")
+			assert.Equal(t, 1, vapCount, "admission policy must be created")
+			assert.Equal(t, 1, bindingCount, "admission policy binding must be created")
+			assert.IsType(t, &admissionregistrationv1.ValidatingAdmissionPolicy{}, cl.Added[0])
+			assert.IsType(t, &admissionregistrationv1.ValidatingAdmissionPolicyBinding{}, cl.Added[1])
+		})
 	}
-	assert.Equal(t, len(managedCRDs), crdCount, "all managed CRDs must be created")
-	assert.Equal(t, len(managedClusterRoles), rbacCount, "all managed ClusterRoles must be created")
 }
 
 // TestReconcile_ManagedAndAbsent_InstallsCRDs verifies that when mode
