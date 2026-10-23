@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
@@ -421,6 +422,7 @@ func TestReconcile_Managed_InfraIBMCloud_CreatesSAOnlyVAP(t *testing.T) {
 // before the Managed=False/Unmanaged status condition is written.
 func TestReconcile_Unmanaged_DeletesVAP(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -520,6 +522,7 @@ func TestReconcile_Unmanaged_DeletesVAP(t *testing.T) {
 // the Unmanaged condition.
 func TestReconcile_Unmanaged_VAPDeleteFails_ReturnsError(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
