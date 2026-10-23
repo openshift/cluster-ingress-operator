@@ -134,7 +134,11 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	if waitingForNodes && availableCondition.Status == operatorv1.ConditionFalse {
 		availableCondition.Reason = ReasonAwaitingNodes
-		availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
+		message := "IngressController is waiting for a ready node matching the router deployment."
+		if availableCondition.Message != "" {
+			message += " " + availableCondition.Message
+		}
+		availableCondition.Message = message
 	}
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
