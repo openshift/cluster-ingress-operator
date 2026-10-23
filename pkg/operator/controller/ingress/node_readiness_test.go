@@ -69,20 +69,47 @@ func Test_syncIngressControllerStatus_nodeReadiness(t *testing.T) {
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
 	}
 	for _, tc := range []struct {
-		name       string
-		nodes      []corev1.Node
-		waiting    bool
-		unsuitable bool
+		name               string
+		nodes              []corev1.Node
+		waiting            bool
+		unsuitable         bool
+		publishingStrategy operatorv1.EndpointPublishingStrategyType
+		service            *corev1.Service
+		dnsConfig          *configv1.DNS
+		unavailableDetails string
 	}{
 		{name: "ready worker satisfies generated affinity", nodes: []corev1.Node{readyWorker}},
 		{name: "zero workers preserves unavailable startup marker", waiting: true},
 		{name: "custom selector with no matching worker remains unavailable", nodes: []corev1.Node{readyWorker}, unsuitable: true, waiting: true},
+		{
+			name: "zero workers preserves load balancer failure details", waiting: true,
+			publishingStrategy: operatorv1.LoadBalancerServiceStrategyType,
+			unavailableDetails: "LoadBalancerReady=False (ServiceNotFound: The LoadBalancer service resource is missing)",
+		},
+		{
+			name: "zero workers preserves DNS failure details", waiting: true,
+			publishingStrategy: operatorv1.LoadBalancerServiceStrategyType,
+			service: &corev1.Service{
+				Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer},
+				Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{
+					Ingress: []corev1.LoadBalancerIngress{{Hostname: "router.example.test"}},
+				}},
+			},
+			dnsConfig:          &configv1.DNS{Spec: configv1.DNSSpec{PublicZone: &configv1.DNSZone{ID: "test-zone"}}},
+			unavailableDetails: "DNSReady=False (RecordNotFound: The wildcard record resource was not found.)",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, proxyConfig := getRouterDeploymentComponents(t)
 			ic.Name = "e2e-dcm"
 			ic.Namespace = controller.DefaultOperatorNamespace
 			ic.Spec.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{Type: operatorv1.PrivateStrategyType}
+			if tc.publishingStrategy != "" {
+				ic.Spec.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{
+					Type:         tc.publishingStrategy,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{Scope: operatorv1.ExternalLoadBalancer},
+				}
+			}
 			ic.Status.EndpointPublishingStrategy = ic.Spec.EndpointPublishingStrategy.DeepCopy()
 			ic.Spec.TuningOptions.ConfigurationManagement = operatorv1.IngressControllerConfigurationManagementDynamic
 			if tc.unsuitable {
@@ -100,7 +127,11 @@ func Test_syncIngressControllerStatus_nodeReadiness(t *testing.T) {
 			require.NoError(t, operatorv1.AddToScheme(scheme))
 			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(ic).WithObjects(ic).Build()
 			r := &reconciler{client: kubeClient, config: config}
-			err, updated := r.syncIngressControllerStatus(ic, deployment, metav1.OwnerReference{}, nil, nil, nil, nil, &configv1.DNS{}, infraConfig.Status.PlatformStatus, ingressConfig, configv1.ExternalTopologyMode, nodes)
+			dnsConfig := tc.dnsConfig
+			if dnsConfig == nil {
+				dnsConfig = &configv1.DNS{}
+			}
+			err, updated := r.syncIngressControllerStatus(ic, deployment, metav1.OwnerReference{}, nil, tc.service, nil, nil, dnsConfig, infraConfig.Status.PlatformStatus, ingressConfig, configv1.ExternalTopologyMode, nodes)
 			require.Error(t, err, "an unavailable router must request a retry")
 			require.True(t, updated)
 			actual := &operatorv1.IngressController{}
@@ -109,6 +140,13 @@ func Test_syncIngressControllerStatus_nodeReadiness(t *testing.T) {
 			require.True(t, found)
 			require.Equal(t, operatorv1.ConditionFalse, available.Status)
 			require.Equal(t, tc.waiting, available.Reason == ReasonAwaitingNodes)
+			if tc.waiting {
+				require.Contains(t, available.Message, "IngressController is waiting for a ready node matching the router deployment.")
+				require.Contains(t, available.Message, "DeploymentAvailable=Unknown")
+			}
+			if tc.unavailableDetails != "" {
+				require.Contains(t, available.Message, tc.unavailableDetails)
+			}
 			progressing, found := findOperatorCondition(actual.Status.Conditions, operatorv1.OperatorStatusTypeProgressing)
 			require.True(t, found)
 			require.Equal(t, operatorv1.ConditionTrue, progressing.Status)
