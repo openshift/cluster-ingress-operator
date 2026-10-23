@@ -9,7 +9,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -278,7 +278,7 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 		ingressToGatewayClasses := func(ctx context.Context, _ client.Object) []reconcile.Request {
 			return reconciler.requestsForAllManagedGatewayClasses(ctx, nil)
 		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGatewayClasses), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGatewayClasses), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
 			return nil, nil, fmt.Errorf("failed to watch Ingress for wake-up: %w", err)
 		}
 	}

@@ -12,7 +12,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1325,7 +1324,7 @@ func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
 			description: "mode transition in progress to Unmanaged",
 			modeTransition: operatorcontroller.TransitionState{
 				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+				Target:     operatorv1.GatewayAPIManagementModeUnmanaged,
 			},
 			expectProgressing: configv1.ConditionTrue,
 			expectInMessage:   "Transitioning Gateway API management mode to Unmanaged",
@@ -1334,7 +1333,7 @@ func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
 			description: "mode transition in progress to Managed",
 			modeTransition: operatorcontroller.TransitionState{
 				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeManaged,
+				Target:     operatorv1.GatewayAPIManagementModeManaged,
 			},
 			expectProgressing: configv1.ConditionTrue,
 			expectInMessage:   "Transitioning Gateway API management mode to Managed",
@@ -1343,7 +1342,7 @@ func Test_computeOperatorProgressingCondition_modeTransition(t *testing.T) {
 			description: "mode transition with error still reports progressing",
 			modeTransition: operatorcontroller.TransitionState{
 				InProgress: true,
-				Target:     operatorv1alpha1.GatewayAPIManagementModeUnmanaged,
+				Target:     operatorv1.GatewayAPIManagementModeUnmanaged,
 				Error:      fmt.Errorf("some error"),
 			},
 			expectProgressing: configv1.ConditionTrue,

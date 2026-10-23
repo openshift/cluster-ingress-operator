@@ -14,7 +14,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -173,7 +173,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	// because the Ingress CRD only exists on TechPreview/DevPreview clusters.
 	if modeAccessor != nil && modeAccessor.GateEnabled() {
 		ingressToListenerSets := operatorcontroller.IngressWakeUpMapper(operatorCache, func() client.ObjectList { return &gatewayapiv1.ListenerSetList{} })
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToListenerSets), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToListenerSets), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
 			return nil, fmt.Errorf("failed to watch Ingress: %w", err)
 		}
 	}

@@ -20,7 +20,7 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
@@ -163,7 +163,7 @@ func TestEnsureIstio_UninstallSail_ConcurrentSafety(t *testing.T) {
 	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	// managed=false => AllowDependents() is false, simulating
 	// steady-state Unmanaged.
-	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
+	modeAccessor.Update(operatorv1.GatewayAPIManagementModeUnmanaged, false, true, true)
 
 	r := &reconciler{
 		client:        fakeClient,
@@ -239,7 +239,7 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(true)
 	// managed && present && compliant => AllowDependents() is true, so
 	// ensureIstio proceeds all the way to Apply.
-	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeManaged, true, true, true)
+	modeAccessor.Update(operatorv1.GatewayAPIManagementModeManaged, true, true, true)
 
 	r := &reconciler{
 		client:        fakeClient,
@@ -264,7 +264,7 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 
 	// Simulate the transition to Unmanaged. The in-flight Apply already
 	// passed its AllowDependents check, so this must not affect it.
-	modeAccessor.Update(operatorv1alpha1.GatewayAPIManagementModeUnmanaged, false, true, true)
+	modeAccessor.Update(operatorv1.GatewayAPIManagementModeUnmanaged, false, true, true)
 
 	uninstallDone := make(chan error, 1)
 	go func() {

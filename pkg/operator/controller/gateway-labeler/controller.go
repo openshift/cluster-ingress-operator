@@ -3,7 +3,7 @@ package gateway_labeler
 import (
 	"context"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -175,7 +175,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	// because the Ingress CRD only exists on TechPreview/DevPreview clusters.
 	if modeAccessor != nil && modeAccessor.GateEnabled() {
 		ingressToGateways := operatorcontroller.IngressWakeUpMapper(reconciler.cache, func() client.ObjectList { return &gatewayapiv1.GatewayList{} })
-		if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGateways), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
+		if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToGateways), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
 			return nil, err
 		}
 	}
