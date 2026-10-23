@@ -1,6 +1,8 @@
 package status
 
 import (
+	"slices"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -19,53 +21,83 @@ func ingressControllersForClusterOperator(controllers []operatorv1.IngressContro
 	if topology != configv1.ExternalTopologyMode || nodes == nil || len(nodes.Items) != 0 {
 		return controllers
 	}
-	for i := range controllers {
-		ic := &controllers[i]
-		if ic.Name != manifests.DefaultIngressControllerName || ic.DeletionTimestamp != nil {
-			continue
-		}
-		conditions := make(map[string]operatorv1.OperatorCondition, len(ic.Status.Conditions))
-		for _, condition := range ic.Status.Conditions {
-			conditions[condition.Type] = condition
-		}
-		available := conditions[operatorv1.IngressControllerAvailableConditionType]
-		if available.Status != operatorv1.ConditionFalse || available.Reason != ingress.ReasonAwaitingNodes {
-			continue
-		}
-		// AwaitingNodes may coexist with DNS or load-balancer failures. Require
-		// known management status and ready managed dependencies so those
-		// failures cannot be hidden by the deployment exception.
-		dependenciesReady := true
-		for _, dependency := range []struct{ managed, ready string }{
-			{operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.LoadBalancerReadyIngressConditionType},
-			{operatorv1.DNSManagedIngressConditionType, operatorv1.DNSReadyIngressConditionType},
-		} {
-			managed := conditions[dependency.managed].Status
-			if managed != operatorv1.ConditionFalse && (managed != operatorv1.ConditionTrue || conditions[dependency.ready].Status != operatorv1.ConditionTrue) {
-				dependenciesReady = false
-				break
-			}
-		}
-		if !dependenciesReady {
-			continue
-		}
-
-		result := append([]operatorv1.IngressController(nil), controllers...)
-		result[i] = *ic.DeepCopy()
-		available.Status = operatorv1.ConditionTrue
-		available.Message = "The default router is waiting for nodes during initial zero-worker hosted-cluster startup."
-		updates := []operatorv1.OperatorCondition{available}
-		rollout := conditions[ingress.IngressControllerDeploymentRollingOutConditionType]
-		lbProgressing := conditions[ingress.IngressControllerLoadBalancerProgressingConditionType]
-		if (rollout.Status == operatorv1.ConditionFalse || (rollout.Status == operatorv1.ConditionTrue && rollout.Reason == ingress.ReasonDeploymentRollingOut)) &&
-			(conditions[operatorv1.LoadBalancerManagedIngressConditionType].Status == operatorv1.ConditionFalse || lbProgressing.Status == operatorv1.ConditionFalse) {
-			updates = append(updates, operatorv1.OperatorCondition{
-				Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse,
-				Reason: ingress.ReasonAwaitingNodes,
-			})
-		}
-		result[i].Status.Conditions = ingress.MergeConditions(result[i].Status.Conditions, updates...)
-		return result
+	i := slices.IndexFunc(controllers, func(ic operatorv1.IngressController) bool {
+		return ic.Name == manifests.DefaultIngressControllerName && ic.DeletionTimestamp == nil
+	})
+	if i < 0 {
+		return controllers
 	}
-	return controllers
+
+	updates, ok := zeroWorkerStartupConditions(conditionsByType(controllers[i].Status.Conditions))
+	if !ok {
+		return controllers
+	}
+
+	result := slices.Clone(controllers)
+	result[i] = *controllers[i].DeepCopy()
+	result[i].Status.Conditions = ingress.MergeConditions(result[i].Status.Conditions, updates...)
+	return result
+}
+
+// conditionsByType indexes conditions by type for single-lookup access.
+func conditionsByType(conditions []operatorv1.OperatorCondition) map[string]operatorv1.OperatorCondition {
+	byType := make(map[string]operatorv1.OperatorCondition, len(conditions))
+	for _, condition := range conditions {
+		byType[condition.Type] = condition
+	}
+	return byType
+}
+
+// zeroWorkerStartupConditions returns the Available (and, when safe, Progressing)
+// condition overrides for a default IngressController that is unavailable only
+// because it is waiting for the hosted cluster's first guest node. ok is false
+// when the exception does not apply: the controller was never in the
+// AwaitingNodes startup state, or a real DNS/load-balancer failure is also
+// present and must not be hidden by the deployment exception.
+func zeroWorkerStartupConditions(conditions map[string]operatorv1.OperatorCondition) (updates []operatorv1.OperatorCondition, ok bool) {
+	available := conditions[operatorv1.IngressControllerAvailableConditionType]
+	if available.Status != operatorv1.ConditionFalse || available.Reason != ingress.ReasonAwaitingNodes {
+		return nil, false
+	}
+	// AwaitingNodes may coexist with DNS or load-balancer failures. Require
+	// both managed dependencies to be either unmanaged or fully ready.
+	loadBalancerReady := dependencyReady(conditions, operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.LoadBalancerReadyIngressConditionType)
+	dnsReady := dependencyReady(conditions, operatorv1.DNSManagedIngressConditionType, operatorv1.DNSReadyIngressConditionType)
+	if !loadBalancerReady || !dnsReady {
+		return nil, false
+	}
+
+	available.Status = operatorv1.ConditionTrue
+	available.Message = "The default router is waiting for nodes during initial zero-worker hosted-cluster startup."
+	updates = []operatorv1.OperatorCondition{available}
+
+	// Suppress rollout progress caused by missing nodes, while preserving
+	// other rollout reasons and load-balancer provisioning.
+	rollout := conditions[ingress.IngressControllerDeploymentRollingOutConditionType]
+	rolloutIsExpected := rollout.Status == operatorv1.ConditionFalse ||
+		(rollout.Status == operatorv1.ConditionTrue && rollout.Reason == ingress.ReasonDeploymentRollingOut)
+	loadBalancerSettled := conditions[operatorv1.LoadBalancerManagedIngressConditionType].Status == operatorv1.ConditionFalse ||
+		conditions[ingress.IngressControllerLoadBalancerProgressingConditionType].Status == operatorv1.ConditionFalse
+	if rolloutIsExpected && loadBalancerSettled {
+		updates = append(updates, operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionFalse,
+			Reason: ingress.ReasonAwaitingNodes,
+		})
+	}
+	return updates, true
+}
+
+// dependencyReady reports whether a managed dependency (DNS, load balancer) is
+// either not managed at all or fully ready. An unknown or missing status is
+// treated as not ready.
+func dependencyReady(conditions map[string]operatorv1.OperatorCondition, managedType, readyType string) bool {
+	switch conditions[managedType].Status {
+	case operatorv1.ConditionFalse:
+		return true
+	case operatorv1.ConditionTrue:
+		return conditions[readyType].Status == operatorv1.ConditionTrue
+	default:
+		return false
+	}
 }
