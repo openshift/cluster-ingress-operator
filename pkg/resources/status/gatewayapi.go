@@ -20,7 +20,7 @@ func ComputeGatewayAPIDNSStatus(dnsConfig *configv1.DNS,
 	generation int64,
 	gwstatus *gatewayapiv1.GatewayStatus,
 	listenerToHostname map[gatewayapiv1.SectionName]gatewayapiv1.Hostname,
-	hostnameToDNSRecord map[string]*iov1.DNSRecord) {
+	hostnameToDNSRecord map[string]*iov1.DNSRecord, attachedListeners ...[]metav1.Condition) {
 	// During the fetch of dnsRecord, it can come back as an empty structure instead
 	// of a null resource. In this case, we turn it into "null" again to keep
 	// the compatibility with ComputeLoadBalancerStatus
@@ -28,17 +28,6 @@ func ComputeGatewayAPIDNSStatus(dnsConfig *configv1.DNS,
 	if gwstatus == nil || listenerToHostname == nil || hostnameToDNSRecord == nil {
 		return
 	}
-
-	gatewayDNSStatus := metav1.Condition{
-		Type:               operatorv1.DNSReadyIngressConditionType,
-		Status:             metav1.ConditionStatus(operatorv1.ConditionTrue),
-		Reason:             "AllListenersReady",
-		Message:            "All the listeners have DNS ready",
-		ObservedGeneration: generation,
-	}
-
-	hasFailedDNS := false
-	hasDNSonListener := false
 
 	for i, listener := range gwstatus.Listeners {
 		hostname, listenerHasHostname := listenerToHostname[listener.Name]
@@ -54,37 +43,67 @@ func ComputeGatewayAPIDNSStatus(dnsConfig *configv1.DNS,
 			dnsRecord = nil
 		}
 
-		ingressConditions := ComputeDNSStatus(nil, dnsRecord, nil, dnsConfig, true)
-		for _, condition := range ingressConditions {
-			// In case at least one DNSReady is not true, we must add the .status.conditions DNSReady
-			if condition.Status != operatorv1.ConditionTrue {
-				hasFailedDNS = true
-			}
-			gwCondition := metav1.Condition{
-				Type:               condition.Type,
-				Status:             metav1.ConditionStatus(condition.Status),
-				Reason:             condition.Reason,
-				Message:            condition.Message,
-				ObservedGeneration: generation,
-			}
-			// once we set the first DNSReady, we can add a DNSReady, otherwise we
-			// must also remove the condition from main gateway .status.conditions
-			hasDNSonListener = true
+		for _, gwCondition := range gatewayAPIDNSConditions(dnsConfig, dnsRecord, generation) {
 			condutils.SetStatusCondition(&gwstatus.Listeners[i].Conditions, gwCondition)
 		}
 	}
 
-	if hasDNSonListener {
-		if hasFailedDNS {
-			gatewayDNSStatus.Status = metav1.ConditionStatus(operatorv1.ConditionFalse)
-			gatewayDNSStatus.Reason = "SomeListenersNotReady"
-			gatewayDNSStatus.Message = "One or more listeners have DNS provisioning issues"
-		}
-		condutils.SetStatusCondition(&gwstatus.Conditions, gatewayDNSStatus)
-	} else {
-		condutils.RemoveStatusCondition(&gwstatus.Conditions, operatorv1.DNSReadyIngressConditionType)
+	for _, listener := range gwstatus.Listeners {
+		attachedListeners = append(attachedListeners, listener.Conditions)
 	}
+	AggregateGatewayAPIDNSStatus(&gwstatus.Conditions, generation, attachedListeners...)
+}
 
+func gatewayAPIDNSConditions(dnsConfig *configv1.DNS, dnsRecord *iov1.DNSRecord, generation int64) []metav1.Condition {
+	if dnsRecord != nil && dnsRecord.Name == "" {
+		dnsRecord = nil
+	}
+	var conditions []metav1.Condition
+	for _, condition := range ComputeDNSStatus(nil, dnsRecord, nil, dnsConfig, true) {
+		conditions = append(conditions, metav1.Condition{
+			Type: condition.Type, Status: metav1.ConditionStatus(condition.Status),
+			Reason: condition.Reason, Message: condition.Message, ObservedGeneration: generation,
+		})
+	}
+	return conditions
+}
+
+// ComputeListenerSetDNSStatus changes only DNSReady, leaving Istio's status intact.
+func ComputeListenerSetDNSStatus(dnsConfig *configv1.DNS, ls *gatewayapiv1.ListenerSet, hostnames map[gatewayapiv1.SectionName]gatewayapiv1.Hostname, records map[string]*iov1.DNSRecord) {
+	var listenerConditions [][]metav1.Condition
+	for index := range ls.Status.Listeners {
+		listener := &ls.Status.Listeners[index]
+		if hostname, found := hostnames[listener.Name]; found {
+			for _, condition := range gatewayAPIDNSConditions(dnsConfig, records[string(hostname)], ls.Generation) {
+				condutils.SetStatusCondition(&listener.Conditions, condition)
+			}
+		} else {
+			condutils.RemoveStatusCondition(&listener.Conditions, operatorv1.DNSReadyIngressConditionType)
+		}
+		listenerConditions = append(listenerConditions, listener.Conditions)
+	}
+	AggregateGatewayAPIDNSStatus(&ls.Status.Conditions, ls.Generation, listenerConditions...)
+}
+
+// AggregateGatewayAPIDNSStatus includes only listeners with managed DNS status.
+func AggregateGatewayAPIDNSStatus(conditions *[]metav1.Condition, generation int64, listeners ...[]metav1.Condition) {
+	aggregate := metav1.Condition{Type: operatorv1.DNSReadyIngressConditionType, Status: metav1.ConditionTrue, Reason: "AllListenersReady", Message: "All the listeners have DNS ready", ObservedGeneration: generation}
+	hasDNS := false
+	for _, listener := range listeners {
+		condition := condutils.FindStatusCondition(listener, operatorv1.DNSReadyIngressConditionType)
+		if condition == nil {
+			continue
+		}
+		hasDNS = true
+		if condition.Status != metav1.ConditionTrue {
+			aggregate.Status, aggregate.Reason, aggregate.Message = metav1.ConditionFalse, "SomeListenersNotReady", "One or more listeners have DNS provisioning issues"
+		}
+	}
+	if hasDNS {
+		condutils.SetStatusCondition(conditions, aggregate)
+	} else {
+		condutils.RemoveStatusCondition(conditions, aggregate.Type)
+	}
 }
 
 // ComputeGatewayAPILoadBalancerStatus will update inplace LoadBalancer conditions

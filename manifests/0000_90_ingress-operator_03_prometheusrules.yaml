@@ -88,15 +88,15 @@ spec:
             AWS NLB that may have hairpin connection failures. Connections from pods to routes
             served by router pods on the same node may time out. Set the NLB protocol field to
             PROXY to fix, or TCP to keep current behavior. See the alert description for commands.
-      - alert: ListenerSetOnManagedGateway
-        expr: ingress_operator_listenerset_on_managed_gateway == 1
+      - alert: GatewayAPIListenerConflicts
+        expr: gateway_api_dns_conflicts > 0
         for: 5m
         labels:
           severity: info
         annotations:
-          summary: ListenerSet targeting an OpenShift-managed Gateway detected
-          description: "This alert fires when a ListenerSet resource targets an OpenShift-managed Gateway. ListenerSets are not supported by the OpenShift Gateway API implementation. Remove the ListenerSet or retarget it to a non-OpenShift-managed Gateway."
-          message: "ListenerSet {{ $labels.listenerset_namespace }}/{{ $labels.listenerset_name }} is targeting an OpenShift-managed Gateway and will not be reconciled. On a future upgrade, this ListenerSet may become active and could cause unexpected traffic routing."
+          summary: Gateway API ListenerSet has conflicting listeners
+          description: "Istio reports conflicting ListenerSet listeners. Inspect their Conflicted conditions and correct the listener configuration. Non-conflicting listeners continue to operate."
+          message: "ListenerSet {{ $labels.listenerset_namespace }}/{{ $labels.listenerset_name }} has {{ $value }} conflicting listeners."
       - alert: GatewayAPIUnmanagedCRDsFound
         expr: ingress_controller_gateway_api_unmanaged_crds == 1
         for: 1h
