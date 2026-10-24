@@ -20,8 +20,13 @@ const (
 )
 
 func TestComputeListenerSetDNSStatus(t *testing.T) {
-	for _, hostname := range []string{"*.example.com", "unexistent.example.com", "failedzone.example.com", "unmanaged.example.com"} {
-		t.Run(hostname, func(t *testing.T) {
+	for _, scenario := range []struct{ name, hostname string }{
+		{"published", "*.example.com"},
+		{"missing record", "unexistent.example.com"},
+		{"failed zone", "failedzone.example.com"},
+		{"unmanaged DNS", "unmanaged.example.com"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			listenerSet := &gatewayapiv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Generation: 7}, Status: gatewayapiv1.ListenerSetStatus{
 				Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}, {Type: "Programmed", Status: metav1.ConditionTrue}},
 				Listeners: []gatewayapiv1.ListenerEntryStatus{
@@ -29,7 +34,7 @@ func TestComputeListenerSetDNSStatus(t *testing.T) {
 					{Name: "mixed", Conditions: []metav1.Condition{{Type: "Conflicted", Status: metav1.ConditionFalse}}},
 				},
 			}}
-			hostnames := map[gatewayapiv1.SectionName]gatewayapiv1.Hostname{"good": "*.example.com", "mixed": gatewayapiv1.Hostname(hostname)}
+			hostnames := map[gatewayapiv1.SectionName]gatewayapiv1.Hostname{"good": "*.example.com", "mixed": gatewayapiv1.Hostname(scenario.hostname)}
 			status.ComputeListenerSetDNSStatus(defaultDNSConfig, listenerSet, hostnames, hostnameToDNSRecord)
 			require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[0].Conditions, "DNSReady"))
 			require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "Accepted"))
@@ -37,7 +42,7 @@ func TestComputeListenerSetDNSStatus(t *testing.T) {
 			require.True(t, meta.IsStatusConditionFalse(listenerSet.Status.Listeners[1].Conditions, "Conflicted"))
 			condition := meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady")
 			require.Equal(t, int64(7), condition.ObservedGeneration)
-			require.Equal(t, hostname == "*.example.com", condition.Status == metav1.ConditionTrue)
+			require.Equal(t, scenario.hostname == "*.example.com", condition.Status == metav1.ConditionTrue)
 			before := listenerSet.DeepCopy()
 			status.ComputeListenerSetDNSStatus(defaultDNSConfig, listenerSet, hostnames, hostnameToDNSRecord)
 			require.Equal(t, before.Status, listenerSet.Status, "status must be idempotent")

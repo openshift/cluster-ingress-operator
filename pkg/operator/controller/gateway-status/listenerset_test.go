@@ -64,6 +64,11 @@ func TestListenerSetStatusAndMetrics(t *testing.T) {
 	before := listenerSet.DeepCopy()
 	reconcileStatus()
 	require.Equal(t, before.Status, listenerSet.Status)
+	record := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: "noncanonical-record", Namespace: parent.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: parent.Name}}, Spec: iov1.DNSRecordSpec{DNSName: "EXAMPLE.com.", DNSManagementPolicy: iov1.ManagedDNS}, Status: iov1.DNSRecordStatus{Zones: []iov1.DNSZoneStatus{{DNSZone: configv1.DNSZone{ID: "zone"}, Conditions: []iov1.DNSZoneCondition{{Type: "Published", Status: "True"}}}}}}
+	require.NoError(t, cl.Create(ctx, record))
+	reconcileStatus()
+	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[0].Conditions, "DNSReady"), "status lookup must use normalized DNSName, not the object's name")
+	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "DNSReady"))
 	listenerSet.Status.Listeners[1].Conditions[0].Status = metav1.ConditionFalse
 	require.NoError(t, cl.Status().Update(ctx, listenerSet))
 	reconcileStatus()

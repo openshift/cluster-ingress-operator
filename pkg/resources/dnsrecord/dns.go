@@ -71,6 +71,9 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 	if err != nil {
 		return false, nil, err
 	}
+	if wantWC && haveWC && (len(current.OwnerReferences) != 1 || !cmp.Equal(current.OwnerReferences[0], ownerRef, cmpopts.IgnoreFields(metav1.OwnerReference{}, "Controller", "BlockOwnerDeletion")) || !current.DeletionTimestamp.IsZero()) {
+		return true, current, fmt.Errorf("cannot update DNSRecord claim: verify Service ownership and pending deletion")
+	}
 
 	switch {
 	case wantWC && !haveWC:
