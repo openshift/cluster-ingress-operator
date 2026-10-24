@@ -208,6 +208,9 @@ type Config struct {
 	// resources.  The gatewayapi controller starts these controllers once
 	// the Gateway API CRDs have been created.
 	DependentControllers []controller.Controller
+
+	// ListenerSetIndexer uses the all-namespace cache, not the manager's namespace-limited cache.
+	ListenerSetIndexer client.FieldIndexer
 }
 
 // reconciler reconciles gatewayclasses.
@@ -512,7 +515,11 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 	}
 	if !r.listenerSetIndexed {
 		// Index ListenerSets by parent Gateway after CRDs are installed.
-		if err := r.fieldIndexer.IndexField(
+		indexer := r.config.ListenerSetIndexer
+		if indexer == nil {
+			indexer = r.fieldIndexer
+		}
+		if err := indexer.IndexField(
 			ctx,
 			&gatewayapiv1.ListenerSet{},
 			operatorcontroller.ListenerSetParentGatewayIndex,

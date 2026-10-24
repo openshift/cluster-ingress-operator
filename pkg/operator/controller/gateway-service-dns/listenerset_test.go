@@ -46,6 +46,7 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	mode.SetCRDsEstablished(true)
 	r := &reconciler{config: Config{OperandNamespace: parent.Namespace}, client: cl, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, modeAccessor: mode}
+	r.listenerSetCache = r.cache
 	check := func(expected int) {
 		t.Helper()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
@@ -114,6 +115,8 @@ func TestDuplicateDNSRecordCreation(t *testing.T) {
 	errors := r.ensureDNSRecordsForGateway(context.Background(), parent, &corev1.Service{}, []string{"same.example.com."}, nil, nil)
 	require.Len(t, errors, 1)
 	require.ErrorContains(t, errors[0], "duplicate DNSRecord")
+	require.NotContains(t, errors[0].Error(), "same.example.com")
+	require.NotContains(t, errors[0].Error(), existing.Name)
 	var records iov1.DNSRecordList
 	require.NoError(t, cl.List(context.Background(), &records))
 	require.Len(t, records.Items, 1, "must not create another record for an already represented hostname")
