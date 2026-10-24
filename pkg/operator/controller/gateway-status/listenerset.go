@@ -39,13 +39,13 @@ type listenerSetReconciler struct {
 	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
 }
 
-func NewListenerSetUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
-	reconciler := &listenerSetReconciler{client: mgr.GetClient(), cache: mgr.GetCache(), modeAccessor: modeAccessor}
+func NewListenerSetUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor, listenerSetCache cache.Cache) (controller.Controller, error) {
+	reconciler := &listenerSetReconciler{client: mgr.GetClient(), cache: listenerSetCache, modeAccessor: modeAccessor}
 	ctrl, err := controller.NewUnmanaged("listenerset_dns_status_controller", controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
-	if err := ctrl.Watch(source.Kind[client.Object](mgr.GetCache(), &gatewayapiv1.ListenerSet{}, &handler.EnqueueRequestForObject{})); err != nil {
+	if err := ctrl.Watch(source.Kind[client.Object](listenerSetCache, &gatewayapiv1.ListenerSet{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
 	parentToListenerSets := func(ctx context.Context, object client.Object) []reconcile.Request {
@@ -62,7 +62,7 @@ func NewListenerSetUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroll
 	}
 	allListenerSets := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		var listenerSets gatewayapiv1.ListenerSetList
-		if err := mgr.GetCache().List(ctx, &listenerSets); err != nil {
+		if err := listenerSetCache.List(ctx, &listenerSets); err != nil {
 			logger.Error(err, "failed to list ListenerSets")
 			return nil
 		}
@@ -163,7 +163,7 @@ func dnsRecordsForGateway(ctx context.Context, reader client.Reader, parent type
 	for _, record := range records.Items {
 		hostname := operatorcontroller.NormalizeDNSHostname(record.Spec.DNSName)
 		if previous := byHostname[hostname]; previous != nil {
-			return nil, fmt.Errorf("duplicate DNSRecords %s and %s for hostname %s", previous.Name, record.Name, hostname)
+			return nil, fmt.Errorf("duplicate DNSRecords for Gateway %s", parent)
 		}
 		byHostname[hostname] = record.DeepCopy()
 	}

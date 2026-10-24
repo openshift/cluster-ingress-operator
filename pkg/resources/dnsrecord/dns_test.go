@@ -1,9 +1,16 @@
 package dnsrecord
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -16,6 +23,30 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
+
+func TestEnsureDNSRecordLogsOnlyMetadata(t *testing.T) {
+	core, entries := observer.New(zap.InfoLevel)
+	originalLog := log
+	log = zapr.NewLogger(zap.New(core))
+	t.Cleanup(func() { log = originalLog })
+	scheme := runtime.NewScheme()
+	require.NoError(t, iov1.AddToScheme(scheme))
+	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+	name := types.NamespacedName{Namespace: "ingress", Name: "gateway-record"}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "service"}, Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{Hostname: "target.example.test"}}}}}
+	for _, hostname := range []string{"first.example.test", "second.example.test"} {
+		_, _, err := EnsureDNSRecord(cl, name, nil, metav1.OwnerReference{}, hostname, iov1.ManagedDNS, service)
+		require.NoError(t, err)
+	}
+	service.Status.LoadBalancer.Ingress = nil
+	_, _, err := EnsureDNSRecord(cl, name, nil, metav1.OwnerReference{}, "second.example.test", iov1.ManagedDNS, service)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, entries.Len(), 3)
+	for _, entry := range entries.All() {
+		require.NotContains(t, fmt.Sprint(entry.ContextMap()), "example.test")
+		require.NotContains(t, entry.ContextMap(), "diff")
+	}
+}
 
 func Test_desiredWildcardDNSRecord(t *testing.T) {
 	tests := []struct {

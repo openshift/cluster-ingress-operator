@@ -60,7 +60,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 var (
@@ -177,9 +176,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Scheme:  scheme,
 		Metrics: metricsOpts,
 		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&gatewayapiv1.ListenerSet{}: {Namespaces: map[string]cache.Config{cache.AllNamespaces: {}}},
-			},
 			DefaultNamespaces: map[string]cache.Config{
 				config.Namespace: {},
 				operatorcontroller.GlobalUserSpecifiedConfigNamespace:    {},
@@ -376,9 +372,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the Service DNS controller.  This controller is unmanaged by
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
+	listenerSetCache, err := newListenerSetCache(mgr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ListenerSet cache: %w", err)
+	}
 	gatewayServiceDNSController, err := gatewayservicednscontroller.NewUnmanaged(mgr, gatewayservicednscontroller.Config{
 		OperandNamespace: operatorcontroller.DefaultOperandNamespace,
-	}, modeAccessor)
+	}, modeAccessor, listenerSetCache)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-service-dns controller: %v", err)
 	}
@@ -390,7 +390,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 
 	// Set up the gateway-status controller.
-	gatewayStatusController, err := gatewaystatuscontroller.NewUnmanaged(mgr, modeAccessor)
+	gatewayStatusController, err := gatewaystatuscontroller.NewUnmanaged(mgr, modeAccessor, listenerSetCache)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-status controller: %w", err)
 	}
@@ -400,7 +400,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
 	}
 
-	listenerSetStatusController, err := gatewaystatuscontroller.NewListenerSetUnmanaged(mgr, modeAccessor)
+	listenerSetStatusController, err := gatewaystatuscontroller.NewListenerSetUnmanaged(mgr, modeAccessor, listenerSetCache)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ListenerSet DNS status controller: %w", err)
 	}
@@ -420,6 +420,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			gatewayNetworkPolicyController,
 			listenerSetStatusController,
 		},
+		ListenerSetIndexer: listenerSetCache,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}
@@ -431,6 +432,20 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		client:    mgr.GetClient(),
 		namespace: config.Namespace,
 	}, nil
+}
+
+// newListenerSetCache defers CRD discovery until post-establishment indexing.
+func newListenerSetCache(mgr manager.Manager) (cache.Cache, error) {
+	listenerSets, err := cache.New(mgr.GetConfig(), cache.Options{
+		Scheme: mgr.GetScheme(), Mapper: mgr.GetRESTMapper(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := mgr.Add(listenerSets); err != nil {
+		return nil, err
+	}
+	return listenerSets, nil
 }
 
 // Start creates the default IngressController and then starts the operator

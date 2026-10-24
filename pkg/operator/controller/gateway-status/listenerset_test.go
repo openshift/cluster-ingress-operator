@@ -10,6 +10,7 @@ import (
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -111,4 +112,35 @@ func TestDuplicateGatewayDNSRecords(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(records...).Build()
 	_, err := dnsRecordsForGateway(context.Background(), cl, client.ObjectKey{Namespace: "ingress", Name: "gateway"})
 	require.ErrorContains(t, err, "duplicate DNSRecords")
+	require.NotContains(t, err.Error(), "same.example.com")
+}
+
+func TestForeignGatewayStatusIsUntouched(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.AddToScheme(scheme))
+	require.NoError(t, configv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, iov1.AddToScheme(scheme))
+	class := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "foreign"}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: "example.com/other-controller"}}
+	gateway := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "foreign", Namespace: operatorcontroller.DefaultOperandNamespace}, Spec: gatewayapiv1.GatewaySpec{GatewayClassName: "foreign"}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(gateway).WithObjects(class, gateway, &configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}).
+		WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
+		WithIndex(&corev1.Event{}, "involvedObject.apiVersion", func(client.Object) []string { return nil }).
+		WithIndex(&corev1.Event{}, "involvedObject.kind", func(client.Object) []string { return nil }).
+		WithIndex(&corev1.Event{}, "involvedObject.uid", func(client.Object) []string { return nil }).
+		WithIndex(&corev1.Event{}, "source", func(client.Object) []string { return nil }).Build()
+	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
+	mode.SetCRDsEstablished(true)
+	r := &reconciler{client: cl, cache: testutil.FakeCache{Reader: cl}, eventreader: cl, modeAccessor: mode}
+	before := gateway.DeepCopy()
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(gateway), before))
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(gateway)})
+	require.NoError(t, err)
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(gateway), gateway))
+	require.Equal(t, before, gateway, "foreign Gateway must not be patched")
+	listenerSet := &gatewayapiv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant"}, Spec: gatewayapiv1.ListenerSetSpec{ParentRef: gatewayapiv1.ParentGatewayReference{Name: "foreign", Namespace: ptr.To(gatewayapiv1.Namespace(gateway.Namespace))}}}
+	require.Empty(t, r.requestsForListenerSet(context.Background(), listenerSet))
+	class.Spec.ControllerName = operatorcontroller.OpenShiftGatewayClassControllerName
+	require.NoError(t, cl.Update(context.Background(), class))
+	require.Equal(t, []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(gateway)}}, r.requestsForListenerSet(context.Background(), listenerSet))
 }

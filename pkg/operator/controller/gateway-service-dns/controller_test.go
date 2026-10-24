@@ -271,9 +271,10 @@ func Test_Reconcile(t *testing.T) {
 				config: Config{
 					OperandNamespace: "openshift-ingress",
 				},
-				cache:        cache,
-				client:       cl,
-				modeAccessor: testModeAccessor,
+				cache:            cache,
+				listenerSetCache: cache,
+				client:           cl,
+				modeAccessor:     testModeAccessor,
 			}
 			res, err := reconciler.Reconcile(context.Background(), tc.reconcileRequest)
 			if tc.expectError == "" {

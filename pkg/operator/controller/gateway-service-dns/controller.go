@@ -45,14 +45,15 @@ var log = logf.Logger.WithName(controllerName)
 // NewUnmanaged creates and returns a controller that watches services that are
 // associated with gateways and creates dnsrecord objects for them.  This is an
 // unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor, listenerSetCache cache.Cache) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		config:       config,
-		client:       mgr.GetClient(),
-		cache:        operatorCache,
-		recorder:     mgr.GetEventRecorderFor(controllerName),
-		modeAccessor: modeAccessor,
+		config:           config,
+		client:           mgr.GetClient(),
+		cache:            operatorCache,
+		listenerSetCache: listenerSetCache,
+		recorder:         mgr.GetEventRecorderFor(controllerName),
+		modeAccessor:     modeAccessor,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -85,7 +86,7 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 		return nil, err
 	}
 	// The map handler visits both old and new objects on reparenting.
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForListenerSet), modeAccessor.DependentPredicate())); err != nil {
+	if err := c.Watch(source.Kind[client.Object](listenerSetCache, &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForListenerSet), modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace, modeAccessor.DependentPredicate())); err != nil {
@@ -162,10 +163,11 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client       client.Client
-	cache        cache.Cache
-	recorder     record.EventRecorder
-	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
+	client           client.Client
+	cache            cache.Cache
+	listenerSetCache cache.Cache
+	recorder         record.EventRecorder
+	modeAccessor     *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // Reconcile expects request to refer to a service and creates or reconciles a
@@ -223,7 +225,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	domains := getGatewayHostnames(&gateway)
 	var listenerSets gatewayapiv1.ListenerSetList
-	if err := r.cache.List(ctx, &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: gatewayName.String()}); err != nil {
+	if err := r.listenerSetCache.List(ctx, &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: gatewayName.String()}); err != nil {
 		return reconcile.Result{}, err
 	}
 	if len(listenerSets.Items) > 0 && operatorcontroller.GatewayHasOurController(log, r.client, false)(&gateway) {
@@ -269,7 +271,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		domain := operatorcontroller.NormalizeDNSHostname(record.Spec.DNSName) + "."
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 		if desiredDomains.Has(domain) && record.Name != name.Name {
-			return []error{fmt.Errorf("duplicate DNSRecord for hostname %s: existing %s, desired %s", domain, record.Name, name.Name)}
+			return []error{fmt.Errorf("duplicate DNSRecords for Gateway %s/%s", gateway.Namespace, gateway.Name)}
 		}
 	}
 	labels := map[string]string{

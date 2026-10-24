@@ -55,7 +55,7 @@ type reconciler struct {
 // Services, DNSRecords and Gateways and when managed, adds the proper status
 // conditions to these Gateways.
 // This is an unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor, listenerSetCache cache.Cache) (controller.Controller, error) {
 	// Create a dedicated cache for this controller to watch resources only in the
 	// "openshift-ingress" namespace. Using the operator's main cache would cause it
 	// to watch Gateways, Services, and DNSRecords in all namespaces, which would
@@ -94,7 +94,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 
 	reconciler := &reconciler{
 		cache:            gatewaysCache,
-		listenerSetCache: mgr.GetCache(),
+		listenerSetCache: listenerSetCache,
 		client:           mgr.GetClient(),
 		eventreader:      mgr.GetAPIReader(),
 		modeAccessor:     modeAccessor,
@@ -133,10 +133,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &iov1.DNSRecord{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing dnsrecord watcher: %w", err)
 	}
-	listenerSetToGateway := func(_ context.Context, object client.Object) []reconcile.Request {
-		return []reconcile.Request{{NamespacedName: operatorcontroller.ListenerSetParent(object.(*gatewayapiv1.ListenerSet))}}
-	}
-	if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(listenerSetToGateway), modeAccessor.DependentPredicate())); err != nil {
+	if err := c.Watch(source.Kind[client.Object](listenerSetCache, &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForListenerSet), modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
 
@@ -155,6 +152,22 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	}
 
 	return c, nil
+}
+
+func (r *reconciler) requestsForListenerSet(ctx context.Context, object client.Object) []reconcile.Request {
+	parent := operatorcontroller.ListenerSetParent(object.(*gatewayapiv1.ListenerSet))
+	if parent.Namespace != operatorcontroller.DefaultOperandNamespace {
+		return nil
+	}
+	var gateway gatewayapiv1.Gateway
+	if err := r.cache.Get(ctx, parent, &gateway); err != nil {
+		logger.Error(err, "failed to fetch ListenerSet parent Gateway", "gateway", parent)
+		return nil
+	}
+	if !operatorcontroller.GatewayHasOurController(logger, r.client, false)(&gateway) {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: parent}}
 }
 
 // normalizeHostname removes the trailing root dot from a hostname for consistent matching.
@@ -180,6 +193,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.cache.Get(ctx, request.NamespacedName, sourceGateway); err != nil {
 		log.Error(err, "error fetching the gateway object")
 		return reconcile.Result{}, client.IgnoreNotFound(err)
+	}
+	if !operatorcontroller.GatewayHasOurController(log, r.client, false)(sourceGateway) {
+		return reconcile.Result{}, nil
 	}
 
 	gateway := sourceGateway.DeepCopy()
