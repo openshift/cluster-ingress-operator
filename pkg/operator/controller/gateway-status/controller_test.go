@@ -963,6 +963,7 @@ func Test_Reconcile(t *testing.T) {
 			ctx := context.Background()
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
+				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 				WithRuntimeObjects(tc.existingObjects...).
 				WithStatusSubresource(&gatewayapiv1.Gateway{}).
 				WithIndex(&corev1.Event{}, "involvedObject.apiVersion", fakeEventLister("apiVersion")).
@@ -1079,6 +1080,7 @@ func TestReconcileTransition(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 		WithRuntimeObjects(existingObjects...).
 		WithStatusSubresource(&gatewayapiv1.Gateway{}).
 		WithIndex(&corev1.Event{}, "involvedObject.apiVersion", fakeEventLister).

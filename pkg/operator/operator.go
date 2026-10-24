@@ -43,7 +43,6 @@ import (
 	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 	"github.com/openshift/library-go/pkg/operator/events"
 
@@ -61,6 +60,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 var (
@@ -177,6 +177,9 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Scheme:  scheme,
 		Metrics: metricsOpts,
 		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&gatewayapiv1.ListenerSet{}: {Namespaces: map[string]cache.Config{cache.AllNamespaces: {}}},
+			},
 			DefaultNamespaces: map[string]cache.Config{
 				config.Namespace: {},
 				operatorcontroller.GlobalUserSpecifiedConfigNamespace:    {},
@@ -397,9 +400,9 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
 	}
 
-	listenerSetStatusController, err := listenersetstatuscontroller.NewUnmanaged(mgr, modeAccessor)
+	listenerSetStatusController, err := gatewaystatuscontroller.NewListenerSetUnmanaged(mgr, modeAccessor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create listenerset-status controller: %w", err)
+		return nil, fmt.Errorf("failed to create ListenerSet DNS status controller: %w", err)
 	}
 
 	// Set up the gatewayapi controller.

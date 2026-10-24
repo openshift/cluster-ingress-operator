@@ -3,7 +3,6 @@ package gatewaystatus
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
@@ -40,8 +39,9 @@ var logger = logf.Logger.WithName(controllerName)
 
 // reconciler reconciles gateways, adding missing conditions to the resource
 type reconciler struct {
-	cache  cache.Cache
-	client client.Client
+	cache            cache.Cache
+	listenerSetCache cache.Cache
+	client           client.Client
 	// eventreader must be a direct API call because we want to get the latest events
 	// that may not be yet on the lister/cache
 	// today we could read directly from client.Client because it is constructed
@@ -93,10 +93,11 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	}
 
 	reconciler := &reconciler{
-		cache:        gatewaysCache,
-		client:       mgr.GetClient(),
-		eventreader:  mgr.GetAPIReader(),
-		modeAccessor: modeAccessor,
+		cache:            gatewaysCache,
+		listenerSetCache: mgr.GetCache(),
+		client:           mgr.GetClient(),
+		eventreader:      mgr.GetAPIReader(),
+		modeAccessor:     modeAccessor,
 	}
 	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -132,6 +133,12 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &iov1.DNSRecord{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing dnsrecord watcher: %w", err)
 	}
+	listenerSetToGateway := func(_ context.Context, object client.Object) []reconcile.Request {
+		return []reconcile.Request{{NamespacedName: operatorcontroller.ListenerSetParent(object.(*gatewayapiv1.ListenerSet))}}
+	}
+	if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(listenerSetToGateway), modeAccessor.DependentPredicate())); err != nil {
+		return nil, err
+	}
 
 	// Watch the Ingress CR for mode changes. Any change to the Ingress
 	// CR triggers re-evaluation of all gateways so that dependent
@@ -153,7 +160,7 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 // normalizeHostname removes the trailing root dot from a hostname for consistent matching.
 // This ensures that "example.com" and "example.com." are treated as equivalent.
 func normalizeHostname(hostname string) string {
-	return strings.TrimSuffix(hostname, ".")
+	return operatorcontroller.NormalizeDNSHostname(hostname)
 }
 
 // Reconcile expects request to refer to a gateway and adds Openshift DNS and LoadBalancer
@@ -163,6 +170,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	log.Info("Reconciling gateway")
 	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
 		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
+		return reconcile.Result{}, nil
+	}
+	if request.Namespace != operatorcontroller.DefaultOperandNamespace {
 		return reconcile.Result{}, nil
 	}
 
@@ -196,27 +206,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// Because we will have multiple DNS records per Gateway (one per listener)
 	// we need all of the records that belong to a Gateway
-	childDNSRecords := &iov1.DNSRecordList{}
-	if err := r.cache.List(ctx, childDNSRecords, listOpts...); err != nil {
-		log.Error(err, "error fetching the dnsrecords from gateway")
-		errs = append(errs, fmt.Errorf("failed to list dnsrecords for gateway %s/%s: %w", gateway.Namespace, gateway.Name, err))
-	} else if len(childDNSRecords.Items) == 0 {
-		log.Info("no dnsrecords found for gateway")
-	}
-
-	// hostnameToDNSRecord will be used to verify that, given a listener, when it has a hostname
-	// what is the matching dnsRecord of it.
-	// This is required to cross-check the status of a specific DNSRecord from a hostname
-	hostnameToDNSRecord := make(map[string]*iov1.DNSRecord)
-	for _, dnsRecord := range childDNSRecords.Items {
-		hostname := normalizeHostname(dnsRecord.Spec.DNSName)
-		if existing, found := hostnameToDNSRecord[hostname]; found {
-			log.Info("duplicate DNSRecord found for hostname, using latest",
-				"hostname", hostname,
-				"existing", existing.Name,
-				"new", dnsRecord.Name)
-		}
-		hostnameToDNSRecord[hostname] = dnsRecord.DeepCopy()
+	hostnameToDNSRecord, err := dnsRecordsForGateway(ctx, r.cache, request.NamespacedName)
+	if err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// listenerToHostname will be used when verifying a Gateway Listener status,
@@ -260,7 +252,21 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// The Gateway API specification limits Gateway status conditions to maxGatewayConditions (8).
 	// If other controllers (e.g., Istio) are adding conditions, we need to ensure we don't exceed this limit.
 	status.ComputeGatewayAPILoadBalancerStatus(childSvc, operandEvents.Items, gateway.GetGeneration(), &gateway.Status.Conditions)
-	status.ComputeGatewayAPIDNSStatus(dnsConfig, gateway.GetGeneration(), &gateway.Status, listenerToHostname, hostnameToDNSRecord)
+	listenerConditions := [][]metav1.Condition{}
+	listenerSetCache := r.listenerSetCache
+	if listenerSetCache == nil {
+		listenerSetCache = r.cache
+	}
+	var listenerSets gatewayapiv1.ListenerSetList
+	if err := listenerSetCache.List(ctx, &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: request.NamespacedName.String()}); err != nil {
+		return reconcile.Result{}, err
+	}
+	for index := range listenerSets.Items {
+		listenerSet := &listenerSets.Items[index]
+		status.ComputeListenerSetDNSStatus(dnsConfig, listenerSet, operatorcontroller.ListenerSetDNSHostnames(listenerSet), hostnameToDNSRecord)
+		listenerConditions = append(listenerConditions, listenerSet.Status.Conditions)
+	}
+	status.ComputeGatewayAPIDNSStatus(dnsConfig, gateway.Generation, &gateway.Status, listenerToHostname, hostnameToDNSRecord, listenerConditions...)
 
 	// Validate that we haven't exceeded the Gateway API condition limit
 	if len(gateway.Status.Conditions) > maxGatewayConditions {
@@ -276,7 +282,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		"conditionCount", len(gateway.Status.Conditions),
 		"conditions", gateway.Status.Conditions)
 
-	if err := r.client.Status().Patch(ctx, gateway, client.MergeFrom(sourceGateway)); err != nil {
+	if err := r.client.Status().Patch(ctx, gateway, client.MergeFromWithOptions(sourceGateway, client.MergeFromWithOptimisticLock{})); err != nil {
 		log.Error(err, "error patching the gateway status")
 		errs = append(errs, err)
 	}

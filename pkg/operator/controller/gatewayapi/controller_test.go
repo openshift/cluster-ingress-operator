@@ -32,7 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -406,7 +405,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 
 func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T) {
 	indexer := newRetryingFakeIndexer()
-	indexer.failures[listenersetstatuscontroller.ListenerSetParentGatewayIndex] = 1
+	indexer.failures[operatorcontroller.ListenerSetParentGatewayIndex] = 1
 	startCh := make(chan struct{}, 1)
 	ctrl := &testutil.FakeController{T: t, StartNotificationChan: startCh}
 	reconciler := &reconciler{
@@ -422,14 +421,14 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 	assert.False(t, reconciler.listenerSetIndexed)
 	assert.False(t, reconciler.controllersStarted)
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 1, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 1, indexer.calls[operatorcontroller.ListenerSetParentGatewayIndex])
 
 	assert.NoError(t, reconciler.ensureDependentControllers(context.Background()))
 	assert.True(t, reconciler.gatewayClassIndexed)
 	assert.True(t, reconciler.listenerSetIndexed)
 	assert.True(t, reconciler.controllersStarted)
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 2, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 2, indexer.calls[operatorcontroller.ListenerSetParentGatewayIndex])
 	select {
 	case <-startCh:
 	case <-time.After(time.Second):
@@ -438,7 +437,7 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 
 	assert.NoError(t, reconciler.ensureDependentControllers(context.Background()))
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 2, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 2, indexer.calls[operatorcontroller.ListenerSetParentGatewayIndex])
 	select {
 	case <-startCh:
 		t.Fatal("controller was started more than once")

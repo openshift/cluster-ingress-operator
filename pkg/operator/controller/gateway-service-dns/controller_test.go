@@ -253,6 +253,7 @@ func Test_Reconcile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
+				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
 			cl := &testutil.FakeClientRecorder{
