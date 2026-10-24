@@ -23,6 +23,8 @@ spec:
         - name: init-router
           # image is set at runtime.
           imagePullPolicy: IfNotPresent
+          securityContext:
+            readOnlyRootFilesystem: true
           terminationMessagePolicy: FallbackToLogsOnError
           command: ["/bin/bash", "-c", "cp -R -p /var/lib/haproxy/* /mnt/config/"]
           volumeMounts:
