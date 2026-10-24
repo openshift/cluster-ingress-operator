@@ -266,13 +266,11 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	if err := r.client.List(ctx, &existing, client.InNamespace(gateway.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name}); err != nil {
 		return []error{err}
 	}
-	desiredDomains := sets.NewString(domains...)
-	for _, record := range existing.Items {
+	recordsByDomain := map[string][]*iov1.DNSRecord{}
+	for index := range existing.Items {
+		record := &existing.Items[index]
 		domain := operatorcontroller.NormalizeDNSHostname(record.Spec.DNSName) + "."
-		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
-		if desiredDomains.Has(domain) && record.Name != name.Name {
-			return []error{fmt.Errorf("duplicate DNSRecords for Gateway %s/%s", gateway.Namespace, gateway.Name)}
-		}
+		recordsByDomain[domain] = append(recordsByDomain[domain], record)
 	}
 	labels := map[string]string{
 		operatorcontroller.GatewayNameLabelKey: gateway.Name,
@@ -289,6 +287,33 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
+		records := recordsByDomain[domain]
+		if len(records) > 1 {
+			errs = append(errs, fmt.Errorf("duplicate DNSRecords block desired record %s; remove the duplicate claim", name))
+			continue
+		}
+		if len(records) == 1 {
+			record := records[0]
+			if !dnsRecordOwnedByService(record, service) {
+				errs = append(errs, fmt.Errorf("duplicate DNSRecord would be created for desired record %s; existing claim is not owned by Service %s/%s", name, service.Namespace, service.Name))
+				continue
+			}
+			if !record.DeletionTimestamp.IsZero() {
+				errs = append(errs, fmt.Errorf("cannot ensure desired DNSRecord %s while its existing claim is terminating", name))
+				continue
+			}
+			name.Name = record.Name
+		} else {
+			var occupied iov1.DNSRecord
+			if err := r.client.Get(ctx, name, &occupied); !apierrors.IsNotFound(err) {
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to check desired DNSRecord %s: %w", name, err))
+				} else {
+					errs = append(errs, fmt.Errorf("cannot ensure desired DNSRecord %s; name is occupied by another claim", name))
+				}
+				continue
+			}
+		}
 		dnsPolicy := iov1.UnmanagedDNS
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
 			dnsPolicy = iov1.ManagedDNS
@@ -297,6 +322,14 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		errs = append(errs, err)
 	}
 	return errs
+}
+
+func dnsRecordOwnedByService(record *iov1.DNSRecord, service *corev1.Service) bool {
+	if record.Namespace != service.Namespace || service.UID == "" || len(record.OwnerReferences) != 1 {
+		return false
+	}
+	owner := record.OwnerReferences[0]
+	return owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service" && owner.Name == service.Name && owner.UID == service.UID
 }
 
 // deleteStaleDNSRecordsForGateway deletes any DNSRecord CRs that are associated
@@ -317,14 +350,14 @@ func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gatewa
 	}
 	var errs []error
 	for i := range dnsrecords.Items {
-		if domains.Has(dnsrecords.Items[i].Spec.DNSName) {
+		if domains.Has(operatorcontroller.NormalizeDNSHostname(dnsrecords.Items[i].Spec.DNSName) + ".") {
 			continue
 		}
-		name := types.NamespacedName{
-			Namespace: dnsrecords.Items[i].Namespace,
-			Name:      dnsrecords.Items[i].Name,
+		if !dnsRecordOwnedByService(&dnsrecords.Items[i], service) {
+			errs = append(errs, fmt.Errorf("cannot clean up DNSRecord claim for Gateway %s/%s; verify ownership by Service %s/%s", gateway.Namespace, gateway.Name, service.Namespace, service.Name))
+			continue
 		}
-		errs = append(errs, dnsrecord.DeleteDNSRecord(r.client, name))
+		errs = append(errs, client.IgnoreNotFound(r.client.Delete(ctx, &dnsrecords.Items[i], client.Preconditions{UID: &dnsrecords.Items[i].UID, ResourceVersion: &dnsrecords.Items[i].ResourceVersion})))
 	}
 	return errs
 }

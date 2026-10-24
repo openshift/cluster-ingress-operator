@@ -1,6 +1,7 @@
 package dnsrecord
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -23,6 +25,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
+
+func TestEnsureDNSRecordRejectsChangedOwnership(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, iov1.AddToScheme(scheme))
+	owner := metav1.OwnerReference{APIVersion: "v1", Kind: "Service", Name: "service", UID: "service-uid"}
+	service := &corev1.Service{Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{Hostname: "new-target.example.test"}}}}}
+	name := types.NamespacedName{Namespace: "ingress", Name: "record"}
+	_, record := desiredDNSRecord(name, nil, owner, "dns.example.test.", iov1.ManagedDNS, service)
+	record.OwnerReferences[0].UID = "foreign-uid"
+	record.Spec.Targets = []string{"old-target.example.test"}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(record).Build()
+	_, _, err := EnsureDNSRecord(cl, name, nil, owner, record.Spec.DNSName, iov1.ManagedDNS, service)
+	require.Error(t, err)
+	var unchanged iov1.DNSRecord
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(record), &unchanged))
+	require.Equal(t, record.Spec, unchanged.Spec)
+	require.Equal(t, record.OwnerReferences, unchanged.OwnerReferences)
+}
 
 func TestEnsureDNSRecordLogsOnlyMetadata(t *testing.T) {
 	core, entries := observer.New(zap.InfoLevel)
