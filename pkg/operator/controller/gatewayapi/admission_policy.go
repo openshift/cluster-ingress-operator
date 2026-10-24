@@ -8,7 +8,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -60,7 +60,7 @@ func desiredAdmissionPolicyForTopology(skipPodBound bool) *admissionregistration
 // reconciler retries. When the desired mode is Managed (or if the
 // Ingress CR was not found), this method is a no-op.
 func (r *reconciler) reconcileAdmissionPolicyTransition(ctx context.Context, snapshot ingressModeSnapshot) error {
-	if snapshot.desiredMode != operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
+	if snapshot.desiredMode != operatorv1.GatewayAPIManagementModeUnmanaged {
 		return nil
 	}
 

@@ -17,7 +17,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -237,7 +236,7 @@ func registerGatewayAPIIngressWatch(c controller.Controller, operatorCache cache
 	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "cluster"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isClusterIngress)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isClusterIngress)); err != nil {
 		return fmt.Errorf("failed to watch operator Ingress resource: %w", err)
 	}
 	return nil
