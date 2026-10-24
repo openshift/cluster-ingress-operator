@@ -1,6 +1,8 @@
 package status_test
 
 import (
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -16,6 +18,70 @@ import (
 const (
 	defaultZoneID = "xxxx"
 )
+
+func TestComputeListenerSetDNSStatus(t *testing.T) {
+	for _, scenario := range []struct{ name, hostname string }{
+		{"published", "*.example.com"},
+		{"missing record", "unexistent.example.com"},
+		{"failed zone", "failedzone.example.com"},
+		{"unmanaged DNS", "unmanaged.example.com"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			listenerSet := &gatewayapiv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Generation: 7}, Status: gatewayapiv1.ListenerSetStatus{
+				Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}, {Type: "Programmed", Status: metav1.ConditionTrue}},
+				Listeners: []gatewayapiv1.ListenerEntryStatus{
+					{Name: "good", Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}}},
+					{Name: "mixed", Conditions: []metav1.Condition{{Type: "Conflicted", Status: metav1.ConditionFalse}}},
+				},
+			}}
+			hostnames := map[gatewayapiv1.SectionName]gatewayapiv1.Hostname{"good": "*.example.com", "mixed": gatewayapiv1.Hostname(scenario.hostname)}
+			status.ComputeListenerSetDNSStatus(defaultDNSConfig, listenerSet, hostnames, hostnameToDNSRecord)
+			require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[0].Conditions, "DNSReady"))
+			require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "Accepted"))
+			require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "Programmed"))
+			require.True(t, meta.IsStatusConditionFalse(listenerSet.Status.Listeners[1].Conditions, "Conflicted"))
+			condition := meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady")
+			require.Equal(t, int64(7), condition.ObservedGeneration)
+			require.Equal(t, scenario.hostname == "*.example.com", condition.Status == metav1.ConditionTrue)
+			before := listenerSet.DeepCopy()
+			status.ComputeListenerSetDNSStatus(defaultDNSConfig, listenerSet, hostnames, hostnameToDNSRecord)
+			require.Equal(t, before.Status, listenerSet.Status, "status must be idempotent")
+			status.ComputeListenerSetDNSStatus(defaultDNSConfig, listenerSet, nil, nil)
+			require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady"))
+			for _, listener := range listenerSet.Status.Listeners {
+				require.Nil(t, meta.FindStatusCondition(listener.Conditions, "DNSReady"))
+			}
+			require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "Accepted"))
+		})
+	}
+}
+
+func TestGatewayAggregatesListenerSetDNS(t *testing.T) {
+	for _, inline := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ListenerSets only", true: "inline and ListenerSets"}[inline], func(t *testing.T) {
+			gatewayStatus := &gatewayapiv1.GatewayStatus{}
+			hostnames := map[gatewayapiv1.SectionName]gatewayapiv1.Hostname{}
+			if inline {
+				gatewayStatus.Listeners = []gatewayapiv1.ListenerStatus{{Name: "inline"}}
+				hostnames["inline"] = "*.example.com"
+			}
+			attached := []metav1.Condition{{Type: "DNSReady", Status: metav1.ConditionFalse, ObservedGeneration: 99}}
+			status.ComputeGatewayAPIDNSStatus(defaultDNSConfig, 4, gatewayStatus, hostnames, hostnameToDNSRecord, attached)
+			require.True(t, meta.IsStatusConditionFalse(gatewayStatus.Conditions, "DNSReady"))
+			require.Equal(t, int64(4), meta.FindStatusCondition(gatewayStatus.Conditions, "DNSReady").ObservedGeneration)
+			attached[0].Status = metav1.ConditionTrue
+			status.ComputeGatewayAPIDNSStatus(defaultDNSConfig, 4, gatewayStatus, hostnames, hostnameToDNSRecord, attached)
+			require.True(t, meta.IsStatusConditionTrue(gatewayStatus.Conditions, "DNSReady"))
+			before := gatewayStatus.DeepCopy()
+			status.ComputeGatewayAPIDNSStatus(defaultDNSConfig, 4, gatewayStatus, hostnames, hostnameToDNSRecord, attached)
+			require.Equal(t, before, gatewayStatus, "ListenerSet-only aggregation must not churn timestamps")
+			status.ComputeGatewayAPIDNSStatus(defaultDNSConfig, 4, gatewayStatus, hostnames, hostnameToDNSRecord)
+			if !inline {
+				require.Nil(t, meta.FindStatusCondition(gatewayStatus.Conditions, "DNSReady"))
+			}
+		})
+	}
+}
 
 var (
 	defaultDNSConfig = &configv1.DNS{
