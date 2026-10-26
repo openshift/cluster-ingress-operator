@@ -28,6 +28,39 @@ const (
 	// subscriptions, and only when creating a new subscription.
 	IngressOperatorOwnedAnnotation = "ingress.operator.openshift.io/owned"
 
+	// GatewayDNSManagementPolicyAnnotation is the key for an optional
+	// annotation on a Gateway API Gateway object that overrides the
+	// gateway-service-dns controller's automatic decision of whether to
+	// manage DNS for that gateway's listeners.
+	//
+	// This mirrors IngressController's
+	// spec.endpointPublishingStrategy.loadBalancer.dnsManagementPolicy
+	// field (operatorv1.LoadBalancerStrategy.DNSManagementPolicy), which
+	// takes the same two values, for the same purpose: an IngressController
+	// whose scope is Internal typically sets dnsManagementPolicy to
+	// "Unmanaged" so that the operator does not publish a DNSRecord at all,
+	// leaving DNS entirely to a separately-configured ExternalDNS CR that
+	// targets only the private zone. Gateway API cannot gain a new typed
+	// spec field of its own -- Gateway/GatewayClass are upstream Gateway
+	// API types that this operator does not own -- so the same override is
+	// expressed here as an annotation instead.
+	//
+	// Recognized values are "Managed" and "Unmanaged"
+	// (operatorv1.ManagedLoadBalancerDNS / operatorv1.UnmanagedLoadBalancerDNS).
+	// If the annotation is absent or set to any other value, the gateway
+	// keeps the default, pre-existing behavior: DNS management is decided
+	// solely by dnsrecord.ManageDNSForDomain (i.e. Managed whenever the
+	// listener's hostname is a subdomain of the cluster's base domain).
+	//
+	// When this annotation is set to "Unmanaged", the gateway-service-dns
+	// controller does not create (or continues to skip creating) a
+	// DNSRecord for the affected listener hostnames at all, exactly as
+	// IngressController does. As with router-internal, cluster admins are
+	// then responsible for publishing the hostname into whichever zone(s)
+	// they choose -- for example, via a dedicated ExternalDNS CR scoped to
+	// the private zone.
+	GatewayDNSManagementPolicyAnnotation = "ingress.operator.openshift.io/gateway-dns-management-policy"
+
 	// ControllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
 	ControllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
