@@ -3,6 +3,7 @@ package gateway_service_dns
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
@@ -67,7 +68,16 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 		return ok
 	})
 	gatewayListenersChanged := predicate.Funcs{
-		UpdateFunc: reconciler.gatewayListenersChanged,
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec
+			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec
+			// Policy and status changes can revoke ListenerSet DNS eligibility.
+			changed := gatewayListenersHostnamesChanged(old.Listeners, new.Listeners) || old.GatewayClassName != new.GatewayClassName || !reflect.DeepEqual(old.AllowedListeners, new.AllowedListeners) || !reflect.DeepEqual(e.ObjectOld.(*gatewayapiv1.Gateway).Status, e.ObjectNew.(*gatewayapiv1.Gateway).Status) || !reflect.DeepEqual(e.ObjectOld.GetDeletionTimestamp(), e.ObjectNew.GetDeletionTimestamp())
+			if changed {
+				log.Info("Gateway DNS inputs changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+			}
+			return changed
+		},
 	}
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetNamespace() == config.OperandNamespace
@@ -123,50 +133,22 @@ func (r *reconciler) requestsForListenerSet(ctx context.Context, object client.O
 	return r.requestsForGateway(ctx, &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: parent.Namespace, Name: parent.Name}})
 }
 
-func (r *reconciler) gatewayListeners(ctx context.Context, gateway *gatewayapiv1.Gateway) ([]gatewayapiv1.Listener, error) {
-	var listenerSets gatewayapiv1.ListenerSetList
-	if err := r.listenerSetCache.List(ctx, &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: client.ObjectKeyFromObject(gateway).String()}); err != nil {
-		return nil, err
-	}
-	listeners := append([]gatewayapiv1.Listener(nil), gateway.Spec.Listeners...)
-	for index := range listenerSets.Items {
-		for name, hostname := range operatorcontroller.ListenerSetDNSHostnames(&listenerSets.Items[index]) {
-			listeners = append(listeners, gatewayapiv1.Listener{Name: name, Hostname: &hostname})
-		}
-	}
-	return listeners, nil
-}
-
-func (r *reconciler) gatewayListenersChanged(e event.UpdateEvent) bool {
-	old, err := r.gatewayListeners(context.Background(), e.ObjectOld.(*gatewayapiv1.Gateway))
-	if err != nil {
-		log.Error(err, "failed to collect old Gateway listeners")
-		return true
-	}
-	updated, err := r.gatewayListeners(context.Background(), e.ObjectNew.(*gatewayapiv1.Gateway))
-	if err != nil {
-		log.Error(err, "failed to collect new Gateway listeners")
-		return true
-	}
-	return gatewayListenersHostnamesChanged(old, updated)
-}
-
 // gatewayListenersHostnamesChanged returns a Boolean indicating whether any
 // hostnames changed in the given gateway listeners.
 func gatewayListenersHostnamesChanged(xs, ys []gatewayapiv1.Listener) bool {
-	x := sets.New[[2]string]()
-	y := sets.New[[2]string]()
+	x := map[string]string{}
+	y := map[string]string{}
 	for i := range xs {
 		if xs[i].Hostname != nil {
-			x.Insert([2]string{string(xs[i].Name), operatorcontroller.NormalizeDNSHostname(string(*xs[i].Hostname))})
+			x[string(xs[i].Name)] = string(*xs[i].Hostname)
 		}
 	}
 	for i := range ys {
 		if ys[i].Hostname != nil {
-			y.Insert([2]string{string(ys[i].Name), operatorcontroller.NormalizeDNSHostname(string(*ys[i].Hostname))})
+			y[string(ys[i].Name)] = string(*ys[i].Hostname)
 		}
 	}
-	return !x.Equal(y)
+	return !reflect.DeepEqual(x, y)
 }
 
 // Config holds all the configuration that must be provided when creating the
@@ -241,14 +223,18 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	listeners, err := r.gatewayListeners(ctx, &gateway)
-	if err != nil {
+	domains := getGatewayHostnames(&gateway)
+	var listenerSets gatewayapiv1.ListenerSetList
+	if err := r.listenerSetCache.List(ctx, &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: gatewayName.String()}); err != nil {
 		return reconcile.Result{}, err
 	}
-	if !operatorcontroller.GatewayHasOurController(log, r.client, false)(&gateway) {
-		listeners = gateway.Spec.Listeners
+	if len(listenerSets.Items) > 0 && operatorcontroller.GatewayHasOurController(log, r.client, false)(&gateway) {
+		for index := range listenerSets.Items {
+			for _, hostname := range operatorcontroller.ListenerSetDNSHostnames(&listenerSets.Items[index]) {
+				domains.Insert(string(hostname) + ".")
+			}
+		}
 	}
-	domains := getGatewayHostnames(listeners)
 	if !gateway.DeletionTimestamp.IsZero() {
 		domains = sets.NewString()
 	}
@@ -258,10 +244,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
-// getGatewayHostnames returns normalized hostnames with a trailing dot.
-func getGatewayHostnames(listeners []gatewayapiv1.Listener) sets.String {
+// getGatewayHostnames returns a sets.String with the hostnames from the given
+// gateway's listeners.  Adds a trailing dot if it's missing from the hostname.
+func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 	domains := sets.NewString()
-	for _, listener := range listeners {
+	for _, listener := range gateway.Spec.Listeners {
 		if listener.Hostname == nil || len(*listener.Hostname) == 0 {
 			continue
 		}
