@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 
@@ -75,8 +75,8 @@ func GatewayAPIModeChangePredicate() predicate.Predicate {
 		DeleteFunc:  func(event.DeleteEvent) bool { return true },
 		GenericFunc: func(event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldIngress, oldOK := e.ObjectOld.(*operatorv1alpha1.Ingress)
-			newIngress, newOK := e.ObjectNew.(*operatorv1alpha1.Ingress)
+			oldIngress, oldOK := e.ObjectOld.(*operatorv1.Ingress)
+			newIngress, newOK := e.ObjectNew.(*operatorv1.Ingress)
 			if !oldOK || !newOK {
 				return false
 			}
@@ -88,10 +88,10 @@ func GatewayAPIModeChangePredicate() predicate.Predicate {
 	}
 }
 
-func effectiveGatewayAPIMode(ingress *operatorv1alpha1.Ingress) operatorv1alpha1.GatewayAPIManagementMode {
+func effectiveGatewayAPIMode(ingress *operatorv1.Ingress) operatorv1.GatewayAPIManagementMode {
 	mode := ingress.Spec.GatewayAPI.ManagementMode
 	if mode == "" {
-		return operatorv1alpha1.GatewayAPIManagementModeManaged
+		return operatorv1.GatewayAPIManagementModeManaged
 	}
 	return mode
 }
@@ -122,7 +122,7 @@ type TransitionState struct {
 	InProgress bool
 	// Target is the management mode that the system is
 	// transitioning toward.
-	Target operatorv1alpha1.GatewayAPIManagementMode
+	Target operatorv1.GatewayAPIManagementMode
 	// Error is non-nil when a required transition operation has
 	// failed (e.g., VAP delete, Sail uninstall).
 	Error error
@@ -137,7 +137,7 @@ type GatewayAPIModeAccessor struct {
 	mu          sync.RWMutex
 	gateEnabled bool
 
-	desiredMode operatorv1alpha1.GatewayAPIManagementMode
+	desiredMode operatorv1.GatewayAPIManagementMode
 
 	managed   bool
 	present   bool
@@ -155,7 +155,7 @@ type GatewayAPIModeAccessor struct {
 	// reconciled to completion. nil means no reconcile has completed
 	// yet (first run). Used to detect actual mode transitions and
 	// avoid setting InProgress on steady-state reconciles.
-	lastAppliedMode *operatorv1alpha1.GatewayAPIManagementMode
+	lastAppliedMode *operatorv1.GatewayAPIManagementMode
 }
 
 // NewGatewayAPIModeAccessor creates a GatewayAPIModeAccessor. When gateEnabled is false the
@@ -195,7 +195,7 @@ func (m *GatewayAPIModeAccessor) AllowDependents() bool {
 
 // DesiredMode returns the desired management mode from the Ingress CR
 // spec. Defaults to Managed when the CR is absent or the field is empty.
-func (m *GatewayAPIModeAccessor) DesiredMode() operatorv1alpha1.GatewayAPIManagementMode {
+func (m *GatewayAPIModeAccessor) DesiredMode() operatorv1.GatewayAPIManagementMode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.desiredMode
@@ -223,7 +223,7 @@ func (m *GatewayAPIModeAccessor) DependentPredicate() predicate.Predicate {
 // Update is called by the gatewayapi reconciler to refresh the mode
 // accessor after computing conditions from the Ingress CR and CRD
 // state.
-func (m *GatewayAPIModeAccessor) Update(desired operatorv1alpha1.GatewayAPIManagementMode, managed, present, compliant bool) {
+func (m *GatewayAPIModeAccessor) Update(desired operatorv1.GatewayAPIManagementMode, managed, present, compliant bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.desiredMode = desired
@@ -253,7 +253,7 @@ func (m *GatewayAPIModeAccessor) SetTransitionState(state TransitionState) {
 	m.mu.Unlock()
 
 	select {
-	case m.transitionEvents <- event.GenericEvent{Object: &operatorv1alpha1.Ingress{}}:
+	case m.transitionEvents <- event.GenericEvent{Object: &operatorv1.Ingress{}}:
 	default:
 	}
 }
@@ -276,7 +276,7 @@ func (m *GatewayAPIModeAccessor) GetTransitionState() TransitionState {
 
 // GetLastAppliedMode returns the mode that was last successfully
 // reconciled to completion. Returns nil if no reconcile has completed.
-func (m *GatewayAPIModeAccessor) GetLastAppliedMode() *operatorv1alpha1.GatewayAPIManagementMode {
+func (m *GatewayAPIModeAccessor) GetLastAppliedMode() *operatorv1.GatewayAPIManagementMode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.lastAppliedMode
@@ -284,7 +284,7 @@ func (m *GatewayAPIModeAccessor) GetLastAppliedMode() *operatorv1alpha1.GatewayA
 
 // SetLastAppliedMode records the mode that was successfully reconciled
 // to completion. Called at the end of a successful gate-ON reconcile.
-func (m *GatewayAPIModeAccessor) SetLastAppliedMode(mode operatorv1alpha1.GatewayAPIManagementMode) {
+func (m *GatewayAPIModeAccessor) SetLastAppliedMode(mode operatorv1.GatewayAPIManagementMode) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastAppliedMode = &mode
