@@ -2,6 +2,7 @@ package gateway_service_dns
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -23,13 +24,26 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+type listenerSetReader struct {
+	client.Reader
+	calls, failOnCall int
+}
+
+func (reader *listenerSetReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	reader.calls++
+	if reader.calls == reader.failOnCall {
+		return errors.New("ListenerSet list failed")
+	}
+	return reader.Reader.List(ctx, list, opts...)
+}
+
 func TestListenerSetDNSLifecycle(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{gatewayapiv1.AddToScheme, configv1.AddToScheme, corev1.AddToScheme, iov1.AddToScheme} {
 		require.NoError(t, add(scheme))
 	}
-	parent := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "gateway"}, Spec: gatewayapiv1.GatewaySpec{Listeners: []gatewayapiv1.Listener{{Name: "inline", Hostname: ptr.To(gatewayapiv1.Hostname("shared.example.com"))}}}}
+	parent := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "gateway"}, Spec: gatewayapiv1.GatewaySpec{Listeners: []gatewayapiv1.Listener{{Name: "shared", Hostname: ptr.To(gatewayapiv1.Hostname("shared.example.com"))}}}}
 	parent.Spec.GatewayClassName = "managed"
 	class := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "managed"}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName}}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: parent.Namespace, Name: "service", UID: "service-uid", Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: parent.Name}}, Status: corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{Hostname: "lb.example.com"}}}}}
@@ -47,9 +61,75 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	mode.SetCRDsEstablished(true)
 	r := &reconciler{config: Config{OperandNamespace: parent.Namespace}, client: cl, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, modeAccessor: mode}
 	r.listenerSetCache = r.cache
+	backing := make([]gatewayapiv1.Listener, 4)
+	copy(backing, parent.Spec.Listeners)
+	parent.Spec.Listeners = backing[:1]
+	before := parent.DeepCopy()
+	beforeBacking := append([]gatewayapiv1.Listener(nil), backing...)
+	listeners, err := r.gatewayListeners(ctx, parent)
+	require.NoError(t, err)
+	require.Len(t, listeners, 5)
+	require.Equal(t, before, parent)
+	require.Equal(t, beforeBacking, backing, "aggregation must not overwrite cached slice capacity")
+	for _, scenario := range []struct {
+		name   string
+		change func(*gatewayapiv1.Gateway)
+		want   bool
+	}{
+		{"same-named inline hostname", func(gateway *gatewayapiv1.Gateway) {
+			gateway.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname("different.example.com"))
+		}, true},
+		{"listener rename", func(gateway *gatewayapiv1.Gateway) { gateway.Spec.Listeners[0].Name = "renamed" }, true},
+		{"normalized hostname", func(gateway *gatewayapiv1.Gateway) {
+			gateway.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname("SHARED.example.com."))
+		}, false},
+		{"class only", func(gateway *gatewayapiv1.Gateway) { gateway.Spec.GatewayClassName = "foreign" }, false},
+		{"authorization only", func(gateway *gatewayapiv1.Gateway) { gateway.Spec.AllowedListeners = &gatewayapiv1.AllowedListeners{} }, false},
+		{"status only", func(gateway *gatewayapiv1.Gateway) {
+			gateway.Status.Conditions = []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}}
+		}, false},
+		{"deletion timestamp only", func(gateway *gatewayapiv1.Gateway) { gateway.DeletionTimestamp = ptr.To(metav1.Now()) }, false},
+		{"port only", func(gateway *gatewayapiv1.Gateway) { gateway.Spec.Listeners[0].Port = 8080 }, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			updated := parent.DeepCopy()
+			scenario.change(updated)
+			reader := &listenerSetReader{Reader: cl}
+			r.listenerSetCache = testutil.FakeCache{Reader: reader}
+			require.Equal(t, scenario.want, r.gatewayListenersChanged(event.UpdateEvent{ObjectOld: parent, ObjectNew: updated}))
+			require.Equal(t, 2, reader.calls, "aggregate both old and new specs")
+			require.Equal(t, scenario.want, r.gatewayListenersChanged(event.UpdateEvent{ObjectOld: updated, ObjectNew: parent}))
+			require.Equal(t, before, parent)
+			require.Equal(t, beforeBacking, backing)
+		})
+	}
+	for _, failOnCall := range []int{1, 2} {
+		r.listenerSetCache = testutil.FakeCache{Reader: &listenerSetReader{Reader: cl, failOnCall: failOnCall}}
+		require.True(t, r.gatewayListenersChanged(event.UpdateEvent{ObjectOld: parent, ObjectNew: parent}), "list error must enqueue")
+	}
+	r.listenerSetCache = r.cache
+	var previous *gatewayapiv1.ListenerSet
 	check := func(expected int) {
 		t.Helper()
-		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
+		queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+		defer queue.ShutDown()
+		mapper := handler.EnqueueRequestsFromMapFunc(r.requestsForListenerSet)
+		var current gatewayapiv1.ListenerSet
+		if cl.Get(ctx, client.ObjectKeyFromObject(listenerSet), &current) == nil {
+			if previous == nil {
+				mapper.Create(ctx, event.CreateEvent{Object: &current}, queue)
+			} else {
+				mapper.Update(ctx, event.UpdateEvent{ObjectOld: previous, ObjectNew: &current}, queue)
+			}
+			previous = current.DeepCopy()
+		} else {
+			mapper.Delete(ctx, event.DeleteEvent{Object: previous}, queue)
+		}
+		require.Equal(t, 1, queue.Len())
+		request, _ := queue.Get()
+		require.Equal(t, client.ObjectKeyFromObject(service), request.NamespacedName)
+		_, err := r.Reconcile(ctx, request)
+		queue.Done(request)
 		require.NoError(t, err)
 		var records iov1.DNSRecordList
 		require.NoError(t, cl.List(ctx, &records))
@@ -69,6 +149,25 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	}
 	check(4)
 	check(4)
+	second := listenerSet.DeepCopy()
+	second.Name = "second"
+	second.ResourceVersion = ""
+	second.Spec.Listeners = second.Spec.Listeners[:1]
+	second.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname("second.example.com"))
+	second.Status.Listeners = second.Status.Listeners[:1]
+	require.NoError(t, cl.Create(ctx, second))
+	check(5)
+	require.NoError(t, cl.Delete(ctx, second))
+	check(4)
+	var recordsBefore iov1.DNSRecordList
+	require.NoError(t, cl.List(ctx, &recordsBefore))
+	r.listenerSetCache = testutil.FakeCache{Reader: &listenerSetReader{Reader: cl, failOnCall: 1}}
+	_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
+	require.ErrorContains(t, err, "ListenerSet list failed")
+	var recordsAfter iov1.DNSRecordList
+	require.NoError(t, cl.List(ctx, &recordsAfter))
+	require.Equal(t, recordsBefore.Items, recordsAfter.Items, "list failure must not update or clean up DNS")
+	r.listenerSetCache = r.cache
 	listenerSet.Status.Listeners[0].Conditions = append(listenerSet.Status.Listeners[0].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(4)
