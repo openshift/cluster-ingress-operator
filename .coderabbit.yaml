@@ -20,4 +20,65 @@ reviews:
   path_filters:
   - "!**/vendor/**"
   - "!vendor/**"
+  path_instructions:
+  - path: "test/e2e/**"
+    instructions: |
+      Review e2e test code for these reliability patterns (see test/e2e/TESTING.md for full guide):
+
+      1. CLEANUP: Resource deletion MUST use `t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), obj, 2*time.Minute) })`.
+         Flag any of these anti-patterns:
+         - `defer func() { kclient.Delete(...) }()` — use `t.Cleanup` + `deleteWithRetryOnError` instead
+         - `defer assertDeleted(...)` or `t.Cleanup(func() { assertDeleted(...) })` — use `deleteWithRetryOnError` instead (assertDeleted fatals on transient errors)
+         - Inline `kclient.Delete` in cleanup without retry logic
+         - IngressController cleanup: use `t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })` not `defer`
+
+      2. CLEANUP SEVERITY: `t.Fatalf()` MUST NOT be used inside `t.Cleanup()` or `defer` functions. Use `t.Errorf()` instead.
+         A fatal in cleanup calls runtime.Goexit(), masks the original failure, and prevents other cleanup functions from running.
+
+      3. RESOURCE UPDATES: Kubernetes resource mutations MUST use retry-on-conflict helpers that re-fetch before update:
+         - `updateIngressControllerWithRetryOnConflict()`
+         - `updateIngressConfigSpecWithRetryOnConflict()` / `updateIngressConfigStatusWithRetryOnConflict()`
+         - `updateRouteWithRetryOnConflict()`
+         Flag any pattern that does `Get()` then `Update()` without conflict retry.
+
+      4. TIMEOUTS: Controller condition polling (`waitForIngressControllerCondition`) MUST use at least `3*time.Minute`.
+         Flag any timeout under 1 minute for condition checks (e.g., `10*time.Second`).
+         Standard cleanup timeout is `2*time.Minute`.
+
+      5. ERROR WRAPPING: `fmt.Errorf` SHOULD use `%w` (not `%v`) when the error will be inspected with `errors.Is`/`errors.As`.
+
+      6. ERROR TYPE CHECKS: Delete operations MUST check `errors.IsNotFound` (not `IsAlreadyExists`).
+         Create operations MUST check `errors.IsAlreadyExists` (not `IsNotFound`).
+         Flag inverted error type guards — they silently swallow real errors.
+
+      7. NO UNBOUNDED POLLING: `wait.PollInfinite` MUST NOT be used — it hangs the test suite forever.
+         Prefer `wait.PollUntilContextTimeout` over deprecated `wait.PollImmediate` (context-aware, cancellable).
+
+      8. SHARED MUTABLE STATE: Package-level variables shared between parallel tests MUST use `atomic.Int32` or `sync.Mutex`.
+         Never mutate package-level globals (`dnsConfig`, `infraConfig`) from individual tests — read into local variables.
+
+      9. NIL SAFETY: Guard `infraConfig.Status.PlatformStatus` before accessing `.Type` — it can be nil on some platforms.
+         Flag `&value == nil` comparisons (address-of-value is always non-nil, this is dead code).
+         Validate slice length before indexing (e.g., `record.Spec.Targets[0]` without length check).
+
+      10. FUNCTION CONTRACTS: If a helper returns `error`, it MUST NOT call `t.Fatalf` internally (the error return becomes dead code).
+          If a helper calls `t.Fatalf`, it should not have an `error` return type.
+
+      11. DEFER IN LOOPS: `defer` inside a loop accumulates until function exit, causing resource leaks (file descriptors, log streams).
+          Close resources explicitly within each loop iteration or use `t.Cleanup`.
+
+      12. LOG ACCURACY: `t.Log` / `t.Logf` messages MUST accurately describe the operation being performed.
+          Flag log messages that contradict the code (e.g., logging "Classic" while setting NLB).
+
+      13. CONTEXT PROPAGATION: Inner polling loops MUST derive their context from the outer loop's context.
+          Flag `context.Background()` inside a poll callback when an outer context parameter is available.
+          Flag `defer cancel()` inside poll callbacks — it accumulates deferred calls across iterations.
+
+      14. TEST HELPERS: Functions accepting `*testing.T` that are not test functions MUST call `t.Helper()`.
+          Flag return values of `wait.PollUntilContextTimeout` that are silently discarded (not checked or returned).
+
+      15. RESOURCE LIFECYCLE: Resources MUST be created (with error check) BEFORE registering `t.Cleanup` for deletion.
+          Flag patterns where `buildEcho*`/`buildRoute*` is followed by `t.Cleanup` without an intervening `kclient.Create`.
+
+      See test/e2e/TESTING.md for the full patterns guide.
 
