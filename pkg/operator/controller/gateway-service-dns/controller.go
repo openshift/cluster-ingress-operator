@@ -69,14 +69,16 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	})
 	gatewayListenersChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec.Listeners
-			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec.Listeners
-			// A DNSRecord CR needs to be updated if, and only if,
-			// the hostname has changed (a listener's port and
-			// protocol have no bearing on the DNS record).
-			changed := gatewayListenersHostnamesChanged(old, new)
+			old := e.ObjectOld.(*gatewayapiv1.Gateway)
+			new := e.ObjectNew.(*gatewayapiv1.Gateway)
+			// A DNSRecord CR needs to be updated if the
+			// hostname or the GatewayClass has changed (a
+			// listener's port and protocol have no bearing on
+			// the DNS record).
+			changed := old.Spec.GatewayClassName != new.Spec.GatewayClassName ||
+				gatewayListenersHostnamesChanged(old.Spec.Listeners, new.Spec.Listeners)
 			if changed {
-				log.Info("Listener hostname changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+				log.Info("Listener hostname or GatewayClass changed", "gateway", new.Name)
 			}
 			return changed
 		},

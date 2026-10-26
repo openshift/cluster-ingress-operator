@@ -20,6 +20,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -115,13 +116,21 @@ func (r *reconciler) deleteAllManagedProfiles(ctx context.Context) error {
 	return nil
 }
 
-// SetManagedProfilesUnmanagedConfiguredStatus sets owned profiles' openshift.io/Configured condition to False/Unmanaged during a mode transition.
-func SetManagedProfilesUnmanagedConfiguredStatus(ctx context.Context, cl client.Client, defaultsNamespace string) error {
+// markProfilesUnmanagedConfigured sets owned profiles' openshift.io/Configured
+// condition to False/Unmanaged during a mode transition to Unmanaged.
+//
+// The gatewayapi controller calls it via UninstallSail, while the gatewayclass
+// controller writes the same condition via syncManagedProfileStatus, so
+// profileStatusMu keeps a late reconcile from overwriting the Unmanaged status.
+func (r *reconciler) markProfilesUnmanagedConfigured(ctx context.Context) error {
+	r.profileStatusMu.Lock()
+	defer r.profileStatusMu.Unlock()
+
 	var errs []error
 	for name := range managedProfiles {
-		defaultsName := managedProfileConfigMapDefaultsName(defaultsNamespace, name)
+		defaultsName := managedProfileConfigMapDefaultsName(r.config.OperandNamespace, name)
 		message := fmt.Sprintf("ConfigMap %s and its association with GatewayClass %s are not managed or guaranteed by the Ingress Operator in Unmanaged mode.", defaultsName, name)
-		if err := updateManagedProfileStatus(ctx, cl, name, metav1.ConditionFalse, "Unmanaged", message, nil); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+		if err := updateManagedProfileStatus(ctx, r.client, name, metav1.ConditionFalse, "Unmanaged", message, nil); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 			errs = append(errs, fmt.Errorf("cannot set GatewayClass %q openshift.io/Configured condition to False/Unmanaged: %w", name, err))
 		}
 	}
@@ -157,6 +166,16 @@ func (r *reconciler) requestsForManagedProfileConfigMapDefaults(_ context.Contex
 
 // syncManagedProfileStatus reports defaults readiness and installation without resetting Accepted.
 func (r *reconciler) syncManagedProfileStatus(ctx context.Context, name string, defaultsReady bool) error {
+	// Serialize with markProfilesUnmanagedConfigured. If the mode changed
+	// while this reconcile was in flight, the transition owns the status and
+	// this controller's watches are gated off, so a write now would never be
+	// corrected.
+	r.profileStatusMu.Lock()
+	defer r.profileStatusMu.Unlock()
+	if !r.modeAccessor.AllowDependents() {
+		return nil
+	}
+
 	defaultsName := managedProfileConfigMapDefaultsName(r.config.OperandNamespace, name)
 	status, reason := metav1.ConditionTrue, "Configured"
 	message := fmt.Sprintf("ConfigMap %s is present and associated with GatewayClass %s. Inspect the ConfigMap for configuration details.", defaultsName, name)
@@ -208,10 +227,10 @@ func (r *reconciler) createManagedProfile(ctx context.Context, desired *gatewaya
 	return nil
 }
 
-// updateManagedProfile repairs a non-deleting managed profile's output label and description.
+// updateManagedProfile repairs a managed profile's owned fields, including
+// removing the legacy Sail finalizer from a class that is being deleted.
 func (r *reconciler) updateManagedProfile(ctx context.Context, current, desired *gatewayapiv1.GatewayClass) error {
-	// Only update managed identities that are not already being deleted.
-	if !current.DeletionTimestamp.IsZero() || !isManagedProfile(current) {
+	if !isManagedProfile(current) {
 		return nil
 	}
 
@@ -229,10 +248,12 @@ func (r *reconciler) updateManagedProfile(ctx context.Context, current, desired 
 	return nil
 }
 
-// managedProfileChanged checks whether the owned label or description differs and returns the updated class.
+// managedProfileChanged reports whether the profile label, description, or Sail
+// finalizer differ, and returns the updated class.
 func managedProfileChanged(current, expected *gatewayapiv1.GatewayClass) (bool, *gatewayapiv1.GatewayClass) {
 	if current.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] == "true" &&
-		cmp.Equal(current.Spec.Description, expected.Spec.Description) {
+		cmp.Equal(current.Spec.Description, expected.Spec.Description) &&
+		!controllerutil.ContainsFinalizer(current, sailLibraryFinalizer) {
 		return false, nil
 	}
 
@@ -242,6 +263,10 @@ func managedProfileChanged(current, expected *gatewayapiv1.GatewayClass) (bool, 
 	}
 	updated.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] = "true"
 	updated.Spec.Description = expected.Spec.Description
+	// A class adopted from before managed profiles existed may still carry the
+	// Sail lifecycle finalizer. Profiles neither install nor uninstall Sail, so
+	// that finalizer must not keep the class from being deleted.
+	controllerutil.RemoveFinalizer(updated, sailLibraryFinalizer)
 	return true, updated
 }
 
@@ -250,6 +275,18 @@ func managedProfileChanged(current, expected *gatewayapiv1.GatewayClass) (bool, 
 func (r *reconciler) deleteManagedProfile(ctx context.Context, current *gatewayapiv1.GatewayClass) error {
 	if !isManagedProfile(current) {
 		return nil
+	}
+
+	// Update paths remove the legacy Sail finalizer through managedProfileChanged;
+	// deletion does not reach them, so remove it here as well.
+	if controllerutil.ContainsFinalizer(current, sailLibraryFinalizer) {
+		updated := current.DeepCopy()
+		controllerutil.RemoveFinalizer(updated, sailLibraryFinalizer)
+		if err := r.client.Update(ctx, updated); err != nil {
+			return fmt.Errorf("failed to remove Sail finalizer from managed GatewayClass %q: %w", current.Name, err)
+		}
+		log.Info("removed Sail finalizer from managed profile", "gatewayclass", current.Name)
+		current = updated
 	}
 
 	// Delete only the observed UID; completion is checked on later cache snapshots.

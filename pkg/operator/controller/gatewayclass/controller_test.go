@@ -28,12 +28,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -1274,6 +1276,105 @@ func Test_Reconcile(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+// Test_enqueueRequestForSomeGatewayClass verifies the NoOLM event mapping:
+// managed profile events reconcile only the profile, and every other event fans
+// out so Sail drops the defaults of a user-created class that was deleted but
+// is not the last one.
+func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
+	const (
+		userClassA = "user-a"
+		userClassB = "user-b"
+	)
+	newUserClass := func(name string) *gatewayapiv1.GatewayClass {
+		return &gatewayapiv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
+		}
+	}
+
+	r := managedProfileTestReconciler(t,
+		newUserClass(userClassA),
+		newUserClass(userClassB),
+		newUserClass(operatorcontroller.OpenShiftClusterIPGatewayClassName),
+	)
+	handler := r.enqueueRequestForSomeGatewayClass()
+	ctx := t.Context()
+
+	requests := func(names ...string) []reconcile.Request {
+		out := make([]reconcile.Request, 0, len(names))
+		for _, name := range names {
+			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+		}
+		return out
+	}
+	allClasses := requests(userClassA, userClassB, operatorcontroller.OpenShiftClusterIPGatewayClassName)
+
+	drain := func(t *testing.T, q workqueue.TypedRateLimitingInterface[reconcile.Request]) []reconcile.Request {
+		t.Helper()
+		var got []reconcile.Request
+		for q.Len() > 0 {
+			request, shutdown := q.Get()
+			require.False(t, shutdown)
+			got = append(got, request)
+			q.Done(request)
+		}
+		return got
+	}
+	newQueue := func(t *testing.T) workqueue.TypedRateLimitingInterface[reconcile.Request] {
+		t.Helper()
+		q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+		t.Cleanup(q.ShutDown)
+		return q
+	}
+
+	tests := []struct {
+		name     string
+		enqueue  func(q workqueue.TypedRateLimitingInterface[reconcile.Request])
+		expected []reconcile.Request
+	}{
+		{
+			name: "user class event fans out",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Create(ctx, event.CreateEvent{Object: newUserClass(userClassA)}, q)
+			},
+			expected: allClasses,
+		},
+		{
+			name: "deleted user class fans out",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Delete(ctx, event.DeleteEvent{Object: newUserClass(userClassA)}, q)
+			},
+			expected: allClasses,
+		},
+		{
+			name: "managed profile event maps to itself",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Create(ctx, event.CreateEvent{Object: newUserClass(operatorcontroller.OpenShiftClusterIPGatewayClassName)}, q)
+			},
+			expected: requests(operatorcontroller.OpenShiftClusterIPGatewayClassName),
+		},
+		{
+			name: "shared event fans out",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Create(ctx, event.CreateEvent{Object: &configv1.Proxy{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}}, q)
+			},
+			expected: allClasses,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q := newQueue(t)
+			tc.enqueue(q)
+			got := drain(t, q)
+			sortSlices := cmpopts.SortSlices(func(a, b reconcile.Request) bool { return a.Name < b.Name })
+			if diff := cmp.Diff(tc.expected, got, sortSlices); diff != "" {
+				t.Errorf("unexpected requests (-want +got):\n%s", diff)
+			}
 		})
 	}
 }

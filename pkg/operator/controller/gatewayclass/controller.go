@@ -346,6 +346,14 @@ type reconciler struct {
 	// observes the true, up-to-date mode state.
 	sailLifecycleMu sync.Mutex
 
+	// profileStatusMu serializes managed profile status writes with the
+	// Unmanaged transition, which publishes the profiles as unconfigured
+	// before Sail removes their defaults. Without it, a reconcile that read
+	// AllowDependents()==true before the transition could publish a managed
+	// status after the transition completed, and this controller's watches
+	// are gated off in Unmanaged mode, so nothing would correct it.
+	profileStatusMu sync.Mutex
+
 	// modeAccessor provides thread-safe access to the resolved Gateway API
 	// management mode. When AllowDependents returns false, the reconciler
 	// skips Sail/OLM installation to prevent resource creation in Unmanaged mode.
@@ -370,14 +378,19 @@ func (r *reconciler) enqueueRequestForCRDOwnershipChange() handler.EventHandler 
 }
 
 // enqueueRequestForSomeGatewayClass enqueues GatewayClass reconciliation.
-// NoOLM mode maps class events to their own key.
-// Shared events fan out; OLM mode selects the oldest class to avoid subscription conflicts.
+// In NoOLM mode, managed profile events enqueue only that profile; all other
+// events fan out to every OpenShift GatewayClass.
+// In OLM mode, it selects the oldest class to avoid subscription conflicts.
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
 			if r.config.GatewayAPIWithoutOLMEnabled {
-				// If the event object is a GatewayClass, reconcile only that GatewayClass.
-				if _, ok := obj.(*gatewayapiv1.GatewayClass); ok {
+				// A managed profile event affects only that profile, which neither
+				// installs nor uninstalls Sail. Every other event fans out: Sail
+				// renders defaults for the whole class set in one Apply, so mapping
+				// a user-class event to itself leaves a deleted, non-last class in
+				// Sail's desired state until an unrelated event fans out.
+				if gatewayClass, ok := obj.(*gatewayapiv1.GatewayClass); ok && isManagedProfileName(gatewayClass.Name) {
 					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
 				}
 				// Otherwise, enqueue all OpenShift GatewayClasses, including desired profiles.
@@ -475,20 +488,15 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	var result reconcile.Result
-	var err error
 	if r.config.GatewayAPIWithoutOLMEnabled {
-		result, err = r.reconcileWithSailLibrary(ctx, request)
-	} else {
-		result, err = r.reconcileWithOLM(ctx, request)
-	}
-	switch retry := err.(type) {
-	case retryable.Error:
-		log.Error(retry, "got retryable error; requeueing", "after", retry.After())
-		return reconcile.Result{RequeueAfter: retry.After()}, nil
-	default:
+		result, err := r.reconcileWithSailLibrary(ctx, request)
+		if retry, ok := err.(retryable.Error); ok {
+			log.Error(retry, "got retryable error; requeueing", "after", retry.After())
+			return reconcile.Result{RequeueAfter: retry.After()}, nil
+		}
 		return result, err
 	}
+	return r.reconcileWithOLM(ctx, request)
 }
 
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
@@ -741,6 +749,13 @@ func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass
 func (r *reconciler) UninstallSail(ctx context.Context) error {
 	r.sailLifecycleMu.Lock()
 	defer r.sailLifecycleMu.Unlock()
+
+	// Report profile configuration as unmanaged before Sail removes its
+	// defaults, so a profile never claims configuration the operator is
+	// tearing down.
+	if err := r.markProfilesUnmanagedConfigured(ctx); err != nil {
+		return err
+	}
 
 	// OLM path: sailInstaller is nil, nothing to uninstall
 	if r.sailInstaller == nil {
