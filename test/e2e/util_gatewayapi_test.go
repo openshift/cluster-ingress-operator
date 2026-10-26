@@ -982,7 +982,8 @@ func assertManagedProfileStatusRepair(t *testing.T, profile *gatewayapiv1.Gatewa
 	recreatedUID := profile.UID
 	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, key, profile); err != nil {
-			return false, err
+			t.Logf("waiting for managed GatewayClass %s: %v", key, err)
+			return false, nil
 		}
 		condition := meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured")
 		if profile.UID != recreatedUID || condition == nil ||
@@ -1571,6 +1572,34 @@ func assertGatewayClassConditions(t *testing.T, name string) error {
 	return nil
 }
 
+// waitForGatewayClassCondition waits for a GatewayClass condition to report the
+// given status and reason within timeout.
+func waitForGatewayClassCondition(t *testing.T, name string, timeout time.Duration, condition metav1.Condition) error {
+	t.Helper()
+	key := types.NamespacedName{Name: name}
+	var current *metav1.Condition
+
+	err := wait.PollUntilContextTimeout(t.Context(), time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		class := &gatewayapiv1.GatewayClass{}
+		if err := kclient.Get(ctx, key, class); err != nil {
+			t.Logf("failed to get GatewayClass %s, retrying: %v", name, err)
+			return false, nil
+		}
+		current = meta.FindStatusCondition(class.Status.Conditions, condition.Type)
+		if current == nil || current.Status != condition.Status || current.Reason != condition.Reason {
+			t.Logf("waiting for GatewayClass %s condition %s=%s/%s; got %+v",
+				name, condition.Type, condition.Status, condition.Reason, current)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("GatewayClass %s condition %s did not reach %s/%s (last observed: %+v): %w",
+			name, condition.Type, condition.Status, condition.Reason, current, err)
+	}
+	return nil
+}
+
 // assertGatewayClassDeleted verifies that the GatewayClass has been deleted.
 func assertGatewayClassDeleted(t *testing.T, name string) error {
 	t.Helper()
@@ -2033,7 +2062,7 @@ func assertManagedGatewayClassProfiles(t *testing.T) error {
 			defer cancel()
 			if err := kclient.Get(ctx, client.ObjectKey{Name: name}, profile); err != nil {
 				t.Logf("waiting for managed GatewayClass %s: %v", name, err)
-				return false, err
+				return false, nil
 			}
 
 			// Check the exact defaults association alongside the profile's owned outputs.
@@ -2085,7 +2114,8 @@ func assertManagedGatewayClassProfilesRemoved(t *testing.T) error {
 					return false, nil
 				}
 				if !kerrors.IsNotFound(err) {
-					return false, err
+					t.Logf("waiting for %T %s to disappear: %v", object, client.ObjectKeyFromObject(object), err)
+					return false, nil
 				}
 			}
 		}
@@ -2103,7 +2133,8 @@ func gatewayClassService(t *testing.T, gateway *gatewayapiv1.Gateway, className 
 			operatorcontroller.GatewayNameLabelKey:         gateway.Name,
 			"gateway.networking.k8s.io/gateway-class-name": className,
 		}); err != nil {
-			return false, err
+			t.Logf("waiting for Services for Gateway %s class %s: %v", client.ObjectKeyFromObject(gateway), className, err)
+			return false, nil
 		}
 		if len(services.Items) == 0 {
 			t.Logf("waiting for Gateway %s class %s Service", client.ObjectKeyFromObject(gateway), className)
@@ -2137,7 +2168,8 @@ func assertGatewayServiceType(t *testing.T, gateway *gatewayapiv1.Gateway, servi
 	return wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		var services corev1.ServiceList
 		if err := kclient.List(ctx, &services, client.InNamespace(gateway.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name}); err != nil {
-			return false, err
+			t.Logf("waiting for Services for Gateway %s: %v", client.ObjectKeyFromObject(gateway), err)
+			return false, nil
 		}
 		// Wait for exactly one Service so a lingering obsolete Service is not mistaken for the current one.
 		if len(services.Items) != 1 {

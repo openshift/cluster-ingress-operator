@@ -336,9 +336,7 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	gateway, err := createGateway(t, managedProfile, namespace.Name, operatorcontroller.DefaultOperandNamespace, domain)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), gateway); err != nil && !errors.IsNotFound(err) {
-			t.Errorf("failed to delete test Gateway %s: %v", client.ObjectKeyFromObject(gateway), err)
-		}
+		deleteWithRetryOnError(t, context.Background(), gateway, DefaultRetryTimeout)
 	})
 
 	// Attach a ready echo backend through an accepted HTTPRoute.
@@ -359,6 +357,11 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	clusterIPService, err := gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
 	require.NoError(t, err)
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
+
+	// DNS exclusion applies on every platform, not only those publishing external DNS.
+	require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
+		{dnsName: "*." + domain + ".", gatewayName: gateway.Name}: expectDNSRecordAbsent(),
+	}))
 
 	// Istio owns the Gateway Service, so deleting it should cause Istio to
 	// recreate it using the managed profile's ClusterIP configuration.
@@ -387,11 +390,6 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	clusterIPService, err = gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
 	require.NoError(t, err, "Istio did not recreate the Gateway Service with the managed profile's ClusterIP configuration")
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
-
-	// DNS exclusion applies on every platform, not only those publishing external DNS.
-	require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
-		{dnsName: "*." + domain + ".", gatewayName: gateway.Name}: expectDNSRecordAbsent(),
-	}))
 
 	// Change the GatewayClass to openshift-default and verify LoadBalancer traffic and supported DNS publication.
 	_, err = assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
