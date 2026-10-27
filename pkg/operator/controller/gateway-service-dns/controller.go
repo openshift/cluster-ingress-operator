@@ -3,6 +3,7 @@ package gateway_service_dns
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
@@ -66,10 +67,22 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 		_, ok := o.(*corev1.Service).Labels[operatorcontroller.ManagedByIstioLabelKey]
 		return ok
 	})
+	gatewayListenersChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec
+			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec
+			// Policy and status changes can revoke ListenerSet DNS eligibility.
+			changed := gatewayListenersHostnamesChanged(old.Listeners, new.Listeners) || old.GatewayClassName != new.GatewayClassName || !reflect.DeepEqual(old.AllowedListeners, new.AllowedListeners) || !reflect.DeepEqual(e.ObjectOld.(*gatewayapiv1.Gateway).Status, e.ObjectNew.(*gatewayapiv1.Gateway).Status) || !reflect.DeepEqual(e.ObjectOld.GetDeletionTimestamp(), e.ObjectNew.GetDeletionTimestamp())
+			if changed {
+				log.Info("Gateway DNS inputs changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+			}
+			return changed
+		},
+	}
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetNamespace() == config.OperandNamespace
 	})
-	if err := c.Watch(reconciler.gatewaySource()); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForGateway), isInOperandNamespace, gatewayListenersChanged, modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
 	// The map handler visits both old and new objects on reparenting.
@@ -99,37 +112,6 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	return c, nil
 }
 
-func (r *reconciler) gatewaySource() source.SyncingSource {
-	gatewayListenersChanged := predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			var listeners [2][]gatewayapiv1.Listener
-			for index, object := range []client.Object{e.ObjectOld, e.ObjectNew} {
-				gateway := object.(*gatewayapiv1.Gateway)
-				listeners[index] = append([]gatewayapiv1.Listener(nil), gateway.Spec.Listeners...)
-				var listenerSets gatewayapiv1.ListenerSetList
-				if err := r.listenerSetCache.List(context.Background(), &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: client.ObjectKeyFromObject(gateway).String()}); err != nil {
-					log.Error(err, "failed to list attached ListenerSets for Gateway update", "gateway", client.ObjectKeyFromObject(gateway))
-					return true
-				}
-				for _, listenerSet := range listenerSets.Items {
-					for _, listener := range listenerSet.Spec.Listeners {
-						listeners[index] = append(listeners[index], gatewayapiv1.Listener{Name: listener.Name, Hostname: listener.Hostname})
-					}
-				}
-			}
-			changed := gatewayListenersHostnamesChanged(listeners[0], listeners[1])
-			if changed {
-				log.Info("Listener hostname changed", "gateway", e.ObjectNew.GetName())
-			}
-			return changed
-		},
-	}
-	isInOperandNamespace := predicate.NewPredicateFuncs(func(object client.Object) bool {
-		return object.GetNamespace() == r.config.OperandNamespace
-	})
-	return source.Kind[client.Object](r.cache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(r.requestsForGateway), isInOperandNamespace, gatewayListenersChanged, r.modeAccessor.DependentPredicate())
-}
-
 func (r *reconciler) requestsForGateway(ctx context.Context, object client.Object) []reconcile.Request {
 	if object.GetNamespace() != r.config.OperandNamespace {
 		return nil
@@ -154,16 +136,19 @@ func (r *reconciler) requestsForListenerSet(ctx context.Context, object client.O
 // gatewayListenersHostnamesChanged returns a Boolean indicating whether any
 // hostnames changed in the given gateway listeners.
 func gatewayListenersHostnamesChanged(xs, ys []gatewayapiv1.Listener) bool {
-	hostnames := func(listeners []gatewayapiv1.Listener) sets.Set[[2]string] {
-		pairs := sets.New[[2]string]()
-		for _, listener := range listeners {
-			if listener.Hostname != nil {
-				pairs.Insert([2]string{string(listener.Name), string(*listener.Hostname)})
-			}
+	x := map[string]string{}
+	y := map[string]string{}
+	for i := range xs {
+		if xs[i].Hostname != nil {
+			x[string(xs[i].Name)] = string(*xs[i].Hostname)
 		}
-		return pairs
 	}
-	return !hostnames(xs).Equal(hostnames(ys))
+	for i := range ys {
+		if ys[i].Hostname != nil {
+			y[string(ys[i].Name)] = string(*ys[i].Hostname)
+		}
+	}
+	return !reflect.DeepEqual(x, y)
 }
 
 // Config holds all the configuration that must be provided when creating the
