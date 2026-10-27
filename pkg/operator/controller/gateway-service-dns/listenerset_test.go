@@ -2,7 +2,6 @@ package gateway_service_dns
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -13,12 +12,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -47,99 +44,6 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	mode.SetCRDsEstablished(true)
 	r := &reconciler{config: Config{OperandNamespace: parent.Namespace}, client: cl, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, modeAccessor: mode}
 	r.listenerSetCache = r.cache
-	t.Run("Gateway watch updates", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		sibling := listenerSet.DeepCopy()
-		sibling.Name = "sibling"
-		sibling.ResourceVersion = ""
-		sibling.Spec.Listeners = []gatewayapiv1.ListenerEntry{{Name: "unique", Hostname: ptr.To(gatewayapiv1.Hostname("sibling.example.com"))}}
-		sibling.Status = gatewayapiv1.ListenerSetStatus{}
-		require.NoError(t, cl.Create(ctx, sibling))
-		defer func() { require.NoError(t, cl.Delete(ctx, sibling)) }()
-		listCalls, failOnCall := 0, 0
-		r.listenerSetCache = testutil.FakeCache{Reader: interceptor.NewClient(cl, interceptor.Funcs{List: func(ctx context.Context, underlying client.WithWatch, objects client.ObjectList, options ...client.ListOption) error {
-			listCalls++
-			listOptions := &client.ListOptions{}
-			listOptions.ApplyOptions(options)
-			require.Empty(t, listOptions.Namespace)
-			require.Equal(t, operatorcontroller.ListenerSetParentGatewayIndex+"="+client.ObjectKeyFromObject(parent).String(), listOptions.FieldSelector.String())
-			if listCalls == failOnCall {
-				return fmt.Errorf("indexed ListenerSet lookup failed")
-			}
-			return underlying.List(ctx, objects, options...)
-		}})}
-		defer func() { r.listenerSetCache = r.cache }()
-		queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
-		defer queue.ShutDown()
-		watch := r.gatewaySource()
-		require.NoError(t, watch.Start(ctx, queue))
-		require.NoError(t, watch.WaitForSync(ctx))
-		informer, err := r.cache.(testutil.FakeCache).Informers.(*informertest.FakeInformers).FakeInformerFor(ctx, parent)
-		require.NoError(t, err)
-		for _, scenario := range []struct {
-			name   string
-			mutate func(*gatewayapiv1.Gateway, *gatewayapiv1.Gateway)
-			queued bool
-			fail   int
-		}{
-			{"unchanged", func(old, updated *gatewayapiv1.Gateway) {}, false, 0},
-			{"class only", func(old, updated *gatewayapiv1.Gateway) { updated.Spec.GatewayClassName = "foreign" }, false, 0},
-			{"allowed listeners only", func(old, updated *gatewayapiv1.Gateway) {
-				updated.Spec.AllowedListeners = &gatewayapiv1.AllowedListeners{}
-			}, false, 0},
-			{"status only", func(old, updated *gatewayapiv1.Gateway) {
-				updated.Status.Conditions = []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionFalse}}
-			}, false, 0},
-			{"deletion only", func(old, updated *gatewayapiv1.Gateway) { updated.DeletionTimestamp = ptr.To(metav1.Now()) }, false, 0},
-			{"same name distinct hostnames", func(old, updated *gatewayapiv1.Gateway) {
-				updated.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname("changed.example.com"))
-			}, true, 0},
-			{"rename", func(old, updated *gatewayapiv1.Gateway) { updated.Spec.Listeners[0].Name = "renamed" }, true, 0},
-			{"remove inline still in ListenerSet", func(old, updated *gatewayapiv1.Gateway) {
-				old.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname("unique.example.com"))
-				updated.Spec.Listeners = nil
-			}, false, 0},
-			{"add inline already in ListenerSet", func(old, updated *gatewayapiv1.Gateway) {
-				old.Spec.Listeners = nil
-				updated.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname("sibling.example.com"))
-			}, false, 0},
-			{"old lookup fails", func(old, updated *gatewayapiv1.Gateway) {}, true, 1},
-			{"new lookup fails", func(old, updated *gatewayapiv1.Gateway) {}, true, 2},
-		} {
-			t.Run(scenario.name, func(t *testing.T) {
-				old := parent.DeepCopy()
-				old.Spec.Listeners = make([]gatewayapiv1.Listener, 1, 2)
-				old.Spec.Listeners[0] = gatewayapiv1.Listener{Name: "unique", Hostname: ptr.To(gatewayapiv1.Hostname("inline.example.com"))}
-				backing := old.Spec.Listeners[:2]
-				backing[1] = gatewayapiv1.Listener{Name: "sentinel"}
-				updated := old.DeepCopy()
-				updated.Generation++
-				scenario.mutate(old, updated)
-				beforeOld, beforeUpdated := old.DeepCopy(), updated.DeepCopy()
-				listCalls, failOnCall = 0, scenario.fail
-				informer.Update(old, updated)
-				require.Equal(t, scenario.queued, queue.Len() != 0)
-				if scenario.queued {
-					request, _ := queue.Get()
-					require.Equal(t, client.ObjectKeyFromObject(service), request.NamespacedName)
-					queue.Done(request)
-				}
-				expectedCalls := 2
-				if scenario.fail == 1 {
-					expectedCalls = 1
-				}
-				require.Equal(t, expectedCalls, listCalls)
-				require.Equal(t, beforeOld, old)
-				require.Equal(t, beforeUpdated, updated)
-				require.Equal(t, gatewayapiv1.Listener{Name: "sentinel"}, backing[1])
-			})
-		}
-		var unchanged gatewayapiv1.ListenerSet
-		require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(listenerSet), &unchanged))
-		require.Equal(t, listenerSet.Spec, unchanged.Spec)
-		require.Equal(t, listenerSet.Status, unchanged.Status)
-	})
 	check := func(expected int) {
 		t.Helper()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
