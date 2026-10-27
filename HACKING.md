@@ -123,14 +123,12 @@ $ make test-e2e
 
 ListenerSets are enabled in both managed Istio installation paths, without an
 Istiod version gate. DNS exposure requires current Istio acceptance and matching,
-non-rejected, non-conflicted listener status. Istio owns attachment authorization,
+non-rejected listener status. Istio owns attachment authorization,
 conflict detection, and Accepted/Programmed/Conflicted conditions; CIO owns only
 DNSReady on ListenerSets and their listeners. DNSRecords live with the parent
 Gateway in `openshift-ingress` and are owned by its Service.
 
-`gateway_api_dns_conflicts` reports the current conflicting-listener count per
-ListenerSet, with an informational alert. User conflicts do not degrade the
-ClusterOperator or default IngressController.
+User conflicts do not degrade the ClusterOperator or default IngressController.
 
 An upgrade lets Istio replace the old CIO `Accepted=False` rejection. On downgrade
 to a release without ListenerSet support, ListenerSets remain stored but are not

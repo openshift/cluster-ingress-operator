@@ -54,18 +54,8 @@ func ListenerSetDNSHostnames(ls *gatewayapiv1.ListenerSet) map[gatewayapiv1.Sect
 			if listenerStatus.Name != listener.Name {
 				continue
 			}
-			current := false
-			valid := true
-			for _, condition := range listenerStatus.Conditions {
-				switch condition.Type {
-				case string(gatewayapiv1.ListenerEntryConditionAccepted), string(gatewayapiv1.ListenerEntryConditionConflicted):
-					current = current || condition.ObservedGeneration == ls.Generation
-					if condition.ObservedGeneration != ls.Generation || (condition.Type == "Accepted" && condition.Status == metav1.ConditionFalse) || (condition.Type == "Conflicted" && condition.Status == metav1.ConditionTrue) {
-						valid = false
-					}
-				}
-			}
-			if current && valid {
+			accepted := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionAccepted))
+			if accepted != nil && accepted.ObservedGeneration == ls.Generation && accepted.Status != metav1.ConditionFalse {
 				hostnames[listener.Name] = gatewayapiv1.Hostname(NormalizeDNSHostname(string(*listener.Hostname)))
 			}
 		}

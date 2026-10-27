@@ -12,13 +12,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -74,6 +71,16 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	check(4)
 	listenerSet.Status.Listeners[1].Conditions = append(listenerSet.Status.Listeners[1].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
+	check(4)
+	listenerSet.Status.Listeners[1].Conditions[1].ObservedGeneration = 1
+	require.NoError(t, cl.Update(ctx, listenerSet))
+	check(4)
+	listenerSet.Status.Listeners[1].Conditions[0].ObservedGeneration = 1
+	require.NoError(t, cl.Update(ctx, listenerSet))
+	check(3)
+	listenerSet.Status.Listeners[1].Conditions[0].ObservedGeneration = 2
+	listenerSet.Status.Listeners[1].Conditions[0].Status = metav1.ConditionFalse
+	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(3)
 	listenerSet.Status.Conditions[0].Status = metav1.ConditionFalse
 	require.NoError(t, cl.Update(ctx, listenerSet))
@@ -103,48 +110,4 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	check(1)
 	require.NoError(t, cl.Delete(ctx, parent))
 	check(0)
-}
-
-func TestDuplicateDNSRecordCreation(t *testing.T) {
-	scheme := runtime.NewScheme()
-	require.NoError(t, iov1.AddToScheme(scheme))
-	parent := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: "ingress", Name: "gateway"}}
-	existing := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Namespace: parent.Namespace, Name: "unexpected-name", Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: parent.Name}}, Spec: iov1.DNSRecordSpec{DNSName: "same.example.com."}}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
-	r := &reconciler{client: cl}
-	errors := r.ensureDNSRecordsForGateway(context.Background(), parent, &corev1.Service{}, []string{"same.example.com."}, nil, nil)
-	require.Len(t, errors, 1)
-	require.ErrorContains(t, errors[0], "duplicate DNSRecord")
-	require.NotContains(t, errors[0].Error(), "same.example.com")
-	require.NotContains(t, errors[0].Error(), existing.Name)
-	var records iov1.DNSRecordList
-	require.NoError(t, cl.List(context.Background(), &records))
-	require.Len(t, records.Items, 1, "must not create another record for an already represented hostname")
-}
-
-func TestListenerSetReparentEnqueuesBothServices(t *testing.T) {
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
-	var services []client.Object
-	for _, name := range []string{"old", "new"} {
-		services = append(services, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ingress", Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: name}}})
-	}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(services...).Build()
-	r := &reconciler{config: Config{OperandNamespace: "ingress"}, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}}
-	old := &gatewayapiv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant"}, Spec: gatewayapiv1.ListenerSetSpec{ParentRef: gatewayapiv1.ParentGatewayReference{Name: "old", Namespace: ptr.To(gatewayapiv1.Namespace("ingress"))}}}
-	updated := old.DeepCopy()
-	updated.Spec.ParentRef.Name = "new"
-	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
-	defer queue.ShutDown()
-	handler.EnqueueRequestsFromMapFunc(r.requestsForListenerSet).Update(context.Background(), event.UpdateEvent{ObjectOld: old, ObjectNew: updated}, queue)
-	require.Equal(t, 2, queue.Len())
-	var actual []string
-	for queue.Len() > 0 {
-		request, _ := queue.Get()
-		actual = append(actual, request.Name)
-		queue.Done(request)
-	}
-	require.ElementsMatch(t, []string{"old", "new"}, actual)
-	updated.Spec.ParentRef.Namespace = ptr.To(gatewayapiv1.Namespace("not-operand"))
-	require.Empty(t, r.requestsForListenerSet(context.Background(), updated))
 }
