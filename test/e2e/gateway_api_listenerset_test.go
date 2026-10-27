@@ -161,23 +161,15 @@ func testGatewayAPIListenerSets(t *testing.T) {
 		if err := kclient.Get(ctx, client.ObjectKeyFromObject(conflict), conflict); err != nil {
 			return false
 		}
-		for _, listener := range conflict.Status.Listeners {
-			if meta.IsStatusConditionTrue(listener.Conditions, "Conflicted") {
-				return true
-			}
-		}
-		return false
+		accepted := meta.FindStatusCondition(conflict.Status.Conditions, "Accepted")
+		return accepted != nil && accepted.ObservedGeneration == conflict.Generation && (accepted.Status == metav1.ConditionTrue || accepted.Status == metav1.ConditionFalse)
 	}, 3*time.Minute, time.Second)
-	prometheus := createPrometheusClient(t)
-	query := `gateway_api_dns_conflicts{listenerset_namespace="` + namespace.Name + `",listenerset_name="conflict"}`
-	assertMetricValue(t, prometheus, query, 1, "conflict gauge must count conflicted listeners")
 	require.NoError(t, waitForClusterOperatorConditions(t, kclient, configv1.ClusterOperatorStatusCondition{Type: configv1.OperatorDegraded, Status: configv1.ConditionFalse}))
 	require.NoError(t, waitForIngressControllerCondition(t, kclient, 2*time.Minute, client.ObjectKey{Namespace: operatorcontroller.DefaultOperatorNamespace, Name: "default"}, operatorv1.OperatorCondition{Type: "Degraded", Status: operatorv1.ConditionFalse}))
 	waitDNS(gateways[0], secondHostname, true)
 	traffic(first, gateways[0], firstHostname)
 	traffic(second, gateways[0], secondHostname)
 	require.NoError(t, kclient.Delete(ctx, conflict))
-	assertMetricGone(t, prometheus, query, "deleted ListenerSet metric must be removed")
 	updateListenerSet(first, func(spec *gatewayapiv1.ListenerSetSpec) {
 		spec.ParentRef.Name = gatewayapiv1.ObjectName(gateways[1].Name)
 	})

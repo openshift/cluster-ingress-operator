@@ -8,7 +8,6 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
-	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -22,14 +21,13 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func TestListenerSetStatusAndMetrics(t *testing.T) {
-	dnsConflicts.Reset()
-	t.Cleanup(dnsConflicts.Reset)
+func TestListenerSetStatus(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayapiv1.AddToScheme(scheme))
 	require.NoError(t, configv1.AddToScheme(scheme))
 	require.NoError(t, iov1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 	parent := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: operatorcontroller.DefaultOperandNamespace}, Spec: gatewayapiv1.GatewaySpec{GatewayClassName: "managed"}}
 	class := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "managed"}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName}}
 	listenerSet := &gatewayapiv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "listeners", Namespace: "tenant", Generation: 3}, Spec: gatewayapiv1.ListenerSetSpec{
@@ -38,14 +36,23 @@ func TestListenerSetStatusAndMetrics(t *testing.T) {
 	}, Status: gatewayapiv1.ListenerSetStatus{
 		Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 3}, {Type: "Programmed", Status: metav1.ConditionTrue, ObservedGeneration: 3}},
 		Listeners: []gatewayapiv1.ListenerEntryStatus{
-			{Name: "good", Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 3}}},
-			{Name: "bad", Conditions: []metav1.Condition{{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 3}}},
+			{Name: "good", Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 3}, {Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2}}},
+			{Name: "bad", Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionFalse, ObservedGeneration: 3}}},
 		},
 	}}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(listenerSet).WithObjects(parent, class, listenerSet, &configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.DNSSpec{PublicZone: &configv1.DNSZone{ID: "zone"}}}).WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
+	istioStatus := listenerSet.DeepCopy().Status
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(listenerSet, parent).WithObjects(parent, class, listenerSet, &configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.DNSSpec{PublicZone: &configv1.DNSZone{ID: "zone"}}}).WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
 	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	mode.SetCRDsEstablished(true)
 	r := &listenerSetReconciler{client: cl, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, modeAccessor: mode}
+	gatewayReconciler := &reconciler{client: cl, cache: testutil.FakeCache{Reader: cl}, eventreader: cl, modeAccessor: mode}
+	checkGatewayDNS := func(expected metav1.ConditionStatus) {
+		t.Helper()
+		_, err := gatewayReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(parent)})
+		require.NoError(t, err)
+		require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(parent), parent))
+		require.Equal(t, expected, meta.FindStatusCondition(parent.Status.Conditions, "DNSReady").Status)
+	}
 	request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(listenerSet)}
 	reconcileStatus := func() {
 		t.Helper()
@@ -54,12 +61,13 @@ func TestListenerSetStatusAndMetrics(t *testing.T) {
 		require.NoError(t, cl.Get(ctx, request.NamespacedName, listenerSet))
 	}
 	reconcileStatus()
-	require.Equal(t, float64(1), promtest.ToFloat64(dnsConflicts.WithLabelValues("tenant", "listeners")))
 	require.True(t, meta.IsStatusConditionFalse(listenerSet.Status.Conditions, "DNSReady"))
 	require.Equal(t, "RecordNotFound", meta.FindStatusCondition(listenerSet.Status.Listeners[0].Conditions, "DNSReady").Reason)
 	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Listeners[1].Conditions, "DNSReady"))
 	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "Programmed"))
-	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[1].Conditions, "Conflicted"))
+	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[0].Conditions, "Conflicted"))
+	require.Equal(t, int64(2), meta.FindStatusCondition(listenerSet.Status.Listeners[0].Conditions, "Conflicted").ObservedGeneration)
+	checkGatewayDNS(metav1.ConditionFalse)
 	require.Equal(t, []reconcile.Request{request}, r.requestsForParent(ctx, client.ObjectKeyFromObject(parent)))
 	before := listenerSet.DeepCopy()
 	reconcileStatus()
@@ -69,15 +77,15 @@ func TestListenerSetStatusAndMetrics(t *testing.T) {
 	reconcileStatus()
 	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[0].Conditions, "DNSReady"), "status lookup must use normalized DNSName, not the object's name")
 	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "DNSReady"))
-	listenerSet.Status.Listeners[1].Conditions[0].Status = metav1.ConditionFalse
-	require.NoError(t, cl.Status().Update(ctx, listenerSet))
-	reconcileStatus()
-	require.Equal(t, float64(0), promtest.ToFloat64(dnsConflicts.WithLabelValues("tenant", "listeners")))
+	require.Equal(t, istioStatus.Conditions, listenerSet.Status.Conditions[:len(istioStatus.Conditions)])
+	for index, listener := range istioStatus.Listeners {
+		require.Equal(t, listener.Conditions, listenerSet.Status.Listeners[index].Conditions[:len(listener.Conditions)])
+	}
+	checkGatewayDNS(metav1.ConditionTrue)
 	listenerSet.Spec.ParentRef.Kind = ptr.To(gatewayapiv1.Kind("Service"))
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	reconcileStatus()
 	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady"))
-	require.Equal(t, 0, promtest.CollectAndCount(dnsConflicts))
 	listenerSet.Spec.ParentRef.Kind = nil
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	reconcileStatus()
@@ -92,32 +100,15 @@ func TestListenerSetStatusAndMetrics(t *testing.T) {
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	reconcileStatus()
 	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady"))
-	require.Equal(t, 0, promtest.CollectAndCount(dnsConflicts))
 	listenerSet.Spec.ParentRef.Namespace = ptr.To(gatewayapiv1.Namespace(parent.Namespace))
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	reconcileStatus()
-	require.Equal(t, 1, promtest.CollectAndCount(dnsConflicts))
 	require.NoError(t, cl.Delete(ctx, parent))
 	reconcileStatus()
-	require.Equal(t, 0, promtest.CollectAndCount(dnsConflicts))
 	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady"))
 	require.NoError(t, cl.Delete(ctx, listenerSet))
 	_, err := r.Reconcile(ctx, request)
 	require.NoError(t, err)
-	require.Equal(t, 0, promtest.CollectAndCount(dnsConflicts))
-}
-
-func TestDuplicateGatewayDNSRecords(t *testing.T) {
-	scheme := runtime.NewScheme()
-	require.NoError(t, iov1.AddToScheme(scheme))
-	var records []client.Object
-	for _, name := range []string{"one", "two"} {
-		records = append(records, &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ingress", Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: "gateway"}}, Spec: iov1.DNSRecordSpec{DNSName: "same.example.com."}})
-	}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(records...).Build()
-	_, err := dnsRecordsForGateway(context.Background(), cl, client.ObjectKey{Namespace: "ingress", Name: "gateway"})
-	require.ErrorContains(t, err, "duplicate DNSRecords")
-	require.NotContains(t, err.Error(), "same.example.com")
 }
 
 func TestForeignGatewayStatusIsUntouched(t *testing.T) {

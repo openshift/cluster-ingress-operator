@@ -10,28 +10,16 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
-	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
-
-var dnsConflicts = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-	Name: "gateway_api_dns_conflicts",
-	Help: "Current number of ListenerSet listeners reported Conflicted by Istio on an OpenShift-managed Gateway.",
-}, []string{"listenerset_namespace", "listenerset_name"})
-
-func RegisterMetrics() error {
-	return ctrlmetrics.Registry.Register(dnsConflicts)
-}
 
 type listenerSetReconciler struct {
 	client       client.Client
@@ -102,9 +90,6 @@ func (r *listenerSetReconciler) requestsForParent(ctx context.Context, parent ty
 func (r *listenerSetReconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	var listenerSet gatewayapiv1.ListenerSet
 	if err := r.cache.Get(ctx, request.NamespacedName, &listenerSet); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			dnsConflicts.DeleteLabelValues(request.Namespace, request.Name)
-		}
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
 	updated := listenerSet.DeepCopy()
@@ -125,13 +110,6 @@ func (r *listenerSetReconciler) Reconcile(ctx context.Context, request reconcile
 		}
 	}
 	if managed {
-		count := 0
-		for _, listener := range listenerSet.Status.Listeners {
-			if meta.IsStatusConditionTrue(listener.Conditions, string(gatewayapiv1.ListenerEntryConditionConflicted)) {
-				count++
-			}
-		}
-		dnsConflicts.WithLabelValues(request.Namespace, request.Name).Set(float64(count))
 		hostnames = operatorcontroller.ListenerSetDNSHostnames(&listenerSet)
 		if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
 			return reconcile.Result{}, err
@@ -141,8 +119,6 @@ func (r *listenerSetReconciler) Reconcile(ctx context.Context, request reconcile
 		if err != nil {
 			return reconcile.Result{}, err
 		}
-	} else {
-		dnsConflicts.DeleteLabelValues(request.Namespace, request.Name)
 	}
 	status.ComputeListenerSetDNSStatus(&dnsConfig, updated, hostnames, records)
 	if !reflect.DeepEqual(listenerSet.Status, updated.Status) {
