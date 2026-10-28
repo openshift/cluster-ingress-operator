@@ -24,12 +24,19 @@ metadata:
   annotations:
     unsupported.do-not-use.openshift.io/ossm-catalog: redhat-operators
     unsupported.do-not-use.openshift.io/ossm-channel: stable
-    unsupported.do-not-use.openshift.io/ossm-version: servicemeshoperator3.v3.1.0
-    unsupported.do-not-use.openshift.io/istio-version: v1.26-latest
+    unsupported.do-not-use.openshift.io/ossm-version: servicemeshoperator3.v3.3.8
+    unsupported.do-not-use.openshift.io/istio-version: v1.28-latest
 spec:
   controllerName: openshift.io/gateway-controller/v1
 EOF
 ```
+
+`v1.28-latest` is a Sail version alias, not an OCI image tag. In the direct
+Sail Library path, Ingress Operator resolves the alias through Sail's embedded
+version catalog before installing the concrete version's charts. In the OLM
+path, the alias is passed unchanged to the Istio resource for OSSM to resolve.
+The concrete version follows the bundled Sail catalog; this does not select a
+mutable `:1.28-latest` image tag.
 
 **Note: The OSSM override annotations are intended to be used when initially
 creating the GatewayClass CR and associated Subscription CR.**  If you set the
