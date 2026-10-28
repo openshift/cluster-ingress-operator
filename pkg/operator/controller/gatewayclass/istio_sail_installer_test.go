@@ -3,6 +3,7 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -14,11 +15,14 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
 
+	"sigs.k8s.io/yaml"
+
 	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -73,10 +77,10 @@ func TestEnsureIstioVersionResolution(test *testing.T) {
 		version         string
 		expectedVersion string
 	}{
-		{name: "alias", version: "v1.28-latest", expectedVersion: "v1.28.10"},
-		{name: "concrete latest", version: "v1.28.10", expectedVersion: "v1.28.10"},
-		{name: "concrete earlier patch", version: "v1.28.8", expectedVersion: "v1.28.8"},
-		{name: "unprefixed concrete version", version: "1.28.8", expectedVersion: "v1.28.8"},
+		{name: "alias", version: "v1.27-latest", expectedVersion: "v1.27.9"},
+		{name: "concrete latest", version: "v1.27.9", expectedVersion: "v1.27.9"},
+		{name: "concrete earlier patch", version: "v1.27.8", expectedVersion: "v1.27.8"},
+		{name: "unprefixed concrete version", version: "1.27.8", expectedVersion: "v1.27.8"},
 		{name: "unknown alias", version: "v9.99-latest"},
 		{name: "unknown concrete version", version: "v9.99.99"},
 		{name: "malformed version", version: "not-a-version"},
@@ -110,6 +114,18 @@ func TestEnsureIstioVersionResolution(test *testing.T) {
 					helm.FromValues(installer.internalOpts.Values), installer.internalOpts.Namespace, chart)
 				require.NoError(test, err)
 				require.NotEmpty(test, rendered)
+				if chart == "istiod" {
+					manifest, found := rendered["istiod/templates/deployment.yaml"]
+					require.True(test, found)
+					var deployment appsv1.Deployment
+					require.NoError(test, yaml.Unmarshal([]byte(manifest), &deployment))
+					require.Equal(test, "Deployment", deployment.Kind)
+					require.Len(test, deployment.Spec.Template.Spec.Containers, 1)
+					container := deployment.Spec.Template.Spec.Containers[0]
+					assert.Equal(test, "discovery", container.Name)
+					assert.Contains(test, container.Image, "/pilot:")
+					assert.True(test, strings.HasSuffix(container.Image, ":"+strings.TrimPrefix(testCase.expectedVersion, "v")), "unexpected rendered image %q", container.Image)
+				}
 			}
 		})
 	}

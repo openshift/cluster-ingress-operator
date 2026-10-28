@@ -358,12 +358,12 @@ func Test_Reconcile(t *testing.T) {
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
 				gatewayClass("openshift-default", false, map[string]string{
-					"unsupported.do-not-use.openshift.io/istio-version": "v1.28-latest",
+					"unsupported.do-not-use.openshift.io/istio-version": "v1.27-latest",
 				}, nil, false),
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.28-latest", false, nil),
+				istio("v1.27-latest", false, nil),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -481,7 +481,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.28.10", false, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.27.9", false, nil),
 		},
 		{
 			name:              "Sail Library: installs Istio",
@@ -493,7 +493,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.28.10", false, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.27.9", false, nil),
 		},
 		{
 			name:              "Sail Library: installs Istio with system proxy configuration",
@@ -506,7 +506,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.28.10", false, expectedProxyConfiguration),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.27.9", false, expectedProxyConfiguration),
 		},
 		{
 			name:              "Sail Library: experimental InferencePool CRD",
@@ -523,7 +523,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.28.10", true, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.27.9", true, nil),
 		},
 		{
 			name:              "Sail Library: stable InferencePool CRD",
@@ -540,7 +540,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.28.10", true, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.27.9", true, nil),
 		},
 		{
 			name:              "Sail Library: Istio version override",
@@ -548,15 +548,15 @@ func Test_Reconcile(t *testing.T) {
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
 				gatewayClass("openshift-default", true, map[string]string{
-					"unsupported.do-not-use.openshift.io/istio-version": "v1.28-latest",
+					"unsupported.do-not-use.openshift.io/istio-version": "v1.27-latest",
 				}, nil, false),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, map[string]string{
-					"unsupported.do-not-use.openshift.io/istio-version": "v1.28-latest",
+					"unsupported.do-not-use.openshift.io/istio-version": "v1.27-latest",
 				}, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.28.10", false, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.27.9", false, nil),
 		},
 		{
 			name:              "Sail Library: full removal of last GatewayClass",
@@ -650,7 +650,7 @@ func Test_Reconcile(t *testing.T) {
 			}
 			if tc.fakeSailInstaller != nil {
 				reconciler.config.GatewayAPIWithoutOLMEnabled = true
-				reconciler.config.IstioVersion = "v1.28-latest"
+				reconciler.config.IstioVersion = "v1.27-latest"
 				reconciler.sailInstaller = tc.fakeSailInstaller
 			}
 			res, err := reconciler.Reconcile(context.Background(), tc.request)
