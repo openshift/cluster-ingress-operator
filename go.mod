@@ -227,6 +227,6 @@ require (
 // github.com/istio-ecosystem/sail-operator.
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
-// Use OSSM release-3.3.7 branch (downstream fork of sail-operator).
+// Use OSSM release-3.3.8 branch (downstream fork of sail-operator).
 // Replace needed because the fork keeps upstream module name for compatibility.
-replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260908200854-5eacde5fe481
+replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20261006191828-d8e8ebc0e3e5
