@@ -47,6 +47,8 @@ require (
 	sigs.k8s.io/gateway-api v1.4.1 // Replaced at bottom of file; see replace directives for actual version used.
 )
 
+require sigs.k8s.io/yaml v1.6.0
+
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
@@ -207,7 +209,6 @@ require (
 	sigs.k8s.io/kustomize/kyaml v0.19.0 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 // This replace stanza is necessary to import
