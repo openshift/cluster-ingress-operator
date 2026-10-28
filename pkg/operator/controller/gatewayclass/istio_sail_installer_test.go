@@ -8,8 +8,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/resources"
 
 	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
@@ -63,6 +66,54 @@ func (i *fakeSailInstaller) Status() install.Status {
 }
 
 func (i *fakeSailInstaller) Enqueue() {}
+
+func TestEnsureIstioVersionResolution(test *testing.T) {
+	testCases := []struct {
+		name            string
+		version         string
+		expectedVersion string
+	}{
+		{name: "alias", version: "v1.28-latest", expectedVersion: "v1.28.10"},
+		{name: "concrete latest", version: "v1.28.10", expectedVersion: "v1.28.10"},
+		{name: "concrete earlier patch", version: "v1.28.8", expectedVersion: "v1.28.8"},
+		{name: "unprefixed concrete version", version: "1.28.8", expectedVersion: "v1.28.8"},
+		{name: "unknown alias", version: "v9.99-latest"},
+		{name: "unknown concrete version", version: "v9.99.99"},
+		{name: "malformed version", version: "not-a-version"},
+		{name: "empty version"},
+	}
+	for _, testCase := range testCases {
+		test.Run(testCase.name, func(test *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(test, configv1.Install(scheme))
+			require.NoError(test, apiextensionsv1.AddToScheme(scheme))
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			installer := &fakeSailInstaller{}
+			reconciler := &reconciler{
+				cache:         &testutil.FakeCache{Reader: fakeClient},
+				config:        Config{OperandNamespace: "openshift-ingress"},
+				sailInstaller: installer,
+			}
+			err := reconciler.ensureIstio(context.Background(), testCase.version)
+			if testCase.expectedVersion == "" {
+				require.ErrorContains(test, err, fmt.Sprintf("failed to resolve Istio version %q", testCase.version))
+				assert.False(test, installer.status.Installed)
+				assert.Empty(test, installer.internalOpts.Version)
+				return
+			}
+			require.NoError(test, err)
+			require.Equal(test, testCase.expectedVersion, installer.internalOpts.Version)
+			require.True(test, installer.status.Installed)
+			require.NoError(test, install.ValidateVersion(resources.FS, installer.internalOpts.Version))
+			for _, chart := range []string{"base", "istiod"} {
+				rendered, err := helm.RenderChart(resources.FS, installer.internalOpts.Version+"/charts/"+chart,
+					helm.FromValues(installer.internalOpts.Values), installer.internalOpts.Namespace, chart)
+				require.NoError(test, err)
+				require.NotEmpty(test, rendered)
+			}
+		})
+	}
+}
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 	crd := func(name string, labels map[string]string) *apiextensionsv1.CustomResourceDefinition {
