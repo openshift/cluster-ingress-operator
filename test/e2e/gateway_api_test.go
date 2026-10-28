@@ -589,6 +589,22 @@ func testGatewayAPIManagedProfileVAPProtection(t *testing.T) {
 		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
 	}
 	assertManagedProfileAdmissionDenied(t, kclient.Create(t.Context(), profile, client.DryRunAll))
+
+	// The class created by the automated MaaS installation path must stay user-creatable.
+	exception := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "openshift-ai-inference"},
+		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: "istio.io/gateway-controller"},
+	}
+	err := kclient.Get(t.Context(), client.ObjectKeyFromObject(exception), &gatewayapiv1.GatewayClass{})
+	switch {
+	case errors.IsNotFound(err):
+		require.NoError(t, kclient.Create(t.Context(), exception, client.DryRunAll),
+			"GatewayClass %s must remain user-creatable", exception.Name)
+	case err != nil:
+		require.NoError(t, err)
+	default:
+		t.Logf("GatewayClass %s already exists; skipping the exception check", exception.Name)
+	}
 }
 
 // testGatewayAPIManagedProfilesLifecycle verifies class recreation and Sail defaults regeneration.
