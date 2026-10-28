@@ -474,8 +474,6 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
-github.com/openshift-service-mesh/sail-operator v0.0.0-20260327145107-d4059b965c68 h1:qbJWOmvwtzZJT6u7b2HHMF3g0wWvbcYmv9keKcJlb+k=
-github.com/openshift-service-mesh/sail-operator v0.0.0-20260327145107-d4059b965c68/go.mod h1:l5/9fIFLMnrArPGvg49DBrWZzi8LojS5OcGe9nJeeI4=
 github.com/openshift-sustaining/net v0.50.0-sec.3 h1:TNbXgbvhgUG+B+yZIwLyMAYJtMNRkR63ANzkD2WU+F0=
 github.com/openshift-sustaining/net v0.50.0-sec.3/go.mod h1:UgoSli3F/pBgdJBHCTc+tp3gmrU4XswgGRgtnwWTfyM=
 github.com/openshift/api v0.0.0-20260602200800-1d79f30d4668 h1:aQdvqyCvjYYz+lRYimcht9II7PrabeZfrh5VfGxDA6I=
@@ -515,6 +513,8 @@ github.com/prometheus/otlptranslator v0.0.0-20250717125610-8549f4ab4f8f h1:QQB6S
 github.com/prometheus/otlptranslator v0.0.0-20250717125610-8549f4ab4f8f/go.mod h1:P8AwMgdD7XEr6QRUJ2QWLpiAZTgTE2UYgjlu3svompI=
 github.com/prometheus/procfs v0.17.0 h1:FuLQ+05u4ZI+SS/w9+BWEM2TXiHKsUQ9TADiRH7DuK0=
 github.com/prometheus/procfs v0.17.0/go.mod h1:oPQLaDAMRbA+u8H5Pbfq+dl3VDAvHxMUOVhe0wYB2zw=
+github.com/redhat-chai-bot/istio-ecosystem_sail-operator v0.0.0-20261023001215-887719959b6e h1:GeAurAFVhvgN22Bg8BfzaIkLQ5bhMG6xUNuw+a+RlP8=
+github.com/redhat-chai-bot/istio-ecosystem_sail-operator v0.0.0-20261023001215-887719959b6e/go.mod h1:Hoi3wKdWpqR7CswI7OZt/KIaKshww4+eznSp4nW+Pls=
 github.com/redis/go-redis/extra/rediscmd/v9 v9.0.5 h1:EaDatTxkdHG+U3Bk4EUr+DZ7fOGwTfezUiUJMaIcaho=
 github.com/redis/go-redis/extra/rediscmd/v9 v9.0.5/go.mod h1:fyalQWdtzDBECAQFBJuQe5bzQ02jGd5Qcbgb97Flm7U=
 github.com/redis/go-redis/extra/redisotel/v9 v9.0.5 h1:EfpWLLCyXw8PSM2/XNJLjI3Pb27yVE+gIAfeqp8LUCc=

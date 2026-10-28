@@ -3,19 +3,26 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/resources"
+
+	"sigs.k8s.io/yaml"
 
 	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -63,6 +70,66 @@ func (i *fakeSailInstaller) Status() install.Status {
 }
 
 func (i *fakeSailInstaller) Enqueue() {}
+
+func TestEnsureIstioVersionResolution(test *testing.T) {
+	testCases := []struct {
+		name            string
+		version         string
+		expectedVersion string
+	}{
+		{name: "alias", version: "v1.27-latest", expectedVersion: "v1.27.9"},
+		{name: "concrete latest", version: "v1.27.9", expectedVersion: "v1.27.9"},
+		{name: "concrete earlier patch", version: "v1.27.8", expectedVersion: "v1.27.8"},
+		{name: "unprefixed concrete version", version: "1.27.8", expectedVersion: "v1.27.8"},
+		{name: "unknown alias", version: "v9.99-latest"},
+		{name: "unknown concrete version", version: "v9.99.99"},
+		{name: "malformed version", version: "not-a-version"},
+		{name: "empty version"},
+	}
+	for _, testCase := range testCases {
+		test.Run(testCase.name, func(test *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(test, configv1.Install(scheme))
+			require.NoError(test, apiextensionsv1.AddToScheme(scheme))
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+			installer := &fakeSailInstaller{}
+			reconciler := &reconciler{
+				cache:         &testutil.FakeCache{Reader: fakeClient},
+				config:        Config{OperandNamespace: "openshift-ingress"},
+				sailInstaller: installer,
+			}
+			err := reconciler.ensureIstio(context.Background(), testCase.version)
+			if testCase.expectedVersion == "" {
+				require.ErrorContains(test, err, fmt.Sprintf("failed to resolve Istio version %q", testCase.version))
+				assert.False(test, installer.status.Installed)
+				assert.Empty(test, installer.internalOpts.Version)
+				return
+			}
+			require.NoError(test, err)
+			require.Equal(test, testCase.expectedVersion, installer.internalOpts.Version)
+			require.True(test, installer.status.Installed)
+			require.NoError(test, install.ValidateVersion(resources.FS, installer.internalOpts.Version))
+			for _, chart := range []string{"base", "istiod"} {
+				rendered, err := helm.RenderChart(resources.FS, installer.internalOpts.Version+"/charts/"+chart,
+					helm.FromValues(installer.internalOpts.Values), installer.internalOpts.Namespace, chart)
+				require.NoError(test, err)
+				require.NotEmpty(test, rendered)
+				if chart == "istiod" {
+					manifest, found := rendered["istiod/templates/deployment.yaml"]
+					require.True(test, found)
+					var deployment appsv1.Deployment
+					require.NoError(test, yaml.Unmarshal([]byte(manifest), &deployment))
+					require.Equal(test, "Deployment", deployment.Kind)
+					require.Len(test, deployment.Spec.Template.Spec.Containers, 1)
+					container := deployment.Spec.Template.Spec.Containers[0]
+					assert.Equal(test, "discovery", container.Name)
+					assert.Contains(test, container.Image, "/pilot:")
+					assert.True(test, strings.HasSuffix(container.Image, ":"+strings.TrimPrefix(testCase.expectedVersion, "v")), "unexpected rendered image %q", container.Image)
+				}
+			}
+		})
+	}
+}
 
 func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 	crd := func(name string, labels map[string]string) *apiextensionsv1.CustomResourceDefinition {
