@@ -47,6 +47,8 @@ require (
 	sigs.k8s.io/gateway-api v1.4.1 // Replaced at bottom of file; see replace directives for actual version used.
 )
 
+require sigs.k8s.io/yaml v1.6.0
+
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
@@ -207,7 +209,6 @@ require (
 	sigs.k8s.io/kustomize/kyaml v0.19.0 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 // This replace stanza is necessary to import
@@ -224,8 +225,8 @@ replace (
 	sigs.k8s.io/gateway-api => sigs.k8s.io/gateway-api v1.3.0
 )
 
-// Use OSSM 3.3.1 for Sail Library integration.
+// Use OSSM 3.3.8 for Sail Library integration.
 // Replace needed because the fork keeps upstream module name for compatibility.
-replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260327145107-d4059b965c68
+replace github.com/istio-ecosystem/sail-operator => github.com/redhat-chai-bot/istio-ecosystem_sail-operator v0.0.0-20261028145908-0b72c92f0651
 
 replace golang.org/x/net => github.com/openshift-sustaining/net v0.50.0-sec.3

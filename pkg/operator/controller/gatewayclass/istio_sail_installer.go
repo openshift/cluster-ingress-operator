@@ -7,6 +7,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istioversion"
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -117,6 +118,11 @@ func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiext
 // ensureIstio installs or updates Istio using the Sail Library.
 // It returns an error if the installation fails.
 func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error {
+	resolvedVersion, err := istioversion.Resolve(install.NormalizeVersion(istioVersion))
+	if err != nil {
+		return fmt.Errorf("failed to resolve Istio version %q: %w", istioVersion, err)
+	}
+
 	sailInstaller := r.sailInstaller
 
 	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
@@ -132,7 +138,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 	}
 
 	// Build options from current state
-	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion, &extraIstioConfig{
+	opts := r.buildInstallerOptions(enableInferenceExtension, resolvedVersion, &extraIstioConfig{
 		proxyConfig: &proxyConfig,
 	})
 
