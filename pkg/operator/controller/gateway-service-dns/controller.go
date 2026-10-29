@@ -72,13 +72,13 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 			old := e.ObjectOld.(*gatewayapiv1.Gateway)
 			new := e.ObjectNew.(*gatewayapiv1.Gateway)
 			// A DNSRecord CR needs to be updated if the
-			// hostname or the GatewayClass has changed (a
-			// listener's port and protocol have no bearing on
-			// the DNS record).
+			// hostname or the Gateway's gatewayClassName has
+			// changed (a listener's port and protocol have no
+			// bearing on the DNS record).
 			changed := old.Spec.GatewayClassName != new.Spec.GatewayClassName ||
 				gatewayListenersHostnamesChanged(old.Spec.Listeners, new.Spec.Listeners)
 			if changed {
-				log.Info("Listener hostname or GatewayClass changed", "gateway", new.Name)
+				log.Info("Gateway listener hostname or gatewayClassName changed", "gateway", new.Name)
 			}
 			return changed
 		},
@@ -209,7 +209,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	dnsConfig := &configv1.DNS{}
 	// ClusterIP gateways have no external load balancer address for DNS records.
-	// Remove stale records when a DNS-supported class transitions to ClusterIP.
+	// Remove stale records when a DNS-supported Gateway switches to the ClusterIP GatewayClass.
 	if gateway.Spec.GatewayClassName == operatorcontroller.OpenShiftClusterIPGatewayClassName {
 		errs := r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, sets.NewString())
 		return reconcile.Result{}, utilerrors.NewAggregate(errs)

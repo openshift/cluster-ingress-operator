@@ -134,8 +134,8 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
 		// Match on the controller name and on whether the name is a managed
-		// profile. A class created under a reserved name by another controller
-		// cannot be adopted, and its controllerName is immutable, so the class
+		// profile. A GatewayClass created under a reserved name by another controller
+		// cannot be adopted, and its controllerName is immutable, so the GatewayClass
 		// must be deleted; passing the delete event re-triggers the managed
 		// profile.
 		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName ||
@@ -386,16 +386,17 @@ func (r *reconciler) enqueueRequestForCRDOwnershipChange() handler.EventHandler 
 // enqueueRequestForSomeGatewayClass enqueues GatewayClass reconciliation.
 // In NoOLM mode, managed profile events enqueue only that profile; all other
 // events fan out to every OpenShift GatewayClass.
-// In OLM mode, it selects the oldest class to avoid subscription conflicts.
+// In OLM mode, it selects the oldest GatewayClass to avoid subscription conflicts.
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
 			if r.config.GatewayAPIWithoutOLMEnabled {
 				// A managed profile event affects only that profile, which neither
 				// installs nor uninstalls Sail. Every other event fans out: Sail
-				// renders defaults for the whole class set in one Apply, so mapping
-				// a user-class event to itself leaves a deleted, non-last class in
-				// Sail's desired state until an unrelated event fans out.
+				// renders defaults for the whole GatewayClass set in one Apply, so
+				// mapping a user-created GatewayClass event to itself leaves a
+				// deleted, non-last GatewayClass in Sail's desired state until an
+				// unrelated event fans out.
 				if gatewayClass, ok := obj.(*gatewayapiv1.GatewayClass); ok && isManagedProfileName(gatewayClass.Name) {
 					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
 				}
@@ -614,8 +615,9 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 // for direct Helm-based installation of Istio.
 func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling with sail library", "request", request)
-	// Sync managed profiles separately, including before the GatewayClass
-	// exists. They do not trigger Sail installation or uninstallation.
+	// Sync managed profiles separately, including before the profile's
+	// GatewayClass exists. They do not trigger Sail installation or
+	// uninstallation.
 	if isManagedProfileName(request.Name) {
 		return r.syncManagedProfile(ctx, request.Name)
 	}

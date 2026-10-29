@@ -324,7 +324,7 @@ func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
 	}
 }
 
-// testGatewayAPIManagedProfileClusterIP verifies fresh ClusterIP provisioning and both class transitions.
+// testGatewayAPIManagedProfileClusterIP verifies fresh ClusterIP provisioning and both directions of a gatewayClassName change.
 func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	managedProfile, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftClusterIPGatewayClassName)
 	require.NoError(t, err)
@@ -391,7 +391,7 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	require.NoError(t, err, "Istio did not recreate the Gateway Service with the managed profile's ClusterIP configuration")
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
 
-	// Change the GatewayClass to openshift-default and verify LoadBalancer traffic and supported DNS publication.
+	// Switch the Gateway to the openshift-default GatewayClass and verify LoadBalancer traffic and supported DNS publication.
 	_, err = assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
 	require.NoError(t, err)
 	require.NoError(t, updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
@@ -402,8 +402,8 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err)
 
-	// Manually delete the previous class's Service so that assertGatewayServiceType
-	// sees only LoadBalancer Services.
+	// Manually delete the leftover Service that Istio created for the previous
+	// GatewayClass so that assertGatewayServiceType sees only LoadBalancer Services.
 	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), clusterIPService, client.Preconditions{UID: &clusterIPService.UID})))
 	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeLoadBalancer))
 	assertHttpRouteConnectionViaService(t, *loadBalancerService, clientPod, hostname)
@@ -422,8 +422,8 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err)
 
-	// Manually delete the previous class's Service so that assertGatewayServiceType
-	// sees only ClusterIP Services.
+	// Manually delete the leftover Service that Istio created for the previous
+	// GatewayClass so that assertGatewayServiceType sees only ClusterIP Services.
 	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), loadBalancerService, client.Preconditions{UID: &loadBalancerService.UID})))
 	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeClusterIP))
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
@@ -590,7 +590,7 @@ func testGatewayAPIManagedProfileVAPProtection(t *testing.T) {
 	}
 	assertManagedProfileAdmissionDenied(t, kclient.Create(t.Context(), profile, client.DryRunAll))
 
-	// The class created by the automated MaaS installation path must stay user-creatable.
+	// The GatewayClass created by the automated MaaS installation path must stay user-creatable.
 	exception := &gatewayapiv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "openshift-ai-inference"},
 		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: "istio.io/gateway-controller"},
@@ -607,17 +607,17 @@ func testGatewayAPIManagedProfileVAPProtection(t *testing.T) {
 	}
 }
 
-// testGatewayAPIManagedProfilesLifecycle verifies class recreation and Sail defaults regeneration.
+// testGatewayAPIManagedProfilesLifecycle verifies managed GatewayClass profile recreation and Sail defaults regeneration.
 func testGatewayAPIManagedProfilesLifecycle(t *testing.T) {
 	require.NoError(t, assertManagedGatewayClassProfiles(t))
 	profile := &gatewayapiv1.GatewayClass{}
 	key := client.ObjectKey{Name: operatorcontroller.OpenShiftClusterIPGatewayClassName}
 	require.NoError(t, kclient.Get(t.Context(), key, profile))
 
-	// Delete the class directly; the controller must recreate a configured profile.
+	// Delete the managed GatewayClass profile directly; the controller must recreate it with a configured status.
 	assertManagedProfileRecreated(t, profile)
 
-	// Repair a status-only mutation on the recreated class without replacing it.
+	// Repair a status-only mutation on the recreated profile without replacing the GatewayClass.
 	assertManagedProfileStatusRepair(t, profile)
 
 	// Defaults replacement must recover association and current profile status.

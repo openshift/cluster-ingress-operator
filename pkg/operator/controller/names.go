@@ -68,7 +68,7 @@ const (
 	// gatewayclass that Istio creates when it is installed.
 	OpenShiftDefaultGatewayClassName = "openshift-default"
 
-	// OpenShiftClusterIPGatewayClassName names the managed ClusterIP GatewayClass.
+	// OpenShiftClusterIPGatewayClassName names the GatewayClass for the managed ClusterIP profile.
 	OpenShiftClusterIPGatewayClassName = "openshift-clusterip"
 
 	// ManagedGatewayClassProfileLabel marks operator-managed GatewayClass profiles as an output label.

@@ -951,11 +951,11 @@ func assertManagedProfileRecreated(t *testing.T, profile *gatewayapiv1.GatewayCl
 	key := client.ObjectKeyFromObject(profile)
 	oldUID := profile.UID
 
-	// CREATE-only reservation does not prevent an ordinary client from deleting an existing class.
+	// CREATE-only reservation does not prevent an ordinary client from deleting an existing GatewayClass.
 	require.NoError(t, kclient.Delete(t.Context(), profile, client.Preconditions{UID: &oldUID}))
 	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, key, profile); err != nil {
-			t.Logf("waiting for recreated GatewayClass %s after UID %s: %v", key, oldUID, err)
+			t.Logf("waiting for recreated managed GatewayClass profile %s after UID %s: %v", key, oldUID, err)
 			return false, client.IgnoreNotFound(err)
 		}
 		condition := meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured")
@@ -969,11 +969,11 @@ func assertManagedProfileRecreated(t *testing.T, profile *gatewayapiv1.GatewayCl
 	}))
 }
 
-// assertManagedProfileStatusRepair verifies a status-only mutation is repaired on the same class UID.
+// assertManagedProfileStatusRepair verifies a status-only mutation is repaired on the same GatewayClass UID.
 func assertManagedProfileStatusRepair(t *testing.T, profile *gatewayapiv1.GatewayClass) {
 	t.Helper()
 	key := client.ObjectKeyFromObject(profile)
-	// A status-only change must be repaired without replacing the recreated class.
+	// A status-only change must be repaired without replacing the recreated GatewayClass.
 	status := profile.DeepCopy()
 	meta.SetStatusCondition(&status.Status.Conditions, metav1.Condition{Type: "openshift.io/Configured", Status: metav1.ConditionFalse, Reason: "LifecycleTest", Message: "Verify status reconciliation", ObservedGeneration: profile.Generation, LastTransitionTime: metav1.Now()})
 	require.NoError(t, kclient.Status().Patch(t.Context(), status, client.MergeFrom(profile)))
@@ -982,7 +982,7 @@ func assertManagedProfileStatusRepair(t *testing.T, profile *gatewayapiv1.Gatewa
 	recreatedUID := profile.UID
 	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, key, profile); err != nil {
-			t.Logf("waiting for managed GatewayClass %s: %v", key, err)
+			t.Logf("waiting for managed GatewayClass profile %s: %v", key, err)
 			return false, nil
 		}
 		condition := meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured")
@@ -1580,12 +1580,12 @@ func waitForGatewayClassCondition(t *testing.T, name string, timeout time.Durati
 	var current *metav1.Condition
 
 	err := wait.PollUntilContextTimeout(t.Context(), time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		class := &gatewayapiv1.GatewayClass{}
-		if err := kclient.Get(ctx, key, class); err != nil {
+		gatewayClass := &gatewayapiv1.GatewayClass{}
+		if err := kclient.Get(ctx, key, gatewayClass); err != nil {
 			t.Logf("failed to get GatewayClass %s, retrying: %v", name, err)
 			return false, nil
 		}
-		current = meta.FindStatusCondition(class.Status.Conditions, condition.Type)
+		current = meta.FindStatusCondition(gatewayClass.Status.Conditions, condition.Type)
 		if current == nil || current.Status != condition.Status || current.Reason != condition.Reason {
 			t.Logf("waiting for GatewayClass %s condition %s=%s/%s; got %+v",
 				name, condition.Type, condition.Status, condition.Reason, current)
@@ -2053,7 +2053,7 @@ func assertManagedGatewayClassProfiles(t *testing.T) error {
 		if err != nil {
 			return err
 		}
-		// Reuse the shared control-plane condition check used for user-created classes.
+		// Reuse the shared control-plane condition check used for user-created GatewayClasses.
 		if err := assertGatewayClassConditions(t, name); err != nil {
 			return err
 		}
@@ -2061,7 +2061,7 @@ func assertManagedGatewayClassProfiles(t *testing.T) error {
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			if err := kclient.Get(ctx, client.ObjectKey{Name: name}, profile); err != nil {
-				t.Logf("waiting for managed GatewayClass %s: %v", name, err)
+				t.Logf("waiting for managed GatewayClass profile %s: %v", name, err)
 				return false, nil
 			}
 
@@ -2074,12 +2074,12 @@ func assertManagedGatewayClassProfiles(t *testing.T) error {
 			if profile.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true" ||
 				profile.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName ||
 				!meta.IsStatusConditionTrue(profile.Status.Conditions, "openshift.io/Configured") {
-				t.Logf("waiting for managed GatewayClass %s with openshift.io/Configured=True; controller=%s labels=%v conditions=%+v",
+				t.Logf("waiting for managed GatewayClass profile %s with openshift.io/Configured=True; controller=%s labels=%v conditions=%+v",
 					name, profile.Spec.ControllerName, profile.Labels, profile.Status.Conditions)
 				return false, nil
 			}
 
-			// Keep ConfigMap ownership checks separate from the class's output label.
+			// Keep ConfigMap ownership checks separate from the GatewayClass's output label.
 			if defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] != name ||
 				defaults.Labels["managed-by"] != "sail-library" ||
 				defaults.Labels["release"] != operatorcontroller.IstioName("").Name+"-istiod" {
@@ -2123,28 +2123,28 @@ func assertManagedGatewayClassProfilesRemoved(t *testing.T) error {
 	})
 }
 
-// gatewayClassService captures the actual Service identity for one class, including its Gateway owner.
-func gatewayClassService(t *testing.T, gateway *gatewayapiv1.Gateway, className string, serviceType corev1.ServiceType) (*corev1.Service, error) {
+// gatewayClassService captures the actual Service identity for one GatewayClass, including its Gateway owner.
+func gatewayClassService(t *testing.T, gateway *gatewayapiv1.Gateway, gatewayClassName string, serviceType corev1.ServiceType) (*corev1.Service, error) {
 	t.Helper()
 	var current *corev1.Service
 	err := wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		var services corev1.ServiceList
 		if err := kclient.List(ctx, &services, client.InNamespace(gateway.Namespace), client.MatchingLabels{
 			operatorcontroller.GatewayNameLabelKey:         gateway.Name,
-			"gateway.networking.k8s.io/gateway-class-name": className,
+			"gateway.networking.k8s.io/gateway-class-name": gatewayClassName,
 		}); err != nil {
-			t.Logf("waiting for Services for Gateway %s class %s: %v", client.ObjectKeyFromObject(gateway), className, err)
+			t.Logf("waiting for Services for Gateway %s with GatewayClass %s: %v", client.ObjectKeyFromObject(gateway), gatewayClassName, err)
 			return false, nil
 		}
 		if len(services.Items) == 0 {
-			t.Logf("waiting for Gateway %s class %s Service", client.ObjectKeyFromObject(gateway), className)
+			t.Logf("waiting for Gateway %s Service with GatewayClass %s", client.ObjectKeyFromObject(gateway), gatewayClassName)
 			return false, nil
 		}
 		if len(services.Items) != 1 {
-			return false, fmt.Errorf("expected one Service for Gateway %s class %s, got %d", client.ObjectKeyFromObject(gateway), className, len(services.Items))
+			return false, fmt.Errorf("expected one Service for Gateway %s with GatewayClass %s, got %d", client.ObjectKeyFromObject(gateway), gatewayClassName, len(services.Items))
 		}
 
-		// Class labels select the candidate; the owner's exact identity authorizes later cleanup.
+		// GatewayClass labels select the candidate; the owner's exact identity authorizes later cleanup.
 		service := &services.Items[0]
 		owned := slices.ContainsFunc(service.OwnerReferences, func(owner metav1.OwnerReference) bool {
 			return owner.APIVersion == gatewayapiv1.GroupVersion.String() && owner.Kind == "Gateway" && owner.Name == gateway.Name && owner.UID == gateway.UID

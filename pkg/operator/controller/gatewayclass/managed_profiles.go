@@ -37,27 +37,27 @@ func (r *reconciler) syncManagedProfile(ctx context.Context, name string) (recon
 		return reconcile.Result{}, nil
 	}
 
-	var classes gatewayapiv1.GatewayClassList
-	if err := r.cache.List(ctx, &classes, client.MatchingFields{
+	var gatewayClasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayClasses, client.MatchingFields{
 		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
 	}); err != nil {
 		return reconcile.Result{}, err
 	}
 
 	// Only user-created OpenShift GatewayClasses enable managed profile resources.
-	wantProfile := countActiveUserCreatedGatewayClasses(&classes, "") > 0
+	wantProfile := countActiveUserCreatedGatewayClasses(&gatewayClasses, "") > 0
 	return r.ensureManagedProfile(ctx, name, wantProfile)
 }
 
-// ensureManagedProfile ensures one class is present or absent, and reconciles owned fields and status when wanted.
+// ensureManagedProfile ensures one managed GatewayClass profile is present or absent, and reconciles owned fields and status when wanted.
 func (r *reconciler) ensureManagedProfile(ctx context.Context, name string, want bool) (reconcile.Result, error) {
-	// Read the named GatewayClass; existing classes are checked in the cases below.
+	// Read the named GatewayClass; existing GatewayClasses are checked in the cases below.
 	have, current, err := r.currentManagedProfile(ctx, name)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
-	// Read the associated ConfigMap defaults before creating a class or updating status.
+	// Read the associated ConfigMap defaults before creating a GatewayClass or updating status.
 	defaultsReady := false
 	if want {
 		defaultsReady, err = r.managedProfileConfigMapDefaultsReady(ctx, name)
@@ -78,15 +78,15 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context, name string, want
 			}
 		} else {
 			defaultsName := managedProfileConfigMapDefaultsName(r.config.OperandNamespace, name)
-			log.Info("waiting for defaults ConfigMap before creating managed GatewayClass",
+			log.Info("waiting for defaults ConfigMap before creating managed GatewayClass profile",
 				"gatewayclass", name, "configmap", defaultsName.String())
 		}
 	case want && have:
 		if current.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
-			// A class created under a reserved name by another controller cannot
+			// A GatewayClass created under a reserved name by another controller cannot
 			// be adopted: its controllerName is immutable, so it must be deleted.
 			log.Error(fmt.Errorf("conflicting controllerName %q", current.Spec.ControllerName),
-				"cannot manage GatewayClass with a reserved name; delete the class to let the Ingress Operator manage the profile",
+				"cannot manage GatewayClass with a reserved name; delete the GatewayClass to let the Ingress Operator manage the profile",
 				"gatewayclass", name)
 			r.recorder.Eventf(current, corev1.EventTypeWarning, "GatewayClassConflict",
 				"GatewayClass %q is managed by another controller (%q); delete it to let the Ingress Operator manage the profile",
@@ -100,7 +100,7 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context, name string, want
 
 	// Update CIO conditions together without replacing other controllers' conditions.
 	if err := r.syncManagedProfileStatus(ctx, name, defaultsReady); err != nil {
-		// Retry a missing class through the queue, including a class just created above.
+		// Retry a missing GatewayClass through the queue, including a GatewayClass just created above.
 		if apierrors.IsNotFound(err) {
 			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 		}
@@ -114,7 +114,7 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context, name string, want
 	return reconcile.Result{}, nil
 }
 
-// deleteAllManagedProfiles requests deletion of managed classes, returning retryable errors for pending deletion.
+// deleteAllManagedProfiles requests deletion of managed profiles, returning retryable errors for pending deletion.
 func (r *reconciler) deleteAllManagedProfiles(ctx context.Context) error {
 	for name := range managedProfiles {
 		if _, err := r.ensureManagedProfile(ctx, name, false); err != nil {
@@ -145,24 +145,25 @@ func (r *reconciler) markProfilesUnmanagedConfigured(ctx context.Context) error 
 	return utilerrors.NewAggregate(errs)
 }
 
-// withDesiredManagedProfiles includes enabled classes' ConfigMap defaults in Sail inputs before class creation.
-func withDesiredManagedProfiles(classes []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
-	classes = slices.Clone(classes)
+// withDesiredManagedProfiles adds enabled managed profiles to the GatewayClasses
+// passed to Sail so that defaults render before a profile's GatewayClass is created.
+func withDesiredManagedProfiles(gatewayClasses []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
+	gatewayClasses = slices.Clone(gatewayClasses)
 	for name := range managedProfiles {
-		if !slices.ContainsFunc(classes, func(class gatewayapiv1.GatewayClass) bool { return class.Name == name }) {
-			classes = append(classes, *desiredManagedProfile(name))
+		if !slices.ContainsFunc(gatewayClasses, func(gatewayClass gatewayapiv1.GatewayClass) bool { return gatewayClass.Name == name }) {
+			gatewayClasses = append(gatewayClasses, *desiredManagedProfile(name))
 		}
 	}
-	return classes
+	return gatewayClasses
 }
 
-// isManagedProfileConfigMapDefaults limits watches to enabled classes' ConfigMap defaults in the operand namespace.
+// isManagedProfileConfigMapDefaults limits watches to enabled managed profiles' ConfigMap defaults in the operand namespace.
 func (r *reconciler) isManagedProfileConfigMapDefaults(object client.Object) bool {
 	return object.GetNamespace() == r.config.OperandNamespace &&
 		isManagedProfileConfigMapDefaultsName(object.GetNamespace(), object.GetName())
 }
 
-// requestsForManagedProfileConfigMapDefaults maps defaults changes, including label removal, to their class.
+// requestsForManagedProfileConfigMapDefaults maps defaults changes, including label removal, to the owning managed profile.
 func (r *reconciler) requestsForManagedProfileConfigMapDefaults(_ context.Context, object client.Object) []reconcile.Request {
 	for name := range managedProfiles {
 		if client.ObjectKeyFromObject(object) == managedProfileConfigMapDefaultsName(r.config.OperandNamespace, name) {
@@ -198,7 +199,7 @@ func (r *reconciler) syncManagedProfileStatus(ctx context.Context, name string, 
 
 // updateManagedProfileStatus reconciles openshift.io/Configured and optional installation conditions without replacing other controllers' updates.
 func updateManagedProfileStatus(ctx context.Context, cl client.Client, name string, status metav1.ConditionStatus, reason, message string, installationStatus *install.Status) error {
-	// Read once so newly created classes and current Accepted conditions are visible.
+	// Read once so newly created GatewayClasses and current Accepted conditions are visible.
 	var current gatewayapiv1.GatewayClass
 	if err := cl.Get(ctx, types.NamespacedName{Name: name}, &current); err != nil {
 		return err
@@ -226,17 +227,17 @@ func updateManagedProfileStatus(ctx context.Context, cl client.Client, name stri
 	return cl.Status().Patch(ctx, updated, client.MergeFromWithOptions(&current, client.MergeFromWithOptimisticLock{}))
 }
 
-// createManagedProfile creates the class only after its defaults are available.
+// createManagedProfile creates the managed GatewayClass profile only after its defaults are available.
 func (r *reconciler) createManagedProfile(ctx context.Context, desired *gatewayapiv1.GatewayClass) error {
 	if err := r.client.Create(ctx, desired); err != nil {
-		return fmt.Errorf("failed to create managed GatewayClass %q: %w", desired.Name, err)
+		return fmt.Errorf("failed to create managed GatewayClass profile %q: %w", desired.Name, err)
 	}
-	log.Info("created managed GatewayClass", "gatewayclass", desired.Name)
+	log.Info("created managed GatewayClass profile", "gatewayclass", desired.Name)
 	return nil
 }
 
 // updateManagedProfile repairs a managed profile's owned fields, including
-// removing the legacy Sail finalizer from a class that is being deleted.
+// removing the legacy Sail finalizer from a GatewayClass that is being deleted.
 func (r *reconciler) updateManagedProfile(ctx context.Context, current, desired *gatewayapiv1.GatewayClass) error {
 	if !isManagedProfile(current) {
 		return nil
@@ -250,14 +251,14 @@ func (r *reconciler) updateManagedProfile(ctx context.Context, current, desired 
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated)
 	if err := r.client.Update(ctx, updated); err != nil {
-		return fmt.Errorf("failed to update managed GatewayClass %q: %w", current.Name, err)
+		return fmt.Errorf("failed to update managed GatewayClass profile %q: %w", current.Name, err)
 	}
 	log.Info("updated managed GatewayClass profile", "gatewayclass", current.Name, "diff", diff)
 	return nil
 }
 
 // managedProfileChanged reports whether the profile label, description, or Sail
-// finalizer differ, and returns the updated class.
+// finalizer differ, and returns the updated GatewayClass.
 func managedProfileChanged(current, expected *gatewayapiv1.GatewayClass) (bool, *gatewayapiv1.GatewayClass) {
 	if current.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] == "true" &&
 		cmp.Equal(current.Spec.Description, expected.Spec.Description) &&
@@ -271,15 +272,15 @@ func managedProfileChanged(current, expected *gatewayapiv1.GatewayClass) (bool, 
 	}
 	updated.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] = "true"
 	updated.Spec.Description = expected.Spec.Description
-	// A class adopted from before managed profiles existed may still carry the
+	// A GatewayClass adopted from before managed profiles existed may still carry the
 	// Sail lifecycle finalizer. Profiles neither install nor uninstall Sail, so
-	// that finalizer must not keep the class from being deleted.
+	// that finalizer must not keep the GatewayClass from being deleted.
 	controllerutil.RemoveFinalizer(updated, sailLibraryFinalizer)
 	return true, updated
 }
 
 // deleteManagedProfile requests UID-preconditioned deletion of a registered OpenShift profile.
-// It returns a retryable error while the class is still present in the cache.
+// It returns a retryable error while the GatewayClass is still present in the cache.
 func (r *reconciler) deleteManagedProfile(ctx context.Context, current *gatewayapiv1.GatewayClass) error {
 	if !isManagedProfile(current) {
 		return nil
@@ -291,28 +292,28 @@ func (r *reconciler) deleteManagedProfile(ctx context.Context, current *gatewaya
 		updated := current.DeepCopy()
 		controllerutil.RemoveFinalizer(updated, sailLibraryFinalizer)
 		if err := r.client.Update(ctx, updated); err != nil {
-			return fmt.Errorf("failed to remove Sail finalizer from managed GatewayClass %q: %w", current.Name, err)
+			return fmt.Errorf("failed to remove Sail finalizer from managed GatewayClass profile %q: %w", current.Name, err)
 		}
-		log.Info("removed Sail finalizer from managed profile", "gatewayclass", current.Name)
+		log.Info("removed Sail finalizer from managed GatewayClass profile", "gatewayclass", current.Name)
 		current = updated
 	}
 
 	// Delete only the observed UID; completion is checked on later cache snapshots.
 	if current.DeletionTimestamp.IsZero() {
 		if err := r.client.Delete(ctx, current, client.Preconditions{UID: &current.UID}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete managed GatewayClass %q: %w", current.Name, err)
+			return fmt.Errorf("failed to delete managed GatewayClass profile %q: %w", current.Name, err)
 		}
 	}
 
 	if have, _, err := r.currentManagedProfile(ctx, current.Name); err != nil {
 		return err
 	} else if have {
-		return retryable.New(fmt.Errorf("waiting for managed GatewayClass %q to be deleted", current.Name), 5*time.Second)
+		return retryable.New(fmt.Errorf("waiting for managed GatewayClass profile %q to be deleted", current.Name), 5*time.Second)
 	}
 	return nil
 }
 
-// managedProfileConfigMapDefaultsReady checks the expected defaults and their class association.
+// managedProfileConfigMapDefaultsReady checks the expected defaults and their GatewayClass association.
 func (r *reconciler) managedProfileConfigMapDefaultsReady(ctx context.Context, name string) (bool, error) {
 	var defaults corev1.ConfigMap
 	if err := r.cache.Get(ctx, managedProfileConfigMapDefaultsName(r.config.OperandNamespace, name), &defaults); err != nil {
@@ -324,7 +325,7 @@ func (r *reconciler) managedProfileConfigMapDefaultsReady(ctx context.Context, n
 	return defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] == name, nil
 }
 
-// desiredManagedProfile builds an enabled operator-managed GatewayClass.
+// desiredManagedProfile builds an enabled operator-managed GatewayClass profile.
 func desiredManagedProfile(name string) *gatewayapiv1.GatewayClass {
 	return &gatewayapiv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -340,7 +341,7 @@ func desiredManagedProfile(name string) *gatewayapiv1.GatewayClass {
 	}
 }
 
-// currentManagedProfile reads the named GatewayClass from the controller cache.
+// currentManagedProfile reads the named profile's GatewayClass from the controller cache.
 func (r *reconciler) currentManagedProfile(ctx context.Context, name string) (bool, *gatewayapiv1.GatewayClass, error) {
 	current := &gatewayapiv1.GatewayClass{}
 	if err := r.cache.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
@@ -359,16 +360,16 @@ func isManagedProfileName(name string) bool {
 }
 
 // isManagedProfile identifies profiles by registered name and controller, independently of output labels.
-func isManagedProfile(class *gatewayapiv1.GatewayClass) bool {
-	return isManagedProfileName(class.Name) && class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
+func isManagedProfile(gatewayClass *gatewayapiv1.GatewayClass) bool {
+	return isManagedProfileName(gatewayClass.Name) && gatewayClass.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
 }
 
-// managedProfileConfigMapDefaultsName locates the ConfigMap defaults rendered by Sail for a managed class.
+// managedProfileConfigMapDefaultsName locates the ConfigMap defaults rendered by Sail for a managed profile.
 func managedProfileConfigMapDefaultsName(namespace, name string) types.NamespacedName {
 	return types.NamespacedName{Namespace: namespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + name}
 }
 
-// isManagedProfileConfigMapDefaultsName matches enabled classes' ConfigMap defaults independently of labels.
+// isManagedProfileConfigMapDefaultsName matches enabled managed profiles' ConfigMap defaults independently of labels.
 func isManagedProfileConfigMapDefaultsName(namespace, name string) bool {
 	for profile := range managedProfiles {
 		if name == managedProfileConfigMapDefaultsName(namespace, profile).Name {

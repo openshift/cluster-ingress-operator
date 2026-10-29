@@ -1282,14 +1282,14 @@ func Test_Reconcile(t *testing.T) {
 
 // Test_enqueueRequestForSomeGatewayClass verifies the NoOLM event mapping:
 // managed profile events reconcile only the profile, and every other event fans
-// out so Sail drops the defaults of a user-created class that was deleted but
+// out so Sail drops the defaults of a user-created GatewayClass that was deleted but
 // is not the last one.
 func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
 	const (
-		userClassA = "user-a"
-		userClassB = "user-b"
+		userGatewayClassA = "user-a"
+		userGatewayClassB = "user-b"
 	)
-	newUserClass := func(name string) *gatewayapiv1.GatewayClass {
+	newUserGatewayClass := func(name string) *gatewayapiv1.GatewayClass {
 		return &gatewayapiv1.GatewayClass{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
@@ -1297,9 +1297,9 @@ func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
 	}
 
 	r := managedProfileTestReconciler(t,
-		newUserClass(userClassA),
-		newUserClass(userClassB),
-		newUserClass(operatorcontroller.OpenShiftClusterIPGatewayClassName),
+		newUserGatewayClass(userGatewayClassA),
+		newUserGatewayClass(userGatewayClassB),
+		newUserGatewayClass(operatorcontroller.OpenShiftClusterIPGatewayClassName),
 	)
 	handler := r.enqueueRequestForSomeGatewayClass()
 	ctx := t.Context()
@@ -1311,7 +1311,7 @@ func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
 		}
 		return out
 	}
-	allClasses := requests(userClassA, userClassB, operatorcontroller.OpenShiftClusterIPGatewayClassName)
+	allGatewayClasses := requests(userGatewayClassA, userGatewayClassB, operatorcontroller.OpenShiftClusterIPGatewayClassName)
 
 	drain := func(t *testing.T, q workqueue.TypedRateLimitingInterface[reconcile.Request]) []reconcile.Request {
 		t.Helper()
@@ -1337,23 +1337,23 @@ func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
 		expected []reconcile.Request
 	}{
 		{
-			name: "user class event fans out",
+			name: "user GatewayClass event fans out",
 			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-				handler.Create(ctx, event.CreateEvent{Object: newUserClass(userClassA)}, q)
+				handler.Create(ctx, event.CreateEvent{Object: newUserGatewayClass(userGatewayClassA)}, q)
 			},
-			expected: allClasses,
+			expected: allGatewayClasses,
 		},
 		{
-			name: "deleted user class fans out",
+			name: "deleted user GatewayClass fans out",
 			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-				handler.Delete(ctx, event.DeleteEvent{Object: newUserClass(userClassA)}, q)
+				handler.Delete(ctx, event.DeleteEvent{Object: newUserGatewayClass(userGatewayClassA)}, q)
 			},
-			expected: allClasses,
+			expected: allGatewayClasses,
 		},
 		{
 			name: "managed profile event maps to itself",
 			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-				handler.Create(ctx, event.CreateEvent{Object: newUserClass(operatorcontroller.OpenShiftClusterIPGatewayClassName)}, q)
+				handler.Create(ctx, event.CreateEvent{Object: newUserGatewayClass(operatorcontroller.OpenShiftClusterIPGatewayClassName)}, q)
 			},
 			expected: requests(operatorcontroller.OpenShiftClusterIPGatewayClassName),
 		},
@@ -1362,7 +1362,7 @@ func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
 			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 				handler.Create(ctx, event.CreateEvent{Object: &configv1.Proxy{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}}, q)
 			},
-			expected: allClasses,
+			expected: allGatewayClasses,
 		},
 	}
 

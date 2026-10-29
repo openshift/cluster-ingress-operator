@@ -25,7 +25,7 @@ spec:
   - name: hasOpenShiftPrefix
     expression: variables.gatewayClass.metadata.name.startsWith('openshift-')
   # Names users may create despite the openshift- prefix. openshift-default is
-  # the normal user-created class; openshift-ai-inference is created through
+  # the normal user-created GatewayClass; openshift-ai-inference is created through
   # the automated MaaS installation path.
   - name: userCreatableNames
     expression: "['openshift-default', 'openshift-ai-inference']"
