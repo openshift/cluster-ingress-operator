@@ -83,7 +83,15 @@ func (r *reconciler) ensureManagedProfile(ctx context.Context, name string, want
 		}
 	case want && have:
 		if current.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
-			return reconcile.Result{}, fmt.Errorf("cannot update GatewayClass %q: conflicting controllerName %q", name, current.Spec.ControllerName)
+			// A class created under a reserved name by another controller cannot
+			// be adopted: its controllerName is immutable, so it must be deleted.
+			log.Error(fmt.Errorf("conflicting controllerName %q", current.Spec.ControllerName),
+				"cannot manage GatewayClass with a reserved name; delete the class to let the Ingress Operator manage the profile",
+				"gatewayclass", name)
+			r.recorder.Eventf(current, corev1.EventTypeWarning, "GatewayClassConflict",
+				"GatewayClass %q is managed by another controller (%q); delete it to let the Ingress Operator manage the profile",
+				name, current.Spec.ControllerName)
+			return reconcile.Result{}, nil
 		}
 		if err := r.updateManagedProfile(ctx, current, desired); err != nil {
 			return reconcile.Result{}, err

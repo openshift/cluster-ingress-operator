@@ -133,7 +133,13 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
-		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
+		// Match on the controller name and on whether the name is a managed
+		// profile. A class created under a reserved name by another controller
+		// cannot be adopted, and its controllerName is immutable, so the class
+		// must be deleted; passing the delete event re-triggers the managed
+		// profile.
+		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName ||
+			isManagedProfileName(class.Name)
 	})
 	notIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() != "istio"
