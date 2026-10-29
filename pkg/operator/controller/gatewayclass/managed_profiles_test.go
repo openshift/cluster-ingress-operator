@@ -35,25 +35,25 @@ import (
 )
 
 // managedProfileTestClass builds an operator-managed profile (labeled) or a
-// user-created gatewayclass (finalized and unlabeled).
+// user-created GatewayClass (finalized and unlabeled).
 func managedProfileTestClass(name string, managed bool) *gatewayapiv1.GatewayClass {
-	class := &gatewayapiv1.GatewayClass{
+	gatewayClass := &gatewayapiv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID(name)},
 		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
 	}
-	// Managed profiles carry the owned label; user-created classes carry the
+	// Managed profiles carry the owned label; user-created GatewayClasses carry the
 	// Sail finalizer instead and are identified by name and controller.
 	if managed {
-		class.Labels = map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}
+		gatewayClass.Labels = map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "true"}
 	} else {
-		class.Finalizers = []string{sailLibraryFinalizer}
+		gatewayClass.Finalizers = []string{sailLibraryFinalizer}
 	}
-	return class
+	return gatewayClass
 }
 
-// managedProfileTestUserClass builds the user-created openshift-default
-// gatewayclass whose presence enables the openshift-clusterip profile.
-func managedProfileTestUserClass() *gatewayapiv1.GatewayClass {
+// managedProfileTestUserGatewayClass builds the user-created openshift-default
+// GatewayClass whose presence enables the openshift-clusterip profile.
+func managedProfileTestUserGatewayClass() *gatewayapiv1.GatewayClass {
 	return managedProfileTestClass(operatorcontroller.OpenShiftDefaultGatewayClassName, false)
 }
 
@@ -61,7 +61,7 @@ func managedProfileTestUserClass() *gatewayapiv1.GatewayClass {
 func managedProfileTestDefaults() *corev1.ConfigMap {
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 
-	// Production only reads the name, namespace, and owning-class label.
+	// Production only reads the name, namespace, and owning-GatewayClass label.
 	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
 		Name:      managedProfileConfigMapDefaultsName(operatorcontroller.DefaultOperandNamespace, name).Name,
 		Namespace: operatorcontroller.DefaultOperandNamespace, UID: "defaults-uid",
@@ -100,22 +100,22 @@ func blockManagedProfileDependents(r *reconciler) {
 }
 
 // TestReconcileWithSailLibraryDeletesProfileBeforeUninstall checks that deleting
-// the last user-created openshift-default gatewayclass deletes openshift-clusterip
+// the last user-created openshift-default GatewayClass deletes openshift-clusterip
 // before uninstalling Sail.
 func TestReconcileWithSailLibraryDeletesProfileBeforeUninstall(t *testing.T) {
 	ctx := t.Context()
 
-	// Seed the last user-created class plus a profile that cannot finish deleting.
-	userClass := managedProfileTestUserClass()
+	// Seed the last user-created GatewayClass plus a profile that cannot finish deleting.
+	userGatewayClass := managedProfileTestUserGatewayClass()
 	profile := managedProfileTestClass(operatorcontroller.OpenShiftClusterIPGatewayClassName, true)
 	profile.Labels = nil
 	profile.Finalizers = []string{"example.com/profile-in-use"}
-	r := managedProfileTestReconciler(t, userClass, profile)
+	r := managedProfileTestReconciler(t, userGatewayClass, profile)
 	blockManagedProfileDependents(r)
 
-	// Delete the only class that enables the profile and reconcile its deletion.
-	require.NoError(t, r.client.Delete(ctx, userClass))
-	result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(userClass)})
+	// Delete the only GatewayClass that enables the profile and reconcile its deletion.
+	require.NoError(t, r.client.Delete(ctx, userGatewayClass))
+	result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(userGatewayClass)})
 	require.NoError(t, err)
 
 	// The deletion must request profile removal and defer Sail uninstall.
@@ -131,7 +131,7 @@ func Test_syncManagedProfile(t *testing.T) {
 	ctx := t.Context()
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 
-	// Each case seeds the classes the profile decision depends on and states
+	// Each case seeds the GatewayClasses the profile decision depends on and states
 	// whether openshift-clusterip should exist, requeue, or report Configured.
 	for _, tc := range []struct {
 		name               string
@@ -142,16 +142,16 @@ func Test_syncManagedProfile(t *testing.T) {
 		expectedConfigured bool
 	}{
 		{
-			name: "removes openshift-clusterip when no user-created openshift-default gatewayclass exists",
+			name: "removes openshift-clusterip when no user-created openshift-default GatewayClass exists",
 			objects: []client.Object{
 				managedProfileTestClass(name, true),
 				managedProfileTestDefaults(),
 			},
 		},
 		{
-			name: "creates openshift-clusterip when a user-created openshift-default gatewayclass exists",
+			name: "creates openshift-clusterip when a user-created openshift-default GatewayClass exists",
 			objects: []client.Object{
-				managedProfileTestUserClass(),
+				managedProfileTestUserGatewayClass(),
 				managedProfileTestDefaults(),
 			},
 			expectedPresent:    true,
@@ -160,7 +160,7 @@ func Test_syncManagedProfile(t *testing.T) {
 		{
 			name: "waits for the defaults ConfigMap before creating openshift-clusterip",
 			objects: []client.Object{
-				managedProfileTestUserClass(),
+				managedProfileTestUserGatewayClass(),
 			},
 			expectedRequeue: true,
 		},
@@ -187,7 +187,7 @@ func Test_syncManagedProfile(t *testing.T) {
 			require.Nil(t, r.sailInstaller.(*fakeSailInstaller).internalOpts.Values)
 			require.False(t, r.sailInstaller.(*fakeSailInstaller).uninstallCalled)
 
-			// A missing profile is valid when no user class enables it.
+			// A missing profile is valid when no user GatewayClass enables it.
 			var profile gatewayapiv1.GatewayClass
 			err = r.client.Get(ctx, types.NamespacedName{Name: name}, &profile)
 			if !tc.expectedPresent {
@@ -203,7 +203,7 @@ func Test_syncManagedProfile(t *testing.T) {
 	}
 }
 
-// TestAdoptedProfileRemovesSailFinalizer checks that a class named like a managed
+// TestAdoptedProfileRemovesSailFinalizer checks that a GatewayClass named like a managed
 // profile but created before managed profiles existed does not stay stuck
 // deleting because of the legacy Sail lifecycle finalizer.
 func TestAdoptedProfileRemovesSailFinalizer(t *testing.T) {
@@ -211,18 +211,18 @@ func TestAdoptedProfileRemovesSailFinalizer(t *testing.T) {
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 
 	for _, tc := range []struct {
-		description string
-		userClass   bool
-		deleting    bool
+		description      string
+		userGatewayClass bool
+		deleting         bool
 	}{
 		{
-			description: "wanted profile is adopted and unblocked",
-			userClass:   true,
+			description:      "wanted profile is adopted and unblocked",
+			userGatewayClass: true,
 		},
 		{
-			description: "wanted profile that is already deleting is unblocked",
-			userClass:   true,
-			deleting:    true,
+			description:      "wanted profile that is already deleting is unblocked",
+			userGatewayClass: true,
+			deleting:         true,
 		},
 		{
 			description: "unwanted profile is deleted",
@@ -233,15 +233,15 @@ func TestAdoptedProfileRemovesSailFinalizer(t *testing.T) {
 		},
 	} {
 		t.Run(tc.description, func(t *testing.T) {
-			// Seed the pre-profile class: our controller installed it, so it has
+			// Seed the pre-profile GatewayClass: our controller installed it, so it has
 			// the Sail finalizer but not the managed profile label.
 			profile := managedProfileTestClass(name, true)
 			profile.Labels = nil
 			profile.Finalizers = []string{sailLibraryFinalizer}
 
 			objects := []client.Object{profile, managedProfileTestDefaults()}
-			if tc.userClass {
-				objects = append(objects, managedProfileTestUserClass())
+			if tc.userGatewayClass {
+				objects = append(objects, managedProfileTestUserGatewayClass())
 			}
 			r := managedProfileTestReconciler(t, objects...)
 
@@ -256,13 +256,13 @@ func TestAdoptedProfileRemovesSailFinalizer(t *testing.T) {
 
 			var current gatewayapiv1.GatewayClass
 			err = r.client.Get(ctx, types.NamespacedName{Name: name}, &current)
-			if !tc.userClass || tc.deleting {
+			if !tc.userGatewayClass || tc.deleting {
 				// Deletion completes instead of waiting on the Sail finalizer.
-				require.True(t, apierrors.IsNotFound(err), "expected the class to be gone, got %v", err)
+				require.True(t, apierrors.IsNotFound(err), "expected the GatewayClass to be gone, got %v", err)
 				return
 			}
 
-			// An adopted class keeps its identity but loses the legacy finalizer.
+			// An adopted GatewayClass keeps its identity but loses the legacy finalizer.
 			require.NoError(t, err)
 			require.Empty(t, current.Finalizers)
 			require.Equal(t, "true", current.Labels[operatorcontroller.ManagedGatewayClassProfileLabel])
@@ -275,7 +275,7 @@ func Test_ensureManagedProfile(t *testing.T) {
 	ctx := t.Context()
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 
-	// Each case varies whether the class exists, whether it is wanted, and
+	// Each case varies whether the GatewayClass exists, whether it is wanted, and
 	// whether the defaults ConfigMap is present.
 	for _, tc := range []struct {
 		name            string
@@ -318,7 +318,7 @@ func Test_ensureManagedProfile(t *testing.T) {
 			expectedPresent: true,
 			expectedRequeue: true,
 		},
-		// A class created before managed profiles existed is owned by another
+		// A GatewayClass created before managed profiles existed is owned by another
 		// controller and cannot be adopted; report it and leave it alone until
 		// it is deleted.
 		{
@@ -328,21 +328,21 @@ func Test_ensureManagedProfile(t *testing.T) {
 			defaults:        true,
 			foreign:         true,
 			expectedPresent: true,
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Labels = nil
-				class.Spec.ControllerName = "example.com/other"
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Labels = nil
+				gatewayClass.Spec.ControllerName = "example.com/other"
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Build the class and defaults ConfigMap this case needs.
+			// Build the GatewayClass and defaults ConfigMap this case needs.
 			var objects []client.Object
 			if tc.have {
-				class := managedProfileTestClass(name, true)
+				gatewayClass := managedProfileTestClass(name, true)
 				if tc.mutate != nil {
-					tc.mutate(class)
+					tc.mutate(gatewayClass)
 				}
-				objects = append(objects, class)
+				objects = append(objects, gatewayClass)
 			}
 			// Add the defaults ConfigMap only when the case provides one.
 			if tc.defaults {
@@ -364,7 +364,7 @@ func Test_ensureManagedProfile(t *testing.T) {
 			}
 
 			if tc.foreign {
-				// A foreign class is reported but never adopted.
+				// A foreign GatewayClass is reported but never adopted.
 				require.Empty(t, profile.Labels[operatorcontroller.ManagedGatewayClassProfileLabel])
 				require.Nil(t, profile.Spec.Description)
 				require.Nil(t, meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured"))
@@ -406,15 +406,15 @@ func Test_updateManagedProfile(t *testing.T) {
 	}{
 		{
 			name: "repairs operator-owned fields and preserves other fields",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Labels = map[string]string{
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Labels = map[string]string{
 					"example.com/label": "preserved",
 					operatorcontroller.ManagedGatewayClassProfileLabel: "false",
 				}
-				class.Annotations = map[string]string{"example.com/annotation": "preserved"}
-				class.Spec.ParametersRef = &gatewayapiv1.ParametersReference{Group: "example.com", Kind: "Config", Name: "preserved"}
-				class.Spec.Description = new("stale description")
-				class.Status.Conditions = []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue, Reason: "Accepted", LastTransitionTime: metav1.Now()}}
+				gatewayClass.Annotations = map[string]string{"example.com/annotation": "preserved"}
+				gatewayClass.Spec.ParametersRef = &gatewayapiv1.ParametersReference{Group: "example.com", Kind: "Config", Name: "preserved"}
+				gatewayClass.Spec.Description = new("stale description")
+				gatewayClass.Status.Conditions = []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue, Reason: "Accepted", LastTransitionTime: metav1.Now()}}
 			},
 			expectedUpdates: 1,
 			expectedLabel:   "true",
@@ -428,16 +428,16 @@ func Test_updateManagedProfile(t *testing.T) {
 		},
 		{
 			name: "does not update an already-current profile",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Spec.Description = desired.Spec.Description
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Spec.Description = desired.Spec.Description
 			},
 			expectedLabel: "true",
 		},
 		{
 			name: "updates owned fields while it is being deleted",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Labels = map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "false"}
-				class.Finalizers = []string{"example.com/finalizer"}
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Labels = map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "false"}
+				gatewayClass.Finalizers = []string{"example.com/finalizer"}
 			},
 			deleting:        true,
 			expectedUpdates: 1,
@@ -445,8 +445,8 @@ func Test_updateManagedProfile(t *testing.T) {
 		},
 		{
 			name: "removes the legacy Sail finalizer while it is being deleted",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Finalizers = []string{sailLibraryFinalizer, "example.com/finalizer"}
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Finalizers = []string{sailLibraryFinalizer, "example.com/finalizer"}
 			},
 			deleting:        true,
 			expectedUpdates: 1,
@@ -458,8 +458,8 @@ func Test_updateManagedProfile(t *testing.T) {
 		},
 		{
 			name: "returns update conflicts for retry",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Labels = nil
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Labels = nil
 			},
 			conflict:        true,
 			expectedUpdates: 2,
@@ -483,7 +483,7 @@ func Test_updateManagedProfile(t *testing.T) {
 				return delegate.Update(ctx, object, options...)
 			}})
 
-			// Put the class into deletion before updating when required.
+			// Put the GatewayClass into deletion before updating when required.
 			if tc.deleting {
 				require.NoError(t, r.client.Delete(ctx, profile))
 				require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(profile), profile))
@@ -519,39 +519,39 @@ func Test_deleteManagedProfile(t *testing.T) {
 	ctx := t.Context()
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 
-	t.Run("preserves gatewayclasses it does not manage", func(t *testing.T) {
+	t.Run("preserves GatewayClasses it does not manage", func(t *testing.T) {
 		// Only a registered name with the OpenShift controller is deletable.
 		for _, tc := range []struct {
-			description string
-			className   string
-			controller  string
+			description      string
+			gatewayClassName string
+			controller       string
 		}{
 			{
-				description: "unregistered name",
-				className:   "openshift-not-registered",
-				controller:  operatorcontroller.OpenShiftGatewayClassControllerName,
+				description:      "unregistered name",
+				gatewayClassName: "openshift-not-registered",
+				controller:       operatorcontroller.OpenShiftGatewayClassControllerName,
 			},
 			{
-				description: "different controller",
-				className:   name,
-				controller:  "example.com/other",
+				description:      "different controller",
+				gatewayClassName: name,
+				controller:       "example.com/other",
 			},
 		} {
 			t.Run(tc.description, func(t *testing.T) {
-				// Attempt deletion and verify the class was left alone.
-				class := managedProfileTestClass(tc.className, true)
-				class.Spec.ControllerName = gatewayapiv1.GatewayController(tc.controller)
-				r := managedProfileTestReconciler(t, class)
-				require.NoError(t, r.deleteManagedProfile(ctx, class))
+				// Attempt deletion and verify the GatewayClass was left alone.
+				gatewayClass := managedProfileTestClass(tc.gatewayClassName, true)
+				gatewayClass.Spec.ControllerName = gatewayapiv1.GatewayController(tc.controller)
+				r := managedProfileTestReconciler(t, gatewayClass)
+				require.NoError(t, r.deleteManagedProfile(ctx, gatewayClass))
 				var current gatewayapiv1.GatewayClass
-				require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(class), &current))
+				require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(gatewayClass), &current))
 				require.True(t, current.DeletionTimestamp.IsZero())
 			})
 		}
 	})
 
 	t.Run("retries until the cache observes deletion", func(t *testing.T) {
-		// Freeze the cache on a snapshot so the class still looks present.
+		// Freeze the cache on a snapshot so the GatewayClass still looks present.
 		profile := managedProfileTestClass(name, true)
 		r := managedProfileTestReconciler(t, profile)
 		base := r.client
@@ -576,7 +576,7 @@ func Test_deleteManagedProfile(t *testing.T) {
 		base := r.client.(client.WithWatch)
 		replaced := false
 
-		// The first delete is intercepted: drop the original and swap in a foreign class.
+		// The first delete is intercepted: drop the original and swap in a foreign GatewayClass.
 		r.client = interceptor.NewClient(base, interceptor.Funcs{Delete: func(ctx context.Context, delegate client.WithWatch, object client.Object, options ...client.DeleteOption) error {
 			if !replaced {
 				// Confirm the delete carries the observed UID before removing it.
@@ -586,7 +586,7 @@ func Test_deleteManagedProfile(t *testing.T) {
 				require.Equal(t, original.UID, *deleteOptions.Preconditions.UID)
 				require.NoError(t, delegate.Delete(ctx, original))
 
-				// Swap in a foreign class under the same name.
+				// Swap in a foreign GatewayClass under the same name.
 				replacement := original.DeepCopy()
 				replacement.ResourceVersion = ""
 				replacement.UID = "foreign-replacement"
@@ -634,7 +634,7 @@ func Test_markProfilesUnmanagedConfigured(t *testing.T) {
 		require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(profile), &current))
 		require.Empty(t, current.Labels)
 
-		// The owned condition must point at the defaults ConfigMap and class.
+		// The owned condition must point at the defaults ConfigMap and GatewayClass.
 		configured := meta.FindStatusCondition(current.Status.Conditions, "openshift.io/Configured")
 		require.NotNil(t, configured)
 		require.Equal(t, metav1.ConditionFalse, configured.Status)
@@ -647,7 +647,7 @@ func Test_markProfilesUnmanagedConfigured(t *testing.T) {
 		require.Equal(t, "OtherOwner", meta.FindStatusCondition(current.Status.Conditions, "Customized").Reason)
 	})
 
-	t.Run("skips gatewayclasses that do not qualify", func(t *testing.T) {
+	t.Run("skips GatewayClasses that do not qualify", func(t *testing.T) {
 		for _, scenario := range []string{
 			"absent",
 			"being deleted",
@@ -669,7 +669,7 @@ func Test_markProfilesUnmanagedConfigured(t *testing.T) {
 					profile.Name = "openshift-not-registered"
 				}
 
-				// Only the absent case omits the class.
+				// Only the absent case omits the GatewayClass.
 				var objects []client.Object
 				if scenario != "absent" {
 					objects = append(objects, profile)
@@ -833,7 +833,7 @@ func Test_updateManagedProfileStatus(t *testing.T) {
 	}
 }
 
-// Test_managedProfileConfigMapDefaultsReady checks presence and class association of the defaults ConfigMap.
+// Test_managedProfileConfigMapDefaultsReady checks presence and GatewayClass association of the defaults ConfigMap.
 func Test_managedProfileConfigMapDefaultsReady(t *testing.T) {
 	ctx := t.Context()
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
@@ -849,7 +849,7 @@ func Test_managedProfileConfigMapDefaultsReady(t *testing.T) {
 			name: "defaults ConfigMap missing",
 		},
 		{
-			name:     "defaults ConfigMap labeled for a different gatewayclass",
+			name:     "defaults ConfigMap labeled for a different GatewayClass",
 			defaults: true,
 			mutate: func(defaults *corev1.ConfigMap) {
 				defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] = "another-class"
@@ -897,60 +897,60 @@ func Test_managedProfileChanged(t *testing.T) {
 		},
 		{
 			description: "if .metadata.uid changes",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.UID = "2"
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.UID = "2"
 			},
 			expect: false,
 		},
 		{
 			description: "if an unrelated label changes",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Labels["example.com/other"] = "true"
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Labels["example.com/other"] = "true"
 			},
 			expect: false,
 		},
 		{
 			description: "if .spec.controllerName changes",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Spec.ControllerName = "example.com/other"
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Spec.ControllerName = "example.com/other"
 			},
 			expect: false,
 		},
 		// Changes to the owned label or description must trigger an update.
 		{
 			description: "if the managed profile label changes",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] = "false"
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] = "false"
 			},
 			expect: true,
 		},
 		{
 			description: "if the managed profile label is removed",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				delete(class.Labels, operatorcontroller.ManagedGatewayClassProfileLabel)
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				delete(gatewayClass.Labels, operatorcontroller.ManagedGatewayClassProfileLabel)
 			},
 			expect: true,
 		},
 		{
 			description: "if .spec.description changes",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Spec.Description = new("other description")
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Spec.Description = new("other description")
 			},
 			expect: true,
 		},
 		{
 			description: "if .spec.description is removed",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Spec.Description = nil
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Spec.Description = nil
 			},
 			expect: true,
 		},
-		// A class adopted from before managed profiles existed carries the Sail
+		// A GatewayClass adopted from before managed profiles existed carries the Sail
 		// lifecycle finalizer, which must be removed on the next update.
 		{
 			description: "if the legacy Sail finalizer is present",
-			mutate: func(class *gatewayapiv1.GatewayClass) {
-				class.Finalizers = append(class.Finalizers, sailLibraryFinalizer)
+			mutate: func(gatewayClass *gatewayapiv1.GatewayClass) {
+				gatewayClass.Finalizers = append(gatewayClass.Finalizers, sailLibraryFinalizer)
 			},
 			expect: true,
 		},
@@ -958,7 +958,7 @@ func Test_managedProfileChanged(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			// Start from the desired class and apply the case's mutation.
+			// Start from the desired GatewayClass and apply the case's mutation.
 			desired := desiredManagedProfile(operatorcontroller.OpenShiftClusterIPGatewayClassName)
 			current := desired.DeepCopy()
 			tc.mutate(current)
@@ -982,14 +982,14 @@ func TestEnsureGatewayClassDeletedWaitsForOpenshiftClusterIPDeletion(t *testing.
 	ctx := t.Context()
 	name := operatorcontroller.OpenShiftClusterIPGatewayClassName
 
-	// Seed the user-created class plus a profile that is stuck terminating.
-	anchor := managedProfileTestUserClass()
+	// Seed the user-created GatewayClass plus a profile that is stuck terminating.
+	anchor := managedProfileTestUserGatewayClass()
 	profile := managedProfileTestClass(name, true)
 	profile.Finalizers = []string{"gateway.networking.k8s.io/gateway-exists-finalizer"}
 	profile.Labels = nil
 	r := managedProfileTestReconciler(t, anchor, profile)
 
-	// Delete the user-created class and leave it terminating.
+	// Delete the user-created GatewayClass and leave it terminating.
 	require.NoError(t, r.client.Delete(ctx, anchor))
 	require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(anchor), anchor))
 
@@ -1000,7 +1000,7 @@ func TestEnsureGatewayClassDeletedWaitsForOpenshiftClusterIPDeletion(t *testing.
 	require.Equal(t, 5*time.Second, pending.After())
 	require.False(t, r.sailInstaller.(*fakeSailInstaller).uninstallCalled)
 
-	// The user-created class keeps its finalizer until the profile is gone.
+	// The user-created GatewayClass keeps its finalizer until the profile is gone.
 	var current gatewayapiv1.GatewayClass
 	require.NoError(t, r.client.Get(ctx, client.ObjectKeyFromObject(profile), &current))
 	require.False(t, current.DeletionTimestamp.IsZero())

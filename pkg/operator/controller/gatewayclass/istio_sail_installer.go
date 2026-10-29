@@ -423,13 +423,13 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 	}
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
-		classConfig := gatewayclassConfig
+		gatewayClassConfig := gatewayclassConfig
 		// Keep common deployment and HPA defaults while overriding this profile's Service.
 		if gatewayclass.Name == controller.OpenShiftClusterIPGatewayClassName {
-			classConfig = maps.Clone(gatewayclassConfig)
-			classConfig["service"] = map[string]any{"spec": map[string]any{"type": v1.ServiceTypeClusterIP}}
+			gatewayClassConfig = maps.Clone(gatewayclassConfig)
+			gatewayClassConfig["service"] = map[string]any{"spec": map[string]any{"type": v1.ServiceTypeClusterIP}}
 		}
-		gatewayclassesConfig[gatewayclass.Name] = classConfig
+		gatewayclassesConfig[gatewayclass.Name] = gatewayClassConfig
 	}
 
 	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
