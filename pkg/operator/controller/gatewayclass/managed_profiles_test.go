@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -87,7 +88,7 @@ func managedProfileTestReconciler(t *testing.T, objects ...client.Object) *recon
 	mode.SetCRDsEstablished(true)
 
 	// The cache reads through the same fake client so seeded objects are visible.
-	return &reconciler{client: client, cache: &testutil.FakeCache{Informers: informers, Reader: client}, modeAccessor: mode, config: Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace, GatewayAPIWithoutOLMEnabled: true, IstioVersion: "v1.30.5"}, sailInstaller: &fakeSailInstaller{}}
+	return &reconciler{client: client, cache: &testutil.FakeCache{Informers: informers, Reader: client}, recorder: record.NewFakeRecorder(10), modeAccessor: mode, config: Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace, GatewayAPIWithoutOLMEnabled: true, IstioVersion: "v1.30.5"}, sailInstaller: &fakeSailInstaller{}}
 }
 
 // blockManagedProfileDependents puts a gate-enabled accessor into Unmanaged mode.
@@ -281,9 +282,9 @@ func Test_ensureManagedProfile(t *testing.T) {
 		want, have      bool
 		defaults        bool
 		mutate          func(*gatewayapiv1.GatewayClass)
-		expectedError   string
 		expectedPresent bool
 		expectedRequeue bool
+		foreign         bool
 	}{
 		{
 			name: "openshift-clusterip absent and unwanted",
@@ -317,14 +318,18 @@ func Test_ensureManagedProfile(t *testing.T) {
 			expectedPresent: true,
 			expectedRequeue: true,
 		},
-		// A class owned by another controller must not be adopted.
+		// A class created before managed profiles existed is owned by another
+		// controller and cannot be adopted; report it and leave it alone until
+		// it is deleted.
 		{
-			name:          "refuses to adopt openshift-clusterip with a conflicting controller",
-			want:          true,
-			have:          true,
-			defaults:      true,
-			expectedError: "conflicting controllerName",
+			name:            "refuses to adopt an unlabeled openshift-clusterip with a conflicting controller",
+			want:            true,
+			have:            true,
+			defaults:        true,
+			foreign:         true,
+			expectedPresent: true,
 			mutate: func(class *gatewayapiv1.GatewayClass) {
+				class.Labels = nil
 				class.Spec.ControllerName = "example.com/other"
 			},
 		},
@@ -347,12 +352,6 @@ func Test_ensureManagedProfile(t *testing.T) {
 
 			// Sync toward tc.want and check whether a requeue is expected.
 			result, err := r.ensureManagedProfile(ctx, name, tc.want)
-			if tc.expectedError != "" {
-				// Conflicting controllers must fail rather than be adopted.
-				require.ErrorContains(t, err, tc.expectedError)
-				require.Zero(t, result.RequeueAfter)
-				return
-			}
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedRequeue, result.RequeueAfter > 0)
 
@@ -361,6 +360,20 @@ func Test_ensureManagedProfile(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedPresent, have)
 			if !have {
+				return
+			}
+
+			if tc.foreign {
+				// A foreign class is reported but never adopted.
+				require.Empty(t, profile.Labels[operatorcontroller.ManagedGatewayClassProfileLabel])
+				require.Nil(t, profile.Spec.Description)
+				require.Nil(t, meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured"))
+				select {
+				case event := <-r.recorder.(*record.FakeRecorder).Events:
+					require.Contains(t, event, "GatewayClassConflict")
+				default:
+					t.Error("expected a GatewayClassConflict event")
+				}
 				return
 			}
 
