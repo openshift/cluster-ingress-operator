@@ -258,6 +258,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
+		ControlPlaneTopology:            infraConfig.Status.ControlPlaneTopology,
 		Namespace:                       config.Namespace,
 		IngressControllerImage:          config.IngressControllerImage,
 		HAProxyImages:                   config.HAProxyImages,

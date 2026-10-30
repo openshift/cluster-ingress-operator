@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -90,7 +90,7 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 // Ingress status is a terminal record for that mode and generation. It lets a
 // freshly started operator distinguish an already-completed transition from a
 // new request without relying on process-local state.
-func appliedModeFromIngressStatus(snapshot ingressModeSnapshot) (operatorv1alpha1.GatewayAPIManagementMode, bool) {
+func appliedModeFromIngressStatus(snapshot ingressModeSnapshot) (operatorv1.GatewayAPIManagementMode, bool) {
 	if !snapshot.found || snapshot.ingress == nil || snapshot.ingress.Status.ObservedGeneration != snapshot.ingress.Generation {
 		return "", false
 	}
@@ -101,9 +101,9 @@ func appliedModeFromIngressStatus(snapshot ingressModeSnapshot) (operatorv1alpha
 	}
 
 	switch snapshot.desiredMode {
-	case operatorv1alpha1.GatewayAPIManagementModeUnmanaged:
+	case operatorv1.GatewayAPIManagementModeUnmanaged:
 		return snapshot.desiredMode, managed.Status == metav1.ConditionFalse && managed.Reason == reasonUnmanaged
-	case operatorv1alpha1.GatewayAPIManagementModeManaged:
+	case operatorv1.GatewayAPIManagementModeManaged:
 		present := apimeta.FindStatusCondition(snapshot.ingress.Status.Conditions, conditionTypeGatewayAPICRDsPresent)
 		compliant := apimeta.FindStatusCondition(snapshot.ingress.Status.Conditions, conditionTypeGatewayAPICRDsCompliant)
 		return snapshot.desiredMode,
@@ -185,8 +185,8 @@ func (r *reconciler) computeCRDConditions(ctx context.Context) (metav1.Condition
 // set of CRDs is not present.
 // wasAlreadyManaged indicates whether the operator was managing CRDs
 // in the previous reconcile, used to distinguish upgrades from takeover.
-func computeManagedCondition(desiredMode operatorv1alpha1.GatewayAPIManagementMode, anyExistingNonCompliant, wasAlreadyManaged bool, unknownCRDs []string) metav1.Condition {
-	if desiredMode == operatorv1alpha1.GatewayAPIManagementModeUnmanaged {
+func computeManagedCondition(desiredMode operatorv1.GatewayAPIManagementMode, anyExistingNonCompliant, wasAlreadyManaged bool, unknownCRDs []string) metav1.Condition {
+	if desiredMode == operatorv1.GatewayAPIManagementModeUnmanaged {
 		return metav1.Condition{
 			Type:    conditionTypeGatewayAPICRDsManaged,
 			Status:  metav1.ConditionFalse,
@@ -269,7 +269,7 @@ func buildCompliantCondition(annotationMismatches, schemaMismatches []string) me
 // instead of Update to leverage the listType=map merge semantics for
 // conditions, which prevents conflicts when multiple controllers update
 // different condition types concurrently.
-func (r *reconciler) updateIngressStatus(ctx context.Context, ingress *operatorv1alpha1.Ingress, conditions []metav1.Condition) error {
+func (r *reconciler) updateIngressStatus(ctx context.Context, ingress *operatorv1.Ingress, conditions []metav1.Condition) error {
 	updated := ingress.DeepCopy()
 	changed := false
 

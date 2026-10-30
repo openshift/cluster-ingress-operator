@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
@@ -64,7 +64,7 @@ func NewListenerSetUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroll
 		return nil, err
 	}
 	if modeAccessor != nil && modeAccessor.GateEnabled() {
-		if err := ctrl.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(allListenerSets), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
+		if err := ctrl.Watch(source.Kind[client.Object](mgr.GetCache(), &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(allListenerSets), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
 			return nil, err
 		}
 	}

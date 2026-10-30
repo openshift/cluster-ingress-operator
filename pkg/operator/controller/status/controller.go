@@ -17,7 +17,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -146,6 +145,18 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 			},
 		}}
 	}
+	if config.ControlPlaneTopology == configv1.ExternalTopologyMode {
+		// The zero-worker startup exception ends as soon as a guest Node
+		// exists, including before the ingress controller observes it.
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Node{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
+			CreateFunc:  func(event.CreateEvent) bool { return true },
+			DeleteFunc:  func(event.DeleteEvent) bool { return true },
+			UpdateFunc:  func(event.UpdateEvent) bool { return false },
+			GenericFunc: func(event.GenericEvent) bool { return false },
+		})); err != nil {
+			return nil, fmt.Errorf("failed to watch nodes: %w", err)
+		}
+	}
 	// The status controller doesn't care which ingresscontroller it
 	// is reconciling, so just enqueue a request to reconcile the
 	// default ingresscontroller.
@@ -237,7 +248,7 @@ func registerGatewayAPIIngressWatch(c controller.Controller, operatorCache cache
 	isClusterIngress := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "cluster"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isClusterIngress)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isClusterIngress)); err != nil {
 		return fmt.Errorf("failed to watch operator Ingress resource: %w", err)
 	}
 	return nil
@@ -259,6 +270,9 @@ func registerGatewayAPIModeTransitionWatch(c controller.Controller, config Confi
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
+	// ControlPlaneTopology scopes the zero-worker startup exception and Node
+	// watch to hosted clusters with an external control plane.
+	ControlPlaneTopology configv1.TopologyMode
 	// MarketplaceEnabled indicates whether the "marketplace" capability is
 	// enabled.
 	MarketplaceEnabled bool
@@ -320,7 +334,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	state, err := r.getOperatorState(ctx, ingressNamespace, canaryNamespace, co)
 	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
+		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %w", err)
 	}
 
 	if len(state.orphanedOSSMSubscriptions) > 0 {
@@ -442,14 +456,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	co.Status.RelatedObjects = related
 
-	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
+	// Use a separate, in-memory view for CVO status. Individual
+	// IngressControllers must continue reporting actual deployment readiness.
+	statusIngresses := ingressControllersForClusterOperator(state.IngressControllers, r.config.ControlPlaneTopology, state.Nodes)
+	allIngressesAvailable := checkAllIngressesAvailable(statusIngresses)
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
-		computeOperatorAvailableCondition(state.IngressControllers),
+		computeOperatorAvailableCondition(statusIngresses),
 		computeOperatorProgressingCondition(
-			state.IngressControllers,
+			statusIngresses,
 			allIngressesAvailable,
 			oldStatus.Versions,
 			co.Status.Versions,
@@ -515,6 +532,9 @@ func initializeClusterOperator(co *configv1.ClusterOperator) {
 }
 
 type operatorState struct {
+	// Nodes is nil outside external topology. An empty, successfully listed
+	// NodeList is required before applying the zero-worker startup exception.
+	Nodes                        *corev1.NodeList
 	IngressNamespace             *corev1.Namespace
 	CanaryNamespace              *corev1.Namespace
 	IngressControllers           []operatorv1.IngressController
@@ -578,6 +598,13 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.config.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
+	}
+	if r.config.ControlPlaneTopology == configv1.ExternalTopologyMode {
+		state.Nodes = &corev1.NodeList{}
+		if err := r.cache.List(ctx, state.Nodes); err != nil {
+			state.Nodes = nil
+			return state, fmt.Errorf("failed to list nodes for ingress startup: %w", err)
+		}
 	}
 
 	if len(co.Status.Extension.Raw) > 0 {
@@ -1109,6 +1136,10 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 				availableCondition.Status = configv1.ConditionTrue
 				availableCondition.Reason = "IngressAvailable"
 				availableCondition.Message = fmt.Sprintf("The %q ingress controller reports Available=True.", ic.Name)
+				if cond.Reason == ingress.ReasonAwaitingNodes {
+					availableCondition.Reason = ingress.ReasonAwaitingNodes
+					availableCondition.Message = "The ingress operator is available during initial zero-worker hosted-cluster startup; the default router deployment is waiting for nodes."
+				}
 			default:
 				availableCondition.Status = configv1.ConditionUnknown
 				availableCondition.Reason = "IngressAvailableStatusUnknown"

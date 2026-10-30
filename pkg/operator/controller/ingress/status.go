@@ -134,7 +134,11 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	if waitingForNodes && availableCondition.Status == operatorv1.ConditionFalse {
 		availableCondition.Reason = ReasonAwaitingNodes
-		availableCondition.Message = "IngressController is waiting for a ready node matching the router deployment."
+		message := "IngressController is waiting for a ready node matching the router deployment."
+		if availableCondition.Message != "" {
+			message += " " + availableCondition.Message
+		}
+		availableCondition.Message = message
 	}
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
@@ -788,15 +792,33 @@ func nodeMatchesRequiredAffinity(deployment *appsv1.Deployment, node *corev1.Nod
 
 	selector := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 	for _, term := range selector.NodeSelectorTerms {
-		if len(term.MatchFields) != 0 {
-			// The router deployment does not use field requirements. Avoid
-			// treating an unknown field requirement as an eligible node.
+		if len(term.MatchFields) != 0 || len(term.MatchExpressions) == 0 {
+			// Empty terms match no nodes. The router does not use field
+			// requirements; fail closed for unsupported requirements too.
 			continue
 		}
 
 		matches := true
 		for _, expression := range term.MatchExpressions {
-			requirement, err := labels.NewRequirement(expression.Key, selection.Operator(expression.Operator), expression.Values)
+			// NodeSelectorOperator and selection.Operator use different wire
+			// values (for example, "NotIn" and "notin"). A type conversion
+			// does not translate between them.
+			var op selection.Operator
+			switch expression.Operator {
+			case corev1.NodeSelectorOpIn:
+				op = selection.In
+			case corev1.NodeSelectorOpNotIn:
+				op = selection.NotIn
+			case corev1.NodeSelectorOpExists:
+				op = selection.Exists
+			case corev1.NodeSelectorOpDoesNotExist:
+				op = selection.DoesNotExist
+			case corev1.NodeSelectorOpGt:
+				op = selection.GreaterThan
+			case corev1.NodeSelectorOpLt:
+				op = selection.LessThan
+			}
+			requirement, err := labels.NewRequirement(expression.Key, op, expression.Values)
 			if err != nil || !requirement.Matches(labels.Set(node.Labels)) {
 				matches = false
 				break
