@@ -53,15 +53,10 @@ if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
     git cherry-pick 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
 fi
 
-# Carry a local fix for MakeTLSRequestAndExpectFailureResponse in the conformance
-# suite: the helper is one-shot and treats any request error as the expected TLS
-# rejection, so pre-handshake connection failures (DNS propagation lag for freshly
-# provisioned AWS ELBs) false-fail the Gateway client-certificate validation tests.
-# The patch makes the helper retry until the TLS handshake reaches the
-# certificate-request stage (the GetClientCertificateHook fires) or a deadline
-# passes, while preserving the original semantics otherwise. Applied with git
-# apply so a diverging upstream branch fails the job loudly instead of silently
-# regressing to the flaky behavior. Drop once the fix lands on the cloned branch.
+# Patch conformance helper MakeTLSRequestAndExpectFailureResponse locally: it
+# is one-shot and mistakes a not-yet-ready DNS/ELB connection error for the
+# expected TLS rejection; the patch retries until the handshake reaches the
+# client-cert stage or times out.  Convert to a cherry-pick once the fix lands in main.
 git apply "${SCRIPT_DIR}/gateway-api-conformance-tls-failure-retry.patch"
 echo "Applied gateway-api TLS failure-retry patch"
 
@@ -88,9 +83,10 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 #   pkg/operator/controller/gatewayclass/istio_olm.go). Downstream enablement is tracked
 #   by https://redhat.atlassian.net/browse/NE-2598.
 # - HTTPRouteRetry, HTTPRouteRetryBackendTimeout, HTTPRouteRetryConnectionError: retry is
-#   only in the experimental-channel HTTPRoute CRD; the operator installs the standard
-#   channel, so routes cannot express retry configuration (the API server rejects the
-#   field: unknown field "spec.rules[N].retry").
+#   not part of the Gateway API v1.6.x standard-channel HTTPRoute schema installed here;
+#   it exists only in the experimental channel. With strict validation the API server
+#   rejects spec.rules[N].retry as an unknown field; otherwise the field may be pruned.
+#   Retry is in the standard channel by Gateway API v1.7.0.
 # - UDPRoute: the UDPRoute conformance tests are part of the GATEWAY-UDP profile,
 #   which is not run because the OpenShift Gateway API implementation does not
 #   support UDPRoute; the operator configures Istio to ignore udproutes
