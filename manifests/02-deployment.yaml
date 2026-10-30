@@ -114,7 +114,7 @@ spec:
           resources:
             requests:
               cpu: 10m
-              memory: 56Mi
+              memory: 340Mi
           volumeMounts:
           - name: trusted-ca
             mountPath: /etc/pki/ca-trust/extracted/pem
