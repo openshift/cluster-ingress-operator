@@ -511,6 +511,14 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - security.openshift.io
+  resources:
+  - securitycontextconstraints
+  verbs:
+  - get
+  - list
+  - watch
 
 # --- Sail/Istio user-facing RBAC aggregation (generated) ---
 # Source: Sail Library CRDs.
