@@ -169,7 +169,7 @@ func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
 		// ListenerSets, but CIO installs the CRD as part of the
 		// Gateway API v1.5.1 standard channel.
 		// This will be implemented as soon as Istio provides support.
-		"PILOT_IGNORE_RESOURCES": "listenersets.gateway.networking.k8s.io",
+		"PILOT_IGNORE_RESOURCES": "listenersets.gateway.networking.k8s.io,udproutes.gateway.networking.k8s.io",
 	}
 	if enableInferenceExtension {
 		env["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
