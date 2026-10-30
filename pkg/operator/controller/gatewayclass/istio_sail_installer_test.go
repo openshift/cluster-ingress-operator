@@ -48,6 +48,10 @@ type fakeSailInstaller struct {
 	uninstallCalled bool
 	uninstallError  error
 
+	// onUninstall, when non-nil, runs at the start of Uninstall so a test can
+	// observe state that must already be published before Sail tears down.
+	onUninstall func()
+
 	// applyStarted, when non-nil, receives a signal as soon as Apply is
 	// invoked (after sailLifecycleMu has been acquired by the caller).
 	// applyRelease, when non-nil, blocks Apply until it is closed. Together
@@ -83,6 +87,9 @@ func (i *fakeSailInstaller) Apply(opts install.Options) error {
 
 func (i *fakeSailInstaller) Uninstall(ctx context.Context, namespace, revision string) error {
 	i.uninstallCalled = true
+	if i.onUninstall != nil {
+		i.onUninstall()
+	}
 	return i.uninstallError
 }
 
@@ -299,7 +306,8 @@ func TestUninstallSail_WaitsForInFlightApply(t *testing.T) {
 // control plane is torn down (transition to Unmanaged mode), UninstallSail
 // flips the CIO-managed GatewayClass's ControllerInstalled condition to False
 // with reason Unmanaged, so the status no longer reports a stale
-// "installed" control plane.
+// "installed" control plane. It also verifies that managed profiles stop
+// claiming managed configuration before Sail removes their defaults.
 func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, configv1.Install(scheme))
@@ -335,8 +343,27 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 		},
 	}
 
+	// The managed profile still claims managed configuration before the transition.
+	profile := &gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   operatorcontroller.OpenShiftClusterIPGatewayClassName,
+			Labels: map[string]string{operatorcontroller.ManagedGatewayClassProfileLabel: "true"},
+		},
+		Spec: gatewayapiv1.GatewayClassSpec{
+			ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		},
+		Status: gatewayapiv1.GatewayClassStatus{
+			Conditions: []metav1.Condition{{
+				Type:               "openshift.io/Configured",
+				Status:             metav1.ConditionTrue,
+				Reason:             "Configured",
+				LastTransitionTime: metav1.Now(),
+			}},
+		},
+	}
+
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(gwc).
+		WithObjects(gwc, profile).
 		WithStatusSubresource(gwc).
 		WithIndex(&gatewayapiv1.GatewayClass{}, operatorcontroller.GatewayClassIndexFieldName, func(o client.Object) []string {
 			return []string{string(o.(*gatewayapiv1.GatewayClass).Spec.ControllerName)}
@@ -345,10 +372,27 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 	informer := informertest.FakeInformers{Scheme: scheme}
 	fakeCache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 
+	// readProfileConfigured returns the stored Configured condition, so callers
+	// see what production code wrote rather than the seeded object.
+	readProfileConfigured := func() *metav1.Condition {
+		var current gatewayapiv1.GatewayClass
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(profile), &current))
+		return meta.FindStatusCondition(current.Status.Conditions, "openshift.io/Configured")
+	}
+	// assertProfileUnmanaged checks the profile has stopped claiming managed
+	// configuration. Running it from inside Uninstall also pins the ordering.
+	assertProfileUnmanaged := func(when string) {
+		configured := readProfileConfigured()
+		require.NotNil(t, configured, "Configured condition must be present "+when)
+		assert.Equal(t, metav1.ConditionFalse, configured.Status, "Configured status "+when)
+		assert.Equal(t, "Unmanaged", configured.Reason, "Configured reason "+when)
+	}
+
 	r := &reconciler{
-		client:        fakeClient,
-		cache:         fakeCache,
-		sailInstaller: &fakeSailInstaller{},
+		client: fakeClient,
+		cache:  fakeCache,
+		// Sail must only remove defaults once the profile stops claiming them.
+		sailInstaller: &fakeSailInstaller{onUninstall: func() { assertProfileUnmanaged("before uninstall") }},
 		modeAccessor:  operatorcontroller.NewGatewayAPIModeAccessor(true),
 		config:        Config{OperandNamespace: "test-ns"},
 	}
@@ -366,6 +410,9 @@ func TestUninstallSail_MarksControllerUninstalled(t *testing.T) {
 	accepted := meta.FindStatusCondition(got.Status.Conditions, "Accepted")
 	require.NotNil(t, accepted, "conditions owned by other controllers must be preserved")
 	assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+
+	// The profile reports unmanaged configuration after the transition.
+	assertProfileUnmanaged("after uninstall")
 }
 
 func TestMarkControllerUninstalled_RetriesAndPreservesConcurrentExternalConditions(t *testing.T) {

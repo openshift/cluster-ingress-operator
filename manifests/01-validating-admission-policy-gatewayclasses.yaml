@@ -1,0 +1,60 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openshift-ingress-operator-gatewayclasses
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+    - apiGroups:
+      - gateway.networking.k8s.io
+      apiVersions:
+      - v1
+      operations:
+      - CREATE
+      resources:
+      - gatewayclasses
+      scope: Cluster
+  variables:
+  - name: gatewayClass
+    expression: object
+  - name: hasOpenShiftPrefix
+    expression: variables.gatewayClass.metadata.name.startsWith('openshift-')
+  # Names users may create despite the openshift- prefix. openshift-default is
+  # the normal user-created GatewayClass; openshift-ai-inference is created through
+  # the automated MaaS installation path.
+  - name: userCreatableNames
+    expression: "['openshift-default', 'openshift-ai-inference']"
+  - name: hasReservedName
+    expression: >-
+      variables.hasOpenShiftPrefix &&
+      !(variables.gatewayClass.metadata.name in variables.userCreatableNames)
+  validations:
+  # Allow only the Ingress Operator service account to create a GatewayClass
+  # using a reserved name. Users may create openshift-default and
+  # openshift-ai-inference. The deny message deliberately names only
+  # openshift-default, so the MaaS exception is not advertised to users.
+  - expression: >-
+      !variables.hasReservedName ||
+      (has(request.userInfo.username) &&
+      request.userInfo.username ==
+      'system:serviceaccount:openshift-ingress-operator:ingress-operator')
+    message: >-
+      Only openshift-default may be created by users; all other openshift-*
+      GatewayClass names are reserved for the Ingress Operator
+    reason: Forbidden
+  # Require pod-bound token claims, rejecting unbound service account
+  # credentials and username-only impersonation. This validation is omitted
+  # in the IBM Cloud managed release-profile variant.
+  - expression: >-
+      !variables.hasReservedName ||
+      (has(request.userInfo.extra) &&
+      'authentication.kubernetes.io/node-name' in request.userInfo.extra &&
+      'authentication.kubernetes.io/pod-name' in request.userInfo.extra)
+    message: The Ingress Operator must use a pod-bound service account token
+    reason: Forbidden
