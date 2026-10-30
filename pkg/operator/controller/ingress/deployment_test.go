@@ -393,6 +393,67 @@ func TestTuningOptionForAWSNLB(t *testing.T) {
 	}
 }
 
+func TestConfigOverridesOptions(t *testing.T) {
+	testCases := []struct {
+		name           string
+		configOverride string
+		expectedEnv    []envData
+		expectedError  string
+	}{
+		{
+			name:           "all configurations missing",
+			configOverride: ``,
+			expectedEnv: []envData{
+				// add all new config validations here
+				{RouterEnableEndpointAddressValidation, false, ""},
+			},
+		},
+		{
+			name:           "hostnameTargetReferencePolicy allowing",
+			configOverride: `{"hostnameTargetReferencePolicy":"AllowAll"}`,
+			expectedEnv: []envData{
+				{RouterEnableEndpointAddressValidation, true, "false"},
+			},
+		},
+		{
+			name:           "hostnameTargetReferencePolicy denying",
+			configOverride: `{"hostnameTargetReferencePolicy":"DenyAll"}`,
+			expectedEnv: []envData{
+				{RouterEnableEndpointAddressValidation, false, ""},
+			},
+		},
+		{
+			name:           "hostnameTargetReferencePolicy misconfigured",
+			configOverride: `{"hostnameTargetReferencePolicy":"invalid"}`,
+			expectedError:  `ingresscontroller "default" has invalid spec.unsupportedConfigOverrides.hostnameTargetReferencePolicy: invalid`,
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+				Raw: []byte(test.configOverride),
+			}
+
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, nil, false, false, nil, clusterProxyConfig)
+			if test.expectedError != "" {
+				require.EqualError(t, err, test.expectedError)
+			} else {
+				require.NoError(t, err)
+
+				err = checkDeploymentEnvironment(t, deployment, test.expectedEnv)
+				require.NoError(t, err)
+
+				checkDeploymentHasEnvSorted(t, deployment)
+			}
+
+		})
+	}
+
+}
+
 // TestClusterProxy tests that the cluster-wide proxy settings from proxies.config.openshift.io/cluster are included in the desired router deployment.
 func TestClusterProxy(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
