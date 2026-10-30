@@ -951,7 +951,8 @@ func assertManagedProfileRecreated(t *testing.T, profile *gatewayapiv1.GatewayCl
 	key := client.ObjectKeyFromObject(profile)
 	oldUID := profile.UID
 
-	// CREATE-only reservation does not prevent an ordinary client from deleting an existing GatewayClass.
+	// Delete the GatewayClass as an ordinary client: the VAP reserves the name
+	// against CREATE only, not DELETE.
 	require.NoError(t, kclient.Delete(t.Context(), profile, client.Preconditions{UID: &oldUID}))
 	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, key, profile); err != nil {
@@ -959,37 +960,12 @@ func assertManagedProfileRecreated(t *testing.T, profile *gatewayapiv1.GatewayCl
 			return false, client.IgnoreNotFound(err)
 		}
 		condition := meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured")
-		if profile.UID == oldUID || condition == nil ||
-			condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != profile.Generation {
+		configured := condition != nil &&
+			condition.Status == metav1.ConditionTrue &&
+			condition.ObservedGeneration == profile.Generation
+		if profile.UID == oldUID || !configured {
 			t.Logf("waiting for new UID and openshift.io/Configured=True; oldUID=%s UID=%s generation=%d condition=%+v",
 				oldUID, profile.UID, profile.Generation, condition)
-			return false, nil
-		}
-		return true, nil
-	}))
-}
-
-// assertManagedProfileStatusRepair verifies a status-only mutation is repaired on the same GatewayClass UID.
-func assertManagedProfileStatusRepair(t *testing.T, profile *gatewayapiv1.GatewayClass) {
-	t.Helper()
-	key := client.ObjectKeyFromObject(profile)
-	// A status-only change must be repaired without replacing the recreated GatewayClass.
-	status := profile.DeepCopy()
-	meta.SetStatusCondition(&status.Status.Conditions, metav1.Condition{Type: "openshift.io/Configured", Status: metav1.ConditionFalse, Reason: "LifecycleTest", Message: "Verify status reconciliation", ObservedGeneration: profile.Generation, LastTransitionTime: metav1.Now()})
-	require.NoError(t, kclient.Status().Patch(t.Context(), status, client.MergeFrom(profile)))
-
-	// Repair is complete only on the same UID and current generation.
-	recreatedUID := profile.UID
-	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(ctx, key, profile); err != nil {
-			t.Logf("waiting for managed GatewayClass profile %s: %v", key, err)
-			return false, nil
-		}
-		condition := meta.FindStatusCondition(profile.Status.Conditions, "openshift.io/Configured")
-		if profile.UID != recreatedUID || condition == nil ||
-			condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != profile.Generation {
-			t.Logf("waiting for openshift.io/Configured=True at generation %d on UID %s; got UID=%s condition=%+v",
-				profile.Generation, recreatedUID, profile.UID, condition)
 			return false, nil
 		}
 		return true, nil
@@ -1000,20 +976,22 @@ func assertManagedProfileStatusRepair(t *testing.T, profile *gatewayapiv1.Gatewa
 // with a new UID and the correct GatewayClass association.
 func assertManagedProfileDefaultsReplacement(t *testing.T, profile *gatewayapiv1.GatewayClass) {
 	t.Helper()
-	// Sail may repair defaults before False is observable; require replacement and recovered status.
+	// Delete the profile's defaults ConfigMap; Sail regenerates it.
 	defaults := &corev1.ConfigMap{}
 	defaultsKey := client.ObjectKey{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + profile.Name}
 	require.NoError(t, kclient.Get(t.Context(), defaultsKey, defaults))
 	defaultsUID := defaults.UID
 	require.NoError(t, kclient.Delete(t.Context(), defaults, client.Preconditions{UID: &defaultsUID}))
 
-	// A new defaults UID must again select this profile before status recovery is checked.
+	// Wait for a replacement ConfigMap, identified by a new UID and this
+	// profile's defaults-for-class label.
 	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, defaultsKey, defaults); err != nil {
 			t.Logf("waiting for recreated ConfigMap %s after UID %s: %v", defaultsKey, defaultsUID, err)
 			return false, client.IgnoreNotFound(err)
 		}
-		if defaults.UID == defaultsUID || defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] != profile.Name {
+		if defaults.UID == defaultsUID ||
+			defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] != profile.Name {
 			t.Logf("waiting for new ConfigMap UID and GatewayClass %s association; oldUID=%s UID=%s labels=%v",
 				profile.Name, defaultsUID, defaults.UID, defaults.Labels)
 			return false, nil
@@ -1573,7 +1551,7 @@ func assertGatewayClassConditions(t *testing.T, name string) error {
 }
 
 // waitForGatewayClassCondition waits for a GatewayClass condition to report the
-// given status and reason within timeout.
+// given status and reason for the GatewayClass's current generation within timeout.
 func waitForGatewayClassCondition(t *testing.T, name string, timeout time.Duration, condition metav1.Condition) error {
 	t.Helper()
 	key := types.NamespacedName{Name: name}
@@ -1586,9 +1564,12 @@ func waitForGatewayClassCondition(t *testing.T, name string, timeout time.Durati
 			return false, nil
 		}
 		current = meta.FindStatusCondition(gatewayClass.Status.Conditions, condition.Type)
-		if current == nil || current.Status != condition.Status || current.Reason != condition.Reason {
-			t.Logf("waiting for GatewayClass %s condition %s=%s/%s; got %+v",
-				name, condition.Type, condition.Status, condition.Reason, current)
+		if current == nil ||
+			current.Status != condition.Status ||
+			current.Reason != condition.Reason ||
+			current.ObservedGeneration != gatewayClass.Generation {
+			t.Logf("waiting for GatewayClass %s condition %s=%s/%s at generation %d; got %+v",
+				name, condition.Type, condition.Status, condition.Reason, gatewayClass.Generation, current)
 			return false, nil
 		}
 		return true, nil
@@ -2053,44 +2034,39 @@ func assertManagedGatewayClassProfiles(t *testing.T) error {
 		if err != nil {
 			return err
 		}
-		// Reuse the shared control-plane condition check used for user-created GatewayClasses.
+
+		// The Managed GatewayClass Profile label and the operator's controller
+		// name should be set on the profile.
+		if profile.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true" ||
+			profile.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+			return fmt.Errorf("managed GatewayClass profile %s: controller=%s labels=%v",
+				name, profile.Spec.ControllerName, profile.Labels)
+		}
+
+		// Check for OpenShift control plane conditions like ControllerInstalled
+		// and CRDsReady.
 		if err := assertGatewayClassConditions(t, name); err != nil {
 			return err
 		}
-		err = wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			if err := kclient.Get(ctx, client.ObjectKey{Name: name}, profile); err != nil {
-				t.Logf("waiting for managed GatewayClass profile %s: %v", name, err)
-				return false, nil
-			}
 
-			// Check the exact defaults association alongside the profile's owned outputs.
-			var defaults corev1.ConfigMap
-			if err := kclient.Get(ctx, client.ObjectKey{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + name}, &defaults); err != nil {
-				t.Logf("waiting for ConfigMap defaults for GatewayClass %s: %v", name, err)
-				return false, client.IgnoreNotFound(err)
-			}
-			if profile.Labels[operatorcontroller.ManagedGatewayClassProfileLabel] != "true" ||
-				profile.Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName ||
-				!meta.IsStatusConditionTrue(profile.Status.Conditions, "openshift.io/Configured") {
-				t.Logf("waiting for managed GatewayClass profile %s with openshift.io/Configured=True; controller=%s labels=%v conditions=%+v",
-					name, profile.Spec.ControllerName, profile.Labels, profile.Status.Conditions)
-				return false, nil
-			}
+		// Check for the managed GatewayClass profile specific openshift.io/Configured condition.
+		if err := waitForGatewayClassCondition(t, name, DefaultRetryTimeout,
+			metav1.Condition{Type: "openshift.io/Configured", Status: metav1.ConditionTrue, Reason: "Configured"}); err != nil {
+			return err
+		}
 
-			// Keep ConfigMap ownership checks separate from the GatewayClass's output label.
-			if defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] != name ||
-				defaults.Labels["managed-by"] != "sail-library" ||
-				defaults.Labels["release"] != operatorcontroller.IstioName("").Name+"-istiod" {
-				t.Logf("waiting for ConfigMap %s labels selecting GatewayClass %s and CIO Sail release; got %v",
-					client.ObjectKeyFromObject(&defaults), name, defaults.Labels)
-				return false, nil
-			}
-			return true, nil
-		})
-		if err != nil {
-			return fmt.Errorf("profile %s and associated ConfigMap defaults: %w", name, err)
+		// Query the defaults ConfigMap and confirm the expected labels are set:
+		// Sail ownership, the defaults-for-class label, and the release.
+		defaults := &corev1.ConfigMap{}
+		defaultsKey := client.ObjectKey{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istio-" + operatorcontroller.IstioName("").Name + "-gatewayclass-" + name}
+		if err := kclient.Get(t.Context(), defaultsKey, defaults); err != nil {
+			return err
+		}
+		if defaults.Labels[operatorcontroller.GatewayClassDefaultsLabel] != name ||
+			defaults.Labels["managed-by"] != "sail-library" ||
+			defaults.Labels["release"] != operatorcontroller.IstioName("").Name+"-istiod" {
+			return fmt.Errorf("ConfigMap %s labels selecting GatewayClass %s and CIO Sail release; got %v",
+				defaultsKey, name, defaults.Labels)
 		}
 	}
 	return nil
@@ -2161,36 +2137,28 @@ func gatewayClassService(t *testing.T, gateway *gatewayapiv1.Gateway, gatewayCla
 	return current, err
 }
 
-// assertGatewayServiceType waits for the Gateway's one Service to reach the expected type and, for ClusterIP,
-// an allocated cluster-internal IP after obsolete-Service cleanup.
-func assertGatewayServiceType(t *testing.T, gateway *gatewayapiv1.Gateway, serviceType corev1.ServiceType) error {
+// deleteGatewayService deletes the Service and waits for that UID to be gone so
+// it cannot be mistaken for a replacement created under the same name.
+func deleteGatewayService(t *testing.T, service *corev1.Service) {
 	t.Helper()
-	return wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
-		var services corev1.ServiceList
-		if err := kclient.List(ctx, &services, client.InNamespace(gateway.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name}); err != nil {
-			t.Logf("waiting for Services for Gateway %s: %v", client.ObjectKeyFromObject(gateway), err)
-			return false, nil
-		}
-		// Wait for exactly one Service so a lingering obsolete Service is not mistaken for the current one.
-		if len(services.Items) != 1 {
-			t.Logf("waiting for exactly one Service for Gateway %s; got %d", client.ObjectKeyFromObject(gateway), len(services.Items))
-			return false, nil
-		}
+	key := client.ObjectKeyFromObject(service)
+	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), service, client.Preconditions{UID: &service.UID})))
 
-		service := &services.Items[0]
-		if service.Spec.Type != serviceType {
-			t.Logf("waiting for Service %s type %s; got type=%s",
-				client.ObjectKeyFromObject(service), serviceType, service.Spec.Type)
+	// Poll until the Service with the deleted UID no longer exists.
+	var current corev1.Service
+	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, key, &current); err != nil {
+			if kerrors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("waiting for Service %s to be deleted: %v", key, err)
 			return false, nil
 		}
-
-		// A ClusterIP Service must have an allocated, non-headless IP and no external ingress.
-		if serviceType == corev1.ServiceTypeClusterIP &&
-			(service.Spec.ClusterIP == "" || service.Spec.ClusterIP == corev1.ClusterIPNone || len(service.Status.LoadBalancer.Ingress) > 0) {
-			t.Logf("waiting for Service %s to have a cluster-internal IP; got clusterIP=%q loadBalancer=%+v",
-				client.ObjectKeyFromObject(service), service.Spec.ClusterIP, service.Status.LoadBalancer)
-			return false, nil
+		// A same-named replacement means the deleted Service is already gone.
+		if current.UID != service.UID {
+			return true, nil
 		}
-		return true, nil
-	})
+		t.Logf("waiting for Service %s (UID %s) to be deleted", key, service.UID)
+		return false, nil
+	}))
 }
