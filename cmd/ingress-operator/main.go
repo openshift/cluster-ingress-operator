@@ -18,6 +18,7 @@ func main() {
 	var rootCmd = &cobra.Command{Use: "ingress-operator"}
 	rootCmd.AddCommand(NewStartCommand())
 	rootCmd.AddCommand(NewRenderCommand())
+	rootCmd.AddCommand(NewSailRBACCommand())
 	rootCmd.AddCommand(httphealthcheck.NewServeHealthCheckCommand())
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "serve-grpc-test-server",
