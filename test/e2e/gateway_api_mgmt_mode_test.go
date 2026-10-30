@@ -498,7 +498,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	// The managed profile reports the transition alongside its control plane.
 	require.NoError(t, waitForGatewayClassCondition(t, operatorcontroller.OpenShiftClusterIPGatewayClassName, 2*time.Minute,
 		metav1.Condition{Type: "openshift.io/Configured", Status: metav1.ConditionFalse, Reason: "Unmanaged"}),
-		"managed profile must report Configured=False with reason Unmanaged")
+		"ClusterIP managed profile must report Configured=False with reason Unmanaged")
 
 	pausedGateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: "management-mode-paused", Namespace: operatorcontroller.DefaultOperandNamespace},

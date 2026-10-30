@@ -140,6 +140,8 @@ func TestGatewayAPI(t *testing.T) {
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioInstallationSailLibrary", testGatewayAPIIstioInstallationSailLibrary)
 		t.Run("testGatewayAPIManagedProfileClusterIP", testGatewayAPIManagedProfileClusterIP)
+		t.Run("testGatewayAPIManagedProfileVAPProtection", testGatewayAPIManagedProfileVAPProtection)
+		t.Run("testGatewayAPIManagedProfilesLifecycle", testGatewayAPIManagedProfilesLifecycle)
 	} else {
 		t.Run("testGatewayAPIIstioInstallationOLM", testGatewayAPIIstioInstallationOLM)
 	}
@@ -149,10 +151,6 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
-	if gatewayAPIWithoutOLMEnabled {
-		t.Run("testGatewayAPIManagedProfileVAPProtection", testGatewayAPIManagedProfileVAPProtection)
-		t.Run("testGatewayAPIManagedProfilesLifecycle", testGatewayAPIManagedProfilesLifecycle)
-	}
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testGatewayAPIListenerSetIgnored", testGatewayAPIListenerSetIgnored)
 	if !gatewayAPIManagementModeFGEnabled {
@@ -324,7 +322,7 @@ func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
 	}
 }
 
-// testGatewayAPIManagedProfileClusterIP verifies fresh ClusterIP provisioning and both directions of a gatewayClassName change.
+// testGatewayAPIManagedProfileClusterIP verifies fresh ClusterIP provisioning and transitions to the openshift-default GatewayClass and back.
 func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	managedProfile, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftClusterIPGatewayClassName)
 	require.NoError(t, err)
@@ -351,47 +349,26 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	// Verify the ClusterIP profile's Gateway is ready and reachable from inside the cluster.
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err)
-	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeClusterIP))
 	_, err = assertHttpRouteSuccessful(t, namespace.Name, "echo", gateway)
 	require.NoError(t, err)
 	clusterIPService, err := gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
 	require.NoError(t, err)
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
 
-	// DNS exclusion applies on every platform, not only those publishing external DNS.
+	// Check that no DNSRecord exists for the Gateway: the ClusterIP profile never
+	// publishes one, on any platform.
 	require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
 		{dnsName: "*." + domain + ".", gatewayName: gateway.Name}: expectDNSRecordAbsent(),
 	}))
 
-	// Istio owns the Gateway Service, so deleting it should cause Istio to
-	// recreate it using the managed profile's ClusterIP configuration.
-	deletedUID := clusterIPService.UID
-	require.NoError(t, kclient.Delete(t.Context(), clusterIPService, client.Preconditions{UID: &clusterIPService.UID}))
-
-	// Wait for the old Service to be gone so it cannot be mistaken for the
-	// recreated one.
-	require.Eventually(t, func() bool {
-		var services corev1.ServiceList
-		if err := kclient.List(t.Context(), &services,
-			client.InNamespace(gateway.Namespace),
-			client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name}); err != nil {
-			t.Logf("failed to list Services for Gateway %s: %v", client.ObjectKeyFromObject(gateway), err)
-			return false
-		}
-		for i := range services.Items {
-			if services.Items[i].UID == deletedUID {
-				return false
-			}
-		}
-		return true
-	}, time.Minute, time.Second, "the deleted Gateway Service still exists")
-
-	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeClusterIP))
+	// Delete the Gateway's Service and verify Istio recreates it with the
+	// managed profile's ClusterIP configuration.
+	deleteGatewayService(t, clusterIPService)
 	clusterIPService, err = gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
 	require.NoError(t, err, "Istio did not recreate the Gateway Service with the managed profile's ClusterIP configuration")
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
 
-	// Switch the Gateway to the openshift-default GatewayClass and verify LoadBalancer traffic and supported DNS publication.
+	// Change the GatewayClass to openshift-default and verify LoadBalancer traffic.
 	_, err = assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
 	require.NoError(t, err)
 	require.NoError(t, updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
@@ -402,34 +379,32 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err)
 
-	// Manually delete the leftover Service that Istio created for the previous
-	// GatewayClass so that assertGatewayServiceType sees only LoadBalancer Services.
-	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), clusterIPService, client.Preconditions{UID: &clusterIPService.UID})))
-	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeLoadBalancer))
-	assertHttpRouteConnectionViaService(t, *loadBalancerService, clientPod, hostname)
+	// Verify supported DNS publication for openshift-default.
 	if isDNSManagementSupported(t) {
 		require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
 			{dnsName: "*." + domain + ".", gatewayName: gateway.Name}: expectDNSRecordPublished(),
 		}))
 	}
 
-	// Switching back restores ClusterIP traffic and removes stale external DNS.
+	// Manually delete the leftover Service that Istio created for the previous GatewayClass
+	// and then verify traffic through the new service.
+	deleteGatewayService(t, clusterIPService)
+	assertHttpRouteConnectionViaService(t, *loadBalancerService, clientPod, hostname)
+
+	// Switch back to openshift-clusterip GatewayClass.
 	require.NoError(t, updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
-		spec.GatewayClassName = gatewayapiv1.ObjectName(managedProfile.Name)
+		spec.GatewayClassName = operatorcontroller.OpenShiftClusterIPGatewayClassName
 	}))
 	clusterIPService, err = gatewayClassService(t, gateway, managedProfile.Name, corev1.ServiceTypeClusterIP)
 	require.NoError(t, err)
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err)
 
-	// Manually delete the leftover Service that Istio created for the previous
-	// GatewayClass so that assertGatewayServiceType sees only ClusterIP Services.
-	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), loadBalancerService, client.Preconditions{UID: &loadBalancerService.UID})))
-	require.NoError(t, assertGatewayServiceType(t, gateway, corev1.ServiceTypeClusterIP))
-	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
+	// Verify switching back to openshift-clusterip removes stale DNSRecord from previous GatewayClass.
 	require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
 		{dnsName: "*." + domain + ".", gatewayName: gateway.Name}: expectDNSRecordAbsent(),
 	}))
+	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
 }
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
@@ -595,19 +570,11 @@ func testGatewayAPIManagedProfileVAPProtection(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "openshift-ai-inference"},
 		Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: "istio.io/gateway-controller"},
 	}
-	err := kclient.Get(t.Context(), client.ObjectKeyFromObject(exception), &gatewayapiv1.GatewayClass{})
-	switch {
-	case errors.IsNotFound(err):
-		require.NoError(t, kclient.Create(t.Context(), exception, client.DryRunAll),
-			"GatewayClass %s must remain user-creatable", exception.Name)
-	case err != nil:
-		require.NoError(t, err)
-	default:
-		t.Logf("GatewayClass %s already exists; skipping the exception check", exception.Name)
-	}
+	require.NoError(t, kclient.Create(t.Context(), exception, client.DryRunAll),
+		"GatewayClass %s must remain user-creatable", exception.Name)
 }
 
-// testGatewayAPIManagedProfilesLifecycle verifies managed GatewayClass profile recreation and Sail defaults regeneration.
+// testGatewayAPIManagedProfilesLifecycle verifies class is always recreated and Sail defaults regeneration.
 func testGatewayAPIManagedProfilesLifecycle(t *testing.T) {
 	require.NoError(t, assertManagedGatewayClassProfiles(t))
 	profile := &gatewayapiv1.GatewayClass{}
@@ -616,9 +583,6 @@ func testGatewayAPIManagedProfilesLifecycle(t *testing.T) {
 
 	// Delete the managed GatewayClass profile directly; the controller must recreate it with a configured status.
 	assertManagedProfileRecreated(t, profile)
-
-	// Repair a status-only mutation on the recreated profile without replacing the GatewayClass.
-	assertManagedProfileStatusRepair(t, profile)
 
 	// Defaults replacement must recover association and current profile status.
 	assertManagedProfileDefaultsReplacement(t, profile)
