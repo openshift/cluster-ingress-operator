@@ -88,9 +88,10 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 #   pkg/operator/controller/gatewayclass/istio_olm.go). Downstream enablement is tracked
 #   by https://redhat.atlassian.net/browse/NE-2598.
 # - HTTPRouteRetry, HTTPRouteRetryBackendTimeout, HTTPRouteRetryConnectionError: retry is
-#   only in the experimental-channel HTTPRoute CRD; the operator installs the standard
-#   channel, so routes cannot express retry configuration (the API server rejects the
-#   field: unknown field "spec.rules[N].retry").
+#   not part of the Gateway API v1.6.x standard-channel HTTPRoute schema installed here;
+#   it exists only in the experimental channel. With strict validation the API server
+#   rejects spec.rules[N].retry as an unknown field; otherwise the field may be pruned.
+#   Retry is in the standard channel by Gateway API v1.7.0.
 # - UDPRoute: the UDPRoute conformance tests are part of the GATEWAY-UDP profile,
 #   which is not run because the OpenShift Gateway API implementation does not
 #   support UDPRoute; the operator configures Istio to ignore udproutes
