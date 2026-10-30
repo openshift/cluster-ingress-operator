@@ -1,14 +1,21 @@
 package certificate
 
 import (
+	"context"
 	"testing"
 
 	"github.com/openshift/library-go/pkg/crypto"
 
+	"github.com/openshift/api/annotations"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
+	"github.com/stretchr/testify/assert"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const (
@@ -122,7 +129,7 @@ func Test_desiredRouterDefaultCertificateSecret(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			wantCert, _, err := desiredRouterDefaultCertificateSecret(ca, "test-namespace", metav1.OwnerReference{Name: "test-ref"}, tc.ic)
+			wantCert, secret, err := desiredRouterDefaultCertificateSecret(ca, "test-namespace", metav1.OwnerReference{Name: "test-ref"}, tc.ic)
 			switch {
 			case err != nil:
 				t.Fatalf("unexpected error: %v", err)
@@ -131,6 +138,69 @@ func Test_desiredRouterDefaultCertificateSecret(t *testing.T) {
 			case !tc.wantCert && wantCert:
 				t.Fatal("expected no default certificate")
 			}
+			if tc.wantCert {
+				wantAnnotations := map[string]string{
+					annotations.OpenShiftComponent:   controller.RouterTLSOwningComponent,
+					annotations.OpenShiftDescription: routerDefaultCertificateDescription,
+				}
+				assert.Equal(t, wantAnnotations, secret.Annotations)
+			}
 		})
 	}
+}
+
+// Test_ensureDefaultCertificateForIngress_reconcilesAnnotations verifies that
+// ensureDefaultCertificateForIngress adds the operator-managed TLS metadata
+// annotations to a pre-existing default certificate secret (for example, one
+// created by a release that did not set them) while preserving unrelated
+// annotations.
+func Test_ensureDefaultCertificateForIngress_reconcilesAnnotations(t *testing.T) {
+	const namespace = "test-namespace"
+
+	ic := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "default",
+		},
+		Status: operatorv1.IngressControllerStatus{
+			Domain: "test.com",
+		},
+	}
+
+	// existing simulates an operator-generated default certificate secret that
+	// predates the TLS metadata annotations.  It carries an unrelated
+	// annotation that must be preserved by the reconcile.
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        controller.RouterOperatorGeneratedDefaultCertificateSecretName(ic, namespace).Name,
+			Namespace:   namespace,
+			Annotations: map[string]string{"example.com/unrelated": "preserved"},
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			"tls.crt": []byte(cert),
+			"tls.key": []byte(key),
+		},
+	}
+
+	r := &reconciler{
+		client:   fake.NewClientBuilder().WithObjects(existing).Build(),
+		recorder: record.NewFakeRecorder(10),
+	}
+
+	caSecret := &corev1.Secret{
+		Data: map[string][]byte{
+			"tls.crt": []byte(cert),
+			"tls.key": []byte(key),
+		},
+	}
+
+	haveCert, err := r.ensureDefaultCertificateForIngress(context.Background(), caSecret, namespace, metav1.OwnerReference{Name: "test-ref"}, ic)
+	assert.NoError(t, err)
+	assert.True(t, haveCert)
+
+	actual := &corev1.Secret{}
+	assert.NoError(t, r.client.Get(context.Background(), controller.RouterOperatorGeneratedDefaultCertificateSecretName(ic, namespace), actual))
+	assert.Equal(t, controller.RouterTLSOwningComponent, actual.Annotations[annotations.OpenShiftComponent])
+	assert.Equal(t, routerDefaultCertificateDescription, actual.Annotations[annotations.OpenShiftDescription])
+	assert.Equal(t, "preserved", actual.Annotations["example.com/unrelated"], "expected unrelated annotation to be preserved")
 }
