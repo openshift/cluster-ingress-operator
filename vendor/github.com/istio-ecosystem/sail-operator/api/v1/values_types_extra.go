@@ -17,6 +17,7 @@ package v1
 import (
 	appsv1 "k8s.io/api/apps/v1"
 	k8sv1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type SDSConfigToken struct {
@@ -26,6 +27,12 @@ type SDSConfigToken struct {
 type PeerCaCrlConfig struct {
 	// When enabled, ztunnel will check certificates against the CRL
 	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// CNIAmbientEnablementSelector defines the pod and namespace selectors used to identify ambient-enabled pods.
+type CNIAmbientEnablementSelector struct {
+	PodSelector       *metav1.LabelSelector `json:"podSelector,omitempty"`
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 }
 
 type CNIValues struct {
@@ -137,7 +144,11 @@ type ZTunnelConfig struct {
 }
 
 // ZTunnelGlobalConfig is a subset of the Global Configuration used in the Istio ztunnel chart.
-type ZTunnelGlobalConfig struct { // Default k8s resources settings for all Istio control plane components.
+type ZTunnelGlobalConfig struct {
+	// Settings related to Kubernetes NetworkPolicy.
+	NetworkPolicy *NetworkPolicyConfig `json:"networkPolicy,omitempty"`
+
+	// Default k8s resources settings for all Istio control plane components.
 	//
 	// See https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/#resource-requests-and-limits-of-pod-and-container
 	//
