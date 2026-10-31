@@ -95,7 +95,7 @@ func Test_ingressControllersForClusterOperator(t *testing.T) {
 			oldVersions := []configv1.OperandVersion{{Name: OperatorVersionName, Version: "5.0"}, {Name: IngressControllerVersionName, Version: "router:old"}, {Name: CanaryImageVersionName, Version: "canary:old"}}
 			allAvailable := checkAllIngressesAvailable(view)
 			versions := r.computeOperatorStatusVersions(oldVersions, allAvailable)
-			progressing := computeOperatorProgressingCondition(view, allAvailable, oldVersions, versions, "5.1", "router:new", "canary:new", operatorcontroller.TransitionState{})
+			progressing := computeOperatorProgressingCondition(view, allAvailable, oldVersions, versions, "5.1", "router:new", "canary:new")
 			require.Equal(t, tc.progressing, progressing.Status)
 			if tc.available == configv1.ConditionTrue {
 				require.Equal(t, "5.1", versions[0].Version, "zero-worker startup must allow CVO version advancement")
@@ -118,7 +118,7 @@ func Test_zeroWorkerStartupDoesNotMaskCustomRouter(t *testing.T) {
 	require.Equal(t, operatorv1.ConditionFalse, view[1].Status.Conditions[0].Status)
 	require.Equal(t, operatorv1.ConditionTrue, view[1].Status.Conditions[1].Status)
 	require.False(t, checkAllIngressesAvailable(view))
-	progressing := computeOperatorProgressingCondition(view, false, nil, nil, "", "", "", operatorcontroller.TransitionState{})
+	progressing := computeOperatorProgressingCondition(view, false, nil, nil, "", "", "")
 	require.Equal(t, configv1.ConditionTrue, progressing.Status)
 	require.Contains(t, progressing.Message, "e2e-dcm")
 	require.Equal(t, operatorv1.ConditionFalse, controllers[0].Status.Conditions[0].Status)

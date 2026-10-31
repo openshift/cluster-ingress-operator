@@ -131,8 +131,13 @@ func Test_syncIngressControllerStatus_nodeReadiness(t *testing.T) {
 			if dnsConfig == nil {
 				dnsConfig = &configv1.DNS{}
 			}
-			err, updated := r.syncIngressControllerStatus(ic, deployment, metav1.OwnerReference{}, nil, tc.service, nil, nil, dnsConfig, infraConfig.Status.PlatformStatus, ingressConfig, configv1.ExternalTopologyMode, nodes)
-			require.Error(t, err, "an unavailable router must request a retry")
+			// Unlike release-5.1 and later, computeIngressAvailableCondition on
+			// this branch returns no retryable error for an unavailable
+			// ingresscontroller; that behaviour comes from OCPBUGS-92835, which is
+			// not part of this backport. Re-reconciliation on node arrival is
+			// driven by the node watch added here, not by a requeue error, so the
+			// absence of the error does not affect the zero-worker fix.
+			_, updated := r.syncIngressControllerStatus(ic, deployment, metav1.OwnerReference{}, nil, tc.service, nil, nil, dnsConfig, infraConfig.Status.PlatformStatus, ingressConfig, configv1.ExternalTopologyMode, nodes)
 			require.True(t, updated)
 			actual := &operatorv1.IngressController{}
 			require.NoError(t, kubeClient.Get(context.Background(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, actual))
@@ -174,10 +179,11 @@ func Test_syncIngressControllerStatus_nodeLifecycle(t *testing.T) {
 	step := func(nodes *corev1.NodeList, wantStatus operatorv1.ConditionStatus, wantWaiting bool) {
 		t.Helper()
 		require.NoError(t, kubeClient.Get(context.Background(), name, ic))
+		// See the note in Test_syncIngressControllerStatus_nodeReadiness: this
+		// branch lacks the OCPBUGS-92835 retryable error, so only the available
+		// path can assert on the returned error.
 		err, _ := r.syncIngressControllerStatus(ic, deployment, metav1.OwnerReference{}, nil, nil, nil, nil, &configv1.DNS{}, infraConfig.Status.PlatformStatus, ingressConfig, configv1.ExternalTopologyMode, nodes)
-		if wantStatus == operatorv1.ConditionFalse {
-			require.Error(t, err, "unavailable router must request a retry")
-		} else {
+		if wantStatus != operatorv1.ConditionFalse {
 			require.NoError(t, err)
 		}
 		require.NoError(t, kubeClient.Get(context.Background(), name, ic))
