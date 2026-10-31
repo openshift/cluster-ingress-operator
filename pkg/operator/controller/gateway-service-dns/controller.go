@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -46,14 +45,15 @@ var log = logf.Logger.WithName(controllerName)
 // NewUnmanaged creates and returns a controller that watches services that are
 // associated with gateways and creates dnsrecord objects for them.  This is an
 // unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcontroller.GatewayAPIModeAccessor, listenerSetCache cache.Cache) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		config:       config,
-		client:       mgr.GetClient(),
-		cache:        operatorCache,
-		recorder:     mgr.GetEventRecorderFor(controllerName),
-		modeAccessor: modeAccessor,
+		config:           config,
+		client:           mgr.GetClient(),
+		cache:            operatorCache,
+		listenerSetCache: listenerSetCache,
+		recorder:         mgr.GetEventRecorderFor(controllerName),
+		modeAccessor:     modeAccessor,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -69,14 +69,12 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	})
 	gatewayListenersChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec.Listeners
-			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec.Listeners
-			// A DNSRecord CR needs to be updated if, and only if,
-			// the hostname has changed (a listener's port and
-			// protocol have no bearing on the DNS record).
-			changed := gatewayListenersHostnamesChanged(old, new)
+			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec
+			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec
+			// Policy and status changes can revoke ListenerSet DNS eligibility.
+			changed := gatewayListenersHostnamesChanged(old.Listeners, new.Listeners) || old.GatewayClassName != new.GatewayClassName || !reflect.DeepEqual(old.AllowedListeners, new.AllowedListeners) || !reflect.DeepEqual(e.ObjectOld.(*gatewayapiv1.Gateway).Status, e.ObjectNew.(*gatewayapiv1.Gateway).Status) || !reflect.DeepEqual(e.ObjectOld.GetDeletionTimestamp(), e.ObjectNew.GetDeletionTimestamp())
 			if changed {
-				log.Info("Listener hostname changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+				log.Info("Gateway DNS inputs changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
 			}
 			return changed
 		},
@@ -84,30 +82,11 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetNamespace() == config.OperandNamespace
 	})
-	gatewayToService := func(ctx context.Context, o client.Object) []reconcile.Request {
-		var services corev1.ServiceList
-		listOpts := []client.ListOption{
-			client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: o.GetName()},
-			client.InNamespace(config.OperandNamespace),
-		}
-		requests := []reconcile.Request{}
-		if err := reconciler.cache.List(ctx, &services, listOpts...); err != nil {
-			log.Error(err, "failed to list services for gateway", "gateway", o.GetName())
-			return requests
-		}
-		for i := range services.Items {
-			request := reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Namespace: services.Items[i].Namespace,
-					Name:      services.Items[i].Name,
-				},
-			}
-			requests = append(requests, request)
-			log.Info("Enqueuing service for gateway", "gateway", o.GetName(), "service", request.NamespacedName)
-		}
-		return requests
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForGateway), isInOperandNamespace, gatewayListenersChanged, modeAccessor.DependentPredicate())); err != nil {
+		return nil, err
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged, modeAccessor.DependentPredicate())); err != nil {
+	// The map handler visits both old and new objects on reparenting.
+	if err := c.Watch(source.Kind[client.Object](listenerSetCache, &gatewayapiv1.ListenerSet{}, handler.EnqueueRequestsFromMapFunc(reconciler.requestsForListenerSet), modeAccessor.DependentPredicate())); err != nil {
 		return nil, err
 	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace, modeAccessor.DependentPredicate())); err != nil {
@@ -131,6 +110,27 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	}
 
 	return c, nil
+}
+
+func (r *reconciler) requestsForGateway(ctx context.Context, object client.Object) []reconcile.Request {
+	if object.GetNamespace() != r.config.OperandNamespace {
+		return nil
+	}
+	var services corev1.ServiceList
+	if err := r.cache.List(ctx, &services, client.InNamespace(r.config.OperandNamespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: object.GetName()}); err != nil {
+		log.Error(err, "failed to list services for gateway", "gateway", object.GetName())
+		return nil
+	}
+	var requests []reconcile.Request
+	for _, service := range services.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&service)})
+	}
+	return requests
+}
+
+func (r *reconciler) requestsForListenerSet(ctx context.Context, object client.Object) []reconcile.Request {
+	parent := operatorcontroller.ListenerSetParent(object.(*gatewayapiv1.ListenerSet))
+	return r.requestsForGateway(ctx, &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: parent.Namespace, Name: parent.Name}})
 }
 
 // gatewayListenersHostnamesChanged returns a Boolean indicating whether any
@@ -163,10 +163,11 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client       client.Client
-	cache        cache.Cache
-	recorder     record.EventRecorder
-	modeAccessor *operatorcontroller.GatewayAPIModeAccessor
+	client           client.Client
+	cache            cache.Cache
+	listenerSetCache cache.Cache
+	recorder         record.EventRecorder
+	modeAccessor     *operatorcontroller.GatewayAPIModeAccessor
 }
 
 // Reconcile expects request to refer to a service and creates or reconciles a
@@ -191,6 +192,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		log.Info("service does not have a label with the expected key; reconciliation will be skipped", "request", request, "labelKey", operatorcontroller.GatewayNameLabelKey)
 		return reconcile.Result{}, nil
 	}
+	if service.Namespace != r.config.OperandNamespace {
+		return reconcile.Result{}, nil
+	}
 
 	var gateway gatewayapiv1.Gateway
 	gatewayName := types.NamespacedName{
@@ -199,8 +203,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 	if err := r.cache.Get(ctx, gatewayName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("gateway not found; reconciliation will be skipped", "request", request)
-			return reconcile.Result{}, nil
+			gateway.Namespace, gateway.Name = gatewayName.Namespace, gatewayName.Name
+			return reconcile.Result{}, utilerrors.NewAggregate(r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, sets.NewString()))
 		}
 		return reconcile.Result{}, err
 	}
@@ -220,6 +224,20 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	domains := getGatewayHostnames(&gateway)
+	var listenerSets gatewayapiv1.ListenerSetList
+	if err := r.listenerSetCache.List(ctx, &listenerSets, client.MatchingFields{operatorcontroller.ListenerSetParentGatewayIndex: gatewayName.String()}); err != nil {
+		return reconcile.Result{}, err
+	}
+	if len(listenerSets.Items) > 0 && operatorcontroller.GatewayHasOurController(log, r.client, false)(&gateway) {
+		for index := range listenerSets.Items {
+			for _, hostname := range operatorcontroller.ListenerSetDNSHostnames(&listenerSets.Items[index]) {
+				domains.Insert(string(hostname) + ".")
+			}
+		}
+	}
+	if !gateway.DeletionTimestamp.IsZero() {
+		domains = sets.NewString()
+	}
 	var errs []error
 	errs = append(errs, r.ensureDNSRecordsForGateway(ctx, &gateway, &service, domains.List(), infraConfig, dnsConfig)...)
 	errs = append(errs, r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, domains)...)
@@ -234,11 +252,7 @@ func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 		if listener.Hostname == nil || len(*listener.Hostname) == 0 {
 			continue
 		}
-		domain := string(*listener.Hostname)
-		// If domain doesn't have a trailing dot, add it.
-		if !strings.HasSuffix(domain, ".") {
-			domain = domain + "."
-		}
+		domain := operatorcontroller.NormalizeDNSHostname(string(*listener.Hostname)) + "."
 		domains.Insert(domain)
 	}
 	return domains
@@ -248,6 +262,16 @@ func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 // with the given gateway and service, for each of the given domains.  It
 // returns a list of any errors that result from ensuring those DNSRecord CRs.
 func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1.Gateway, service *corev1.Service, domains []string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) []error {
+	var existing iov1.DNSRecordList
+	if err := r.client.List(ctx, &existing, client.InNamespace(gateway.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name}); err != nil {
+		return []error{err}
+	}
+	recordsByDomain := map[string][]*iov1.DNSRecord{}
+	for index := range existing.Items {
+		record := &existing.Items[index]
+		domain := operatorcontroller.NormalizeDNSHostname(record.Spec.DNSName) + "."
+		recordsByDomain[domain] = append(recordsByDomain[domain], record)
+	}
 	labels := map[string]string{
 		operatorcontroller.GatewayNameLabelKey: gateway.Name,
 	}
@@ -263,6 +287,33 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
+		records := recordsByDomain[domain]
+		if len(records) > 1 {
+			errs = append(errs, fmt.Errorf("duplicate DNSRecords block desired record %s; remove the duplicate claim", name))
+			continue
+		}
+		if len(records) == 1 {
+			record := records[0]
+			if !dnsRecordOwnedByService(record, service) {
+				errs = append(errs, fmt.Errorf("duplicate DNSRecord would be created for desired record %s; existing claim is not owned by Service %s/%s", name, service.Namespace, service.Name))
+				continue
+			}
+			if !record.DeletionTimestamp.IsZero() {
+				errs = append(errs, fmt.Errorf("cannot ensure desired DNSRecord %s while its existing claim is terminating", name))
+				continue
+			}
+			name.Name = record.Name
+		} else {
+			var occupied iov1.DNSRecord
+			if err := r.client.Get(ctx, name, &occupied); !apierrors.IsNotFound(err) {
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to check desired DNSRecord %s: %w", name, err))
+				} else {
+					errs = append(errs, fmt.Errorf("cannot ensure desired DNSRecord %s; name is occupied by another claim", name))
+				}
+				continue
+			}
+		}
 		dnsPolicy := iov1.UnmanagedDNS
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
 			dnsPolicy = iov1.ManagedDNS
@@ -271,6 +322,14 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		errs = append(errs, err)
 	}
 	return errs
+}
+
+func dnsRecordOwnedByService(record *iov1.DNSRecord, service *corev1.Service) bool {
+	if record.Namespace != service.Namespace || service.UID == "" || len(record.OwnerReferences) != 1 {
+		return false
+	}
+	owner := record.OwnerReferences[0]
+	return owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service" && owner.Name == service.Name && owner.UID == service.UID
 }
 
 // deleteStaleDNSRecordsForGateway deletes any DNSRecord CRs that are associated
@@ -291,14 +350,14 @@ func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gatewa
 	}
 	var errs []error
 	for i := range dnsrecords.Items {
-		if domains.Has(dnsrecords.Items[i].Spec.DNSName) {
+		if domains.Has(operatorcontroller.NormalizeDNSHostname(dnsrecords.Items[i].Spec.DNSName) + ".") {
 			continue
 		}
-		name := types.NamespacedName{
-			Namespace: dnsrecords.Items[i].Namespace,
-			Name:      dnsrecords.Items[i].Name,
+		if !dnsRecordOwnedByService(&dnsrecords.Items[i], service) {
+			errs = append(errs, fmt.Errorf("cannot clean up DNSRecord claim for Gateway %s/%s; verify ownership by Service %s/%s", gateway.Namespace, gateway.Name, service.Namespace, service.Name))
+			continue
 		}
-		errs = append(errs, dnsrecord.DeleteDNSRecord(r.client, name))
+		errs = append(errs, client.IgnoreNotFound(r.client.Delete(ctx, &dnsrecords.Items[i], client.Preconditions{UID: &dnsrecords.Items[i].UID, ResourceVersion: &dnsrecords.Items[i].ResourceVersion})))
 	}
 	return errs
 }

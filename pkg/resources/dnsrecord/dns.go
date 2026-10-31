@@ -71,23 +71,25 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 	if err != nil {
 		return false, nil, err
 	}
+	if wantWC && haveWC && (len(current.OwnerReferences) != 1 || !cmp.Equal(current.OwnerReferences[0], ownerRef, cmpopts.IgnoreFields(metav1.OwnerReference{}, "Controller", "BlockOwnerDeletion")) || !current.DeletionTimestamp.IsZero()) {
+		return true, current, fmt.Errorf("cannot update DNSRecord claim: verify Service ownership and pending deletion")
+	}
 
 	switch {
 	case wantWC && !haveWC:
 		if err := client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
-		log.Info("Created dnsrecord", "dnsrecord", desired)
+		log.Info("Created dnsrecord", "dnsrecord", name)
 		return CurrentDNSRecord(client, name)
 	case wantWC && haveWC:
 		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
-			log.Info("Updated dnsrecord", "dnsrecord", desired)
 			return CurrentDNSRecord(client, name)
 		}
 	}
-	log.Info("No desired dnsrecord", "service", service)
+	log.Info("No desired dnsrecord", "dnsrecord", name)
 
 	return haveWC, current, nil
 }
@@ -209,12 +211,10 @@ func updateDNSRecord(client client.Client, current, desired *iov1.DNSRecord) (bo
 		return false, nil
 	}
 
-	// Diff before updating because the client may mutate the object.
-	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
-	log.Info("updated dnsrecord", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
+	log.Info("updated dnsrecord", "namespace", updated.Namespace, "name", updated.Name)
 	return true, nil
 }
 
