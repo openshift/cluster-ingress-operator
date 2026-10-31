@@ -16,7 +16,7 @@ BINARY        := $(TOOLS_BIN_DIR)/cluster-ingress-operator-tests-ext
 .PHONY: build
 build: ## Build the extended tests binary
 	@mkdir -p $(TOOLS_BIN_DIR)
-	GO_COMPLIANCE_POLICY="exempt_all" go build -ldflags "$(LDFLAGS)" -mod=vendor \
+	CGO_ENABLED=0 GO_COMPLIANCE_POLICY="exempt_all" go build -ldflags "$(LDFLAGS)" -mod=vendor \
 		-o $(BINARY) ./cmd/...
 
 .PHONY: list-test-names
@@ -25,6 +25,19 @@ list-test-names: build ## List all registered test names
 
 .PHONY: verify
 verify: tidy fmt vet ## Run all verification checks
+
+.PHONY: update-metadata
+update-metadata: build ## Regenerate the OTE registration metadata
+	@$(BINARY) update
+
+.PHONY: verify-metadata
+verify-metadata: update-metadata ## Require committed, current OTE metadata
+	@if [ -n "$$(git status --porcelain -- .openshift-tests-extension)" ]; then \
+		echo "ERROR: OTE metadata is uncommitted or out of date; run make update-metadata and commit it." >&2; \
+		exit 1; \
+	fi
+
+verify: verify-metadata
 
 .PHONY: tidy
 tidy: ## Run go mod tidy

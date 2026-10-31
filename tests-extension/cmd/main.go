@@ -24,6 +24,7 @@ const defaultTestTimeout = 90 * time.Minute
 func main() {
 	registry := e.NewRegistry()
 	ext := e.NewExtension("openshift", "payload", "cluster-ingress-operator")
+	registerIngressRouterSuites(ext)
 
 	// Combined suites (all tests: Gateway API + Ingress Operator).
 	//
@@ -36,7 +37,7 @@ func main() {
 		Name:    "ingress/parallel",
 		Parents: []string{"openshift/conformance/parallel"},
 		Qualifiers: []string{
-			`!(name.contains("[Serial]") || name.contains("[Disruptive]") || name.contains("[Slow]"))`,
+			`!(name.contains("[Serial]") || name.contains("[Disruptive]") || name.contains("[Slow]")) && (!(` + ingressRouterSelector + `) || name.contains("[Level0]"))`,
 		},
 	})
 
@@ -45,7 +46,7 @@ func main() {
 		Parents:     []string{"openshift/conformance/serial"},
 		Parallelism: 1,
 		Qualifiers: []string{
-			`(name.contains("[Serial]") || name.contains("[Disruptive]")) && !name.contains("[Slow]")`,
+			`(name.contains("[Serial]") || name.contains("[Disruptive]")) && !name.contains("[Slow]") && (!(` + ingressRouterSelector + `) || (name.contains("[Level0]") && !name.contains("[Disruptive]")))`,
 		},
 	})
 
@@ -179,6 +180,7 @@ func main() {
 	// for downstream systems (Sippy, CI test mapping) when tests are migrated
 	// from origin to OTE.
 	appendSuiteNames(specs)
+	configureIngressRouterSpecs(specs)
 
 	ext.AddSpecs(specs)
 	registry.Register(ext)
@@ -199,6 +201,11 @@ func main() {
 // as serial (see below).
 func appendSuiteNames(specs et.ExtensionTestSpecs) {
 	specs.Walk(func(spec *et.ExtensionTestSpec) {
+		// The new QE cases use their descriptive OTE titles directly. Execution
+		// tags and suite registration determine scheduling without a title suffix.
+		if ingressRouterCaseID(spec) != "" {
+			return
+		}
 		if strings.Contains(spec.Name, "[Suite:") {
 			return
 		}

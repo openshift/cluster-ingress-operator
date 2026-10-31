@@ -2,16 +2,115 @@
 
 All 14 ingress operator test cases have been migrated from openshift-tests-private to the OTE (openshift-tests-extension) framework.
 
+The QE package also includes 11 migrated router/Ingress cases from
+`openshift-tests-private/test/extended/router/ingress.go`. TC41117 is
+intentionally omitted because equivalent IngressClass lifecycle coverage
+already exists in the operator e2e suite. These cases share the
+`ingress-router/*` suite family described below. The original 14 cases in
+`ingress_operator.go` retain the `ingress-operator/*` suites.
+
 ## Test Files
 
 | File | Tests | Description |
 |------|-------|-------------|
 | `ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
+| `ingress_router.go` | 11 | Migrated Ingress conversion, sharding, service recovery, capability, and label cases |
+
+## Migrated Ingress/router registration
+
+The 11 cases in `ingress_router.go` follow the registration conventions in
+[openshift/router#871](https://github.com/openshift/router/pull/871):
+
+```text
+[sig-network-edge][OTP][Level0] Network_Edge Component_Router <description> [<execution tags>]
+```
+
+Each `g.It` has its canonical case label, for example `g.Label("OCP-33960")`.
+Authors appear only in `//Author:` source comments, and priorities and platform
+tokens are omitted from titles. `[Serial]` and `[Disruptive]` remain execution
+tags. `[Level0]` gates entry to the new conformance suites. Ownership must be
+verified in ci-test-mapping for the emitted names; no `[Jira:]` tag is added.
+Confirm the Level0 classification against the QE-approved plan before promotion.
+
+These 11 cases are **informing**. `OriginalName` preserves their previous OTE
+identities. The test bodies, fixtures, and helper behavior are unchanged by this
+registration update. The existing 14 ingress-operator cases keep their current
+names and lifecycle.
+
+| Suite | Cases before environment filtering | Conformance parent |
+|-------|------------------------------------|--------------------|
+| `ingress-router/conformance/parallel` | 8 | `openshift/conformance/parallel` |
+| `ingress-router/conformance/serial` | 2: OCP-57370, OCP-85280 | `openshift/conformance/serial` |
+| `ingress-router/disruptive` | 1: OCP-56228 | None |
+| `ingress-router/non-disruptive` | 10 | None |
+| `ingress-router/all` | 11 | None |
+
+Serial and disruptive cases have resource isolation. OCP-56228 is excluded from
+both new conformance suites and the combined `ingress/serial` suite. Select it
+explicitly in a lane that supports intentional router outages.
+
+| Restriction | Applied cases |
+|-------------|---------------|
+| Require `config.openshift.io` API group, excluding MicroShift | All 11 |
+| Exclude `externalConnectivity == "Disconnected"` while fixtures require external images | All 11 |
+| Exclude hosted-cluster topology `External` | OCP-51437, OCP-57370 |
+| Require platform `azure` | OCP-57089 |
+
+Bare metal (`platform=none`), SingleReplica, and connected/proxied IPv6 remain
+eligible. The disconnected restriction is temporary: image setup still pulls
+directly from the pinned source registry. Removing that restriction requires CI
+image mapping/mirror support and a passing disconnected run, as described in the
+reference PR. This update does not change image setup.
+
+### Build, list, and run the 11 migrated cases
+
+Run from `tests-extension/`; `make build` refreshes `bin/cluster-ingress-operator-tests-ext`:
+
+```bash
+make build
+./bin/cluster-ingress-operator-tests-ext list tests --suite ingress-router/all -o names
+
+# Inspect the selection for a supported cluster profile.
+./bin/cluster-ingress-operator-tests-ext list tests --suite ingress-router/all \
+  --api-group config.openshift.io --external-connectivity Direct \
+  --platform azure --topology HighlyAvailable -o names
+
+export KUBECONFIG=/path/to/kubeconfig
+./bin/cluster-ingress-operator-tests-ext run-suite ingress-router/non-disruptive --max-concurrency=1
+
+# Resolve a case ID to its current descriptive title, then run that exact name.
+test_name=$(./bin/cluster-ingress-operator-tests-ext list tests --suite ingress-router/all | \
+  jq -r '.[] | select(.labels | has("OCP-33960")) | .name')
+./bin/cluster-ingress-operator-tests-ext run-test "$test_name"
+```
+
+An unfiltered list shows all registered cases; passing environment flags applies
+the cluster selectors. Case IDs now appear in labels rather than names. A run
+command using the earlier `Author:...-33960-...` title must use the new title.
+
+### Registration metadata and validation
+
+```bash
+make update-metadata
+go test -mod=vendor ./...
+go vet -mod=vendor ./...
+make fmt
+```
+
+Commit `.openshift-tests-extension/openshift_payload_cluster-ingress-operator.json`
+with registration changes. `make verify-metadata` regenerates metadata and
+rejects uncommitted changes. Renames must retain the first `OriginalName`;
+declare intentional removals with OTE's obsolete-test mechanism before updating.
+Source locations are normalized so the metadata does not depend on the checkout.
+
+The registration unit test checks real Ginkgo discovery, Level0 gates, case labels,
+suite counts, and the connectivity/topology/platform/network-stack selection
+matrix. It does not run the cluster test bodies or establish passing e2e coverage.
 
 ## Test Suites
 
 ### ingress-operator/all
-All 14 tests (use `--max-concurrency=1` since some are disruptive)
+All 14 original ingress-operator tests (use `--max-concurrency=1` since some are disruptive)
 
 ### ingress-operator/parallel
 9 non-serial, non-disruptive tests (safe to run in parallel):
@@ -90,6 +189,25 @@ make build
   -n "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-High-75908-http2 connection coalescing component routing should not be broken with single certificate [Disruptive] [Suite:openshift/conformance/serial]" \
   -n "[sig-network-edge][Feature:IngressOperator] Author:shudili-NonHyperShiftHOST-ROSA-OSD_CCS-ARO-High-75909-Ingress Operator should not always remain in the progressing state [Disruptive] [Suite:openshift/conformance/serial]" \
   -n "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-Critical-77283-Router should support SHA1 CA certificates in the default certificate chain [Suite:openshift/conformance/parallel]" --max-concurrency=1
+```
+
+### Run Only ingress_router.go Tests
+
+```bash
+# Run all 11 ingress router tests by name filter
+./bin/cluster-ingress-operator-tests-ext run-test \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router use IngressClass controller for ingress-to-route" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router host name of the route depends on the subdomain if provided" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router different router deployment with same route using subdomain" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Router deployment using different shard with same subdomain" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Deletion of default router service is recovered [Disruptive]" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Azure external and internal load balancer services receive IPs" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router component route hostname is RFC compliant [Serial]" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Ingress operator is enabled as an optional component" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router router rejects invalid certificate content on ingress [Serial]" \
+  -n "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Propagate ingress labels to generated routes" \
+  --max-concurrency=1
 ```
 
 ### Run a Single Test

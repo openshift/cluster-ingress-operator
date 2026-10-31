@@ -1,0 +1,680 @@
+[
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure required CRDs should already be installed [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/gatewayapi.go:18",
+      "test/gatewayapi.go:34",
+      "test/gatewayapi.go:41",
+      "test/gatewayapi.go:42"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure existing CRDs can not be deleted [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/gatewayapi.go:18",
+      "test/gatewayapi.go:34",
+      "test/gatewayapi.go:41",
+      "test/gatewayapi.go:52"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure existing CRDs can not be updated [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/gatewayapi.go:18",
+      "test/gatewayapi.go:34",
+      "test/gatewayapi.go:41",
+      "test/gatewayapi.go:62"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure CRD of standard group can not be created [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/gatewayapi.go:18",
+      "test/gatewayapi.go:34",
+      "test/gatewayapi.go:41",
+      "test/gatewayapi.go:77"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure CRD of experimental group is not installed [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/gatewayapi.go:18",
+      "test/gatewayapi.go:34",
+      "test/gatewayapi.go:41",
+      "test/gatewayapi.go:87"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurityGroupsAWS][Feature:Router][apigroup:operator.openshift.io] AWS NLB security groups managed through the IngressController spec provisions a LoadBalancer service with the specified security group [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/lb_security_groups.go:40",
+      "test/lb_security_groups.go:41",
+      "test/lb_security_groups.go:52",
+      "test/lb_security_groups.go:93"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurityGroupsAWS][Feature:Router][apigroup:operator.openshift.io] AWS NLB security groups managed through the IngressController spec effectuates an update to the security groups [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/lb_security_groups.go:40",
+      "test/lb_security_groups.go:41",
+      "test/lb_security_groups.go:52",
+      "test/lb_security_groups.go:100"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurityGroupsAWS][Feature:Router][apigroup:operator.openshift.io] AWS NLB security groups managed through the IngressController spec removes the security groups using the auto-delete-load-balancer annotation [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/lb_security_groups.go:40",
+      "test/lb_security_groups.go:41",
+      "test/lb_security_groups.go:52",
+      "test/lb_security_groups.go:122"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurityGroupsAWS][Feature:Router][apigroup:operator.openshift.io] AWS NLB security groups managed through the IngressController spec reflects the effective security groups in the IngressController status [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/lb_security_groups.go:40",
+      "test/lb_security_groups.go:41",
+      "test/lb_security_groups.go:52",
+      "test/lb_security_groups.go:129"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:IngressControllerLBSecurityGroupsAWS][Feature:Router][apigroup:operator.openshift.io] AWS NLB security groups set directly on the LoadBalancer service (unmanaged) preserves a security groups annotation and reconciles once the spec matches [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/lb_security_groups.go:40",
+      "test/lb_security_groups.go:134",
+      "test/lb_security_groups.go:141",
+      "test/lb_security_groups.go:174"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-Medium-26150-misc tests for ingress operator [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:47"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:hongli-NonHyperShiftHOST-ROSA-OSD_CCS-ARO-Medium-22633-The nodeSelector and tolerations of router deployment are controlled by ingresscontrolle [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:70"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:mjoseph-ROSA-OSD_CCS-ARO-Critical-22636-The namespaceSelector of router is controlled by ingresscontroller [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:119"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:mjoseph-ROSA-OSD_CCS-ARO-High-22637-The routeSelector of router is controlled by ingresscontroller [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:172"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-Medium-56772-Ingress Controller sets allowPrivilegeEscalation on the haproxy container in the router deployment [Serial] [Suite:openshift/conformance/serial]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:232"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-NonPreRelease-Medium-60012-matchExpressions for routeSelector defined in an ingress-controller [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:272"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-NonPreRelease-Medium-60013-matchExpressions for namespaceSelector defined in an ingress-controller [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:360"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-Critical-62530-openshift ingress operator is failing to update router-certs [Serial] [Suite:openshift/conformance/serial]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:452"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:asood-NonHyperShiftHOST-ConnectedOnly-ROSA-OSD_CCS-Medium-63832-Cluster ingress health checks and routes fail on swapping application router between public and private [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:531"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:mjoseph-NonHyperShiftHOST-Critical-64611-Ingress operator support for private hosted zones in Shared VPC clusters [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:592"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-NonHyperShiftHOST-ROSA-OSD_CCS-ARO-High-75907-Ingress Operator should not always remain in the progressing state [Disruptive] [Suite:openshift/conformance/serial]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:719"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-High-75908-http2 connection coalescing component routing should not be broken with single certificate [Disruptive] [Suite:openshift/conformance/serial]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:834"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-NonHyperShiftHOST-ROSA-OSD_CCS-ARO-High-75909-Ingress Operator should not always remain in the progressing state [Disruptive] [Suite:openshift/conformance/serial]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:948"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][Feature:IngressOperator] Author:shudili-ROSA-OSD_CCS-ARO-Critical-77283-Router should support SHA1 CA certificates in the default certificate chain [Suite:openshift/conformance/parallel]",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_operator.go:24",
+      "test/qe/ingress_operator.go:33",
+      "test/qe/ingress_operator.go:1022"
+    ],
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:mjoseph-ROSA-OSD_CCS-ARO-Critical-33960-Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-33960": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:83"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router use IngressClass controller for ingress-to-route",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:hongli-Critical-41109-use IngressClass controller for ingress-to-route [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-41109": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:116"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router host name of the route depends on the subdomain if provided",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:mjoseph-Critical-51148-host name of the route depends on the subdomain if provided [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51148": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:134"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router different router deployment with same route using subdomain",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:mjoseph-High-51429-different router deployment with same route using subdomain [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51429": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:154"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Router deployment using different shard with same subdomain",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:mjoseph-NonHyperShiftHOST-ROSA-OSD_CCS-ARO-High-51437-Router deployment using different shard with same subdomain [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51437": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:179"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(externalConnectivity==\"Disconnected\") || (topology==\"External\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Deletion of default router service is recovered [Disruptive]",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:shudili-NonPreRelease-Longduration-High-56228-Deletion of default router service is recovered [Disruptive] [Suite:openshift/conformance/serial]",
+    "labels": {
+      "OCP-56228": {}
+    },
+    "resources": {
+      "isolation": {
+        "conflict": [
+          "disruptive"
+        ],
+        "taint": [
+          "disruptive"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:203"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Azure external and internal load balancer services receive IPs",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases ARO-Author:shudili-High-57089-Azure external and internal load balancer services receive IPs [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-57089": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:222"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "(apiGroups.exists(api, api==\"config.openshift.io\") \u0026\u0026 platform==\"azure\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router component route hostname is RFC compliant [Serial]",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:mjoseph-NonHyperShiftHOST-High-57370-component route hostname is RFC compliant [Serial] [Suite:openshift/conformance/serial]",
+    "labels": {
+      "OCP-57370": {}
+    },
+    "resources": {
+      "isolation": {
+        "conflict": [
+          "disruptive"
+        ],
+        "taint": [
+          "disruptive"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:245"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(externalConnectivity==\"Disconnected\") || (topology==\"External\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Ingress operator is enabled as an optional component",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:mjoseph-ROSA-OSD_CCS-ARO-Critical-73619-Ingress operator is enabled as an optional component [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-73619": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:267"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router router rejects invalid certificate content on ingress [Serial]",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:shudili-ROSA-OSD_CCS-ARO-High-85280-router rejects invalid certificate content on ingress [Serial] [Suite:openshift/conformance/serial]",
+    "labels": {
+      "OCP-85280": {}
+    },
+    "resources": {
+      "isolation": {
+        "conflict": [
+          "disruptive"
+        ],
+        "taint": [
+          "disruptive"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:281"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0] Network_Edge Component_Router Propagate ingress labels to generated routes",
+    "originalName": "[sig-network-edge][Feature:Router][Feature:IngressOperator] QE ingress and router cases Author:shudili-ROSA-OSD_CCS-ARO-High-85950-Propagate ingress labels to generated routes [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-85950": {}
+    },
+    "resources": {
+      "isolation": {
+        "taint": [
+          "parallel-running"
+        ],
+        "toleration": [
+          "parallel-running"
+        ]
+      }
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress_router.go:36",
+      "test/qe/ingress_router.go:46",
+      "test/qe/ingress_router.go:297"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "externalConnectivity==\"Disconnected\""
+    }
+  }
+]
