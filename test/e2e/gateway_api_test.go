@@ -355,6 +355,10 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	require.NoError(t, err)
 	assertHttpRouteConnectionViaService(t, *clusterIPService, clientPod, hostname)
 
+	// Verify the ClusterIP profile's Gateway does not have the LoadBalancerReady
+	// and DNSReady conditions, which do not apply without a load balancer or DNS records.
+	assertClusterIPGatewayConditionsAbsent(t, gateway)
+
 	// Check that no DNSRecord exists for the Gateway: the ClusterIP profile never
 	// publishes one, on any platform.
 	require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{
@@ -399,6 +403,10 @@ func testGatewayAPIManagedProfileClusterIP(t *testing.T) {
 	require.NoError(t, err)
 	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
 	require.NoError(t, err)
+
+	// Verify switching back to openshift-clusterip removes the stale
+	// LoadBalancerReady and DNSReady conditions from the previous GatewayClass.
+	assertClusterIPGatewayConditionsAbsent(t, gateway)
 
 	// Verify switching back to openshift-clusterip removes stale DNSRecord from previous GatewayClass.
 	require.NoError(t, assertExpectedDNSRecords(t, map[expectedDnsRecord]dnsRecordExpectation{

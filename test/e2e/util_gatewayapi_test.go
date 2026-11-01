@@ -20,6 +20,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -1036,6 +1037,60 @@ func gatewayListenerConditionMap(conditions ...metav1.Condition) map[string]stri
 		conds[cond.Type] = string(cond.Status)
 	}
 	return conds
+}
+
+// waitForGatewayConditionAbsent waits for the given condition type to be
+// removed from the Gateway's status.
+func waitForGatewayConditionAbsent(t *testing.T, gatewayName types.NamespacedName, conditionType string) error {
+	t.Helper()
+
+	gateway := &gatewayapiv1.Gateway{}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, gatewayName, gateway); err != nil {
+			t.Logf("failed to get gateway %s, retrying...", gatewayName.Name)
+			return false, nil
+		}
+		return meta.FindStatusCondition(gateway.Status.Conditions, conditionType) == nil, nil
+	})
+}
+
+// waitForGatewayListenerConditionAbsent waits for the given condition type to
+// be removed from the given Gateway listener's status. It keeps polling while
+// the listener has no status entry, so a missing entry is not mistaken for an
+// absent condition.
+func waitForGatewayListenerConditionAbsent(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditionType string) error {
+	t.Helper()
+
+	gateway := &gatewayapiv1.Gateway{}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, gatewayName, gateway); err != nil {
+			t.Logf("failed to get gateway %s, retrying...", gatewayName.Name)
+			return false, nil
+		}
+
+		for _, ls := range gateway.Status.Listeners {
+			if string(ls.Name) == listenerName {
+				return meta.FindStatusCondition(ls.Conditions, conditionType) == nil, nil
+			}
+		}
+
+		t.Logf("gateway %s's listener %s has not been updated with status, retrying...", gatewayName.Name, listenerName)
+		return false, nil
+	})
+}
+
+// assertClusterIPGatewayConditionsAbsent checks that the Gateway does not have
+// the LoadBalancerReady and DNSReady conditions, which do not apply to ClusterIP
+// Gateways, and that its listeners do not have the DNSReady condition.
+func assertClusterIPGatewayConditionsAbsent(t *testing.T, gateway *gatewayapiv1.Gateway) {
+	t.Helper()
+
+	gatewayName := client.ObjectKeyFromObject(gateway)
+	require.NoError(t, waitForGatewayConditionAbsent(t, gatewayName, operatorv1.LoadBalancerReadyIngressConditionType))
+	require.NoError(t, waitForGatewayConditionAbsent(t, gatewayName, operatorv1.DNSReadyIngressConditionType))
+	for _, listener := range gateway.Spec.Listeners {
+		require.NoError(t, waitForGatewayListenerConditionAbsent(t, gatewayName, string(listener.Name), operatorv1.DNSReadyIngressConditionType))
+	}
 }
 
 // expectedDnsRecord is used to represent a DNSRecord expectation key.
