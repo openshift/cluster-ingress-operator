@@ -39,7 +39,7 @@ const (
 	defaultTrustedCABundle           = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 	defaultGatewayAPIOperatorCatalog = "redhat-operators"
 	defaultGatewayAPIOperatorChannel = "stable"
-	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.4.3"
+	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.4.4"
 	defaultIstioVersion              = "v1.30-latest"
 )
 
