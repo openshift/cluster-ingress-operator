@@ -141,10 +141,7 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName ||
 			isManagedProfileName(class.Name)
 	})
-	notIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() != "istio"
-	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurGatewayClass, notIstioGatewayClass, dependentPred)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurGatewayClass, dependentPred)); err != nil {
 		return nil, nil, err
 	}
 
