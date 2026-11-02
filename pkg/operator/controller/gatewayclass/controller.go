@@ -133,11 +133,9 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
-		// Match on the controller name and on whether the name is a managed
-		// profile. A GatewayClass created under a reserved name by another controller
-		// cannot be adopted, and its controllerName is immutable, so the GatewayClass
-		// must be deleted; passing the delete event re-triggers the managed
-		// profile.
+		// Match on the controller name or on whether the name is a managed
+		// profile. A managed profile name is ours even if it has a different
+		// controller name; reconcile it so we can take ownership.
 		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName ||
 			isManagedProfileName(class.Name)
 	})
@@ -349,12 +347,10 @@ type reconciler struct {
 	// observes the true, up-to-date mode state.
 	sailLifecycleMu sync.Mutex
 
-	// profileStatusMu serializes managed profile status writes with the
-	// Unmanaged transition, which publishes the profiles as unconfigured
-	// before Sail removes their defaults. Without it, a reconcile that read
-	// AllowDependents()==true before the transition could publish a managed
-	// status after the transition completed, and this controller's watches
-	// are gated off in Unmanaged mode, so nothing would correct it.
+	// profileStatusMu serializes managed profile status writes between two
+	// controllers: the gatewayclass controller's syncManagedProfileStatus
+	// and the gatewayapi controller's markProfilesUnmanagedConfigured,
+	// which runs when the mode transitions to Unmanaged.
 	profileStatusMu sync.Mutex
 
 	// modeAccessor provides thread-safe access to the resolved Gateway API
@@ -381,19 +377,22 @@ func (r *reconciler) enqueueRequestForCRDOwnershipChange() handler.EventHandler 
 }
 
 // enqueueRequestForSomeGatewayClass enqueues GatewayClass reconciliation.
-// In NoOLM mode, managed profile events enqueue only that profile; all other
-// events fan out to every OpenShift GatewayClass.
+// In NoOLM mode, managed GatewayClass profile events enqueue only that
+// GatewayClass profile; all other events fan out to every
+// OpenShift-managed GatewayClass.
 // In OLM mode, it selects the oldest GatewayClass to avoid subscription conflicts.
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
 			if r.config.GatewayAPIWithoutOLMEnabled {
-				// A managed profile event affects only that profile, which neither
-				// installs nor uninstalls Sail. Every other event fans out: Sail
-				// renders defaults for the whole GatewayClass set in one Apply, so
-				// mapping a user-created GatewayClass event to itself leaves a
-				// deleted, non-last GatewayClass in Sail's desired state until an
-				// unrelated event fans out.
+				// A managed profile event affects only that profile: profiles neither
+				// install nor uninstall Sail.
+				//
+				// Every other event fans out to all OpenShift GatewayClasses because a
+				// reconcile renders the entire GatewayClass set — it lists every class
+				// and calls Apply once with all of them. On delete, the removed class
+				// can no longer reconcile itself, so a surviving class must rebuild
+				// the set without it.
 				if gatewayClass, ok := obj.(*gatewayapiv1.GatewayClass); ok && isManagedProfileName(gatewayClass.Name) {
 					return []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(obj)}}
 				}
@@ -473,9 +472,8 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 
 	// Include desired managed profiles so shared events can reconcile them
 	// even when their GatewayClasses have not been created yet.
-	if r.config.GatewayAPIWithoutOLMEnabled {
-		gatewayClasses.Items = withDesiredManagedProfiles(gatewayClasses.Items)
-	}
+	gatewayClasses.Items = withDesiredManagedProfiles(gatewayClasses.Items)
+
 	for _, class := range gatewayClasses.Items {
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{

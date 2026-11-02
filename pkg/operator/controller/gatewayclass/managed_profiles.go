@@ -227,7 +227,7 @@ func updateManagedProfileStatus(ctx context.Context, cl client.Client, name stri
 	return cl.Status().Patch(ctx, updated, client.MergeFromWithOptions(&current, client.MergeFromWithOptimisticLock{}))
 }
 
-// createManagedProfile creates the managed GatewayClass profile only after its defaults are available.
+// createManagedProfile creates the managed GatewayClass profile.
 func (r *reconciler) createManagedProfile(ctx context.Context, desired *gatewayapiv1.GatewayClass) error {
 	if err := r.client.Create(ctx, desired); err != nil {
 		return fmt.Errorf("failed to create managed GatewayClass profile %q: %w", desired.Name, err)
