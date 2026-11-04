@@ -57,11 +57,11 @@ fi
 # suite: the helper is one-shot and treats any request error as the expected TLS
 # rejection, so pre-handshake connection failures (DNS propagation lag for freshly
 # provisioned AWS ELBs) false-fail the Gateway client-certificate validation tests.
-# The patch makes the helper retry until the TLS handshake reaches the
-# certificate-request stage (the GetClientCertificateHook fires) or a deadline
-# passes, while preserving the original semantics otherwise. Applied with git
-# apply so a diverging upstream branch fails the job loudly instead of silently
-# regressing to the flaky behavior. Drop once the fix lands on the cloned branch.
+# The patch makes the helper retry until either the TLS handshake reaches the
+# certificate-request stage or a deadline passes. An upstream fix that ports
+# the main-branch MakeTLSRequestAndExpectEventuallyConsistentFailureResponse to
+# release-1.6 is tracked at https://github.com/kubernetes-sigs/gateway-api/pull/5447.
+# Drop this patch once that PR merges into the release-1.6 branch.
 git apply "${SCRIPT_DIR}/gateway-api-conformance-tls-failure-retry.patch"
 echo "Applied gateway-api TLS failure-retry patch"
 
