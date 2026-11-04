@@ -32,7 +32,7 @@ spec:
         - --image
         - $(IMAGE)
         - --haproxy-image
-        - 3.2=$(HAPROXY_32_IMAGE)
+        - 3.2=$(HAPROXY_32_IMAGE),3.4=$(HAPROXY_34_IMAGE)
         - --default-haproxy-version
         - $(DEFAULT_HAPROXY_VERSION)
         - --deprecated-haproxy-version
@@ -64,6 +64,8 @@ spec:
           value: openshift/origin-haproxy-router:v4.0
         - name: HAPROXY_32_IMAGE
           value: openshift/origin-haproxy:v3.2
+        - name: HAPROXY_34_IMAGE
+          value: openshift/origin-haproxy:v3.4
         - name: DEFAULT_HAPROXY_VERSION
           value: "3.2"
         - name: DEPRECATED_HAPROXY_VERSION
