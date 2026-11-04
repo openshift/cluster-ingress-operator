@@ -147,6 +147,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed fetching clusterversion: %w", err)
 	}
+	infraConfig, err := configClient.ConfigV1().Infrastructures().Get(ctx, operatorcontroller.InfrastructureClusterConfigName().Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed fetching infrastructure: %w", err)
+	}
 	enabledCapabilities := sets.New[configv1.ClusterVersionCapability]()
 	for _, cap := range cv.Status.Capabilities.EnabledCapabilities {
 		enabledCapabilities.Insert(cap)
@@ -204,6 +208,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		DeprecatedHAProxyVersion:    config.DeprecatedHAProxyVersion,
 		IngressControllerDCMEnabled: ingressControllerDCMEnabled,
 		FeatureMultiHAProxyEnabled:  featureMultiHAProxyEnabled,
+		ControlPlaneTopology:        infraConfig.Status.ControlPlaneTopology,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
@@ -234,6 +239,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
+		ControlPlaneTopology:            infraConfig.Status.ControlPlaneTopology,
 		Namespace:                       config.Namespace,
 		IngressControllerImage:          config.IngressControllerImage,
 		HAProxyImages:                   config.HAProxyImages,
