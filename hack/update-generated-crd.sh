@@ -68,3 +68,6 @@ install_crd \
 install_crd \
   "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords-OKD.crd.yaml" \
   "manifests/00-custom-resource-definition-internal-OKD.yaml"
+
+# ingresses.operator.openshift.io is intentionally not copied here because
+# openshift/api owns that CRD in the release payload.
