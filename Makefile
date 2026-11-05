@@ -80,10 +80,6 @@ gatewayapi-conformance:
 gatewayapi-tls-scanner-setup:
 	GATEWAYAPI_TLS_SCANNER_SETUP=1 $(GO) test -timeout 30m -count 1 -v -tags e2e -run '^TestGatewayAPITLSScannerSetup$$' ./test/e2e
 
-.PHONY: test-pre-release-ossm
-test-pre-release-ossm:
-	hack/test-pre-release-ossm-images.sh
-
 .PHONY: clean
 clean:
 	$(GO) clean
