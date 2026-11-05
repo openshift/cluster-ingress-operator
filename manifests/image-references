@@ -14,3 +14,7 @@ spec:
     from:
       kind: "DockerImage"
       name: "openshift/origin-haproxy:v3.2"
+  - name: haproxy-router-haproxy34
+    from:
+      kind: "DockerImage"
+      name: "openshift/origin-haproxy:v3.4"
