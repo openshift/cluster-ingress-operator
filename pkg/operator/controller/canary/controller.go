@@ -187,6 +187,15 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
+	// Watch the cluster ingress config so that changes to the canary node
+	// placement tolerations cause the canary daemonset to be reconciled.
+	ingressConfigPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.IngressClusterConfigName().Name
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, enqueueRequestForDefaultIngressController(config.Namespace), ingressConfigPredicate)); err != nil {
+		return nil, err
+	}
+
 	canaryDenyAllNetworkPolicy := manifests.CanaryDenyAllNetworkPolicy()
 	canaryNetworkPolicy := operatorcontroller.CanaryNetworkPolicyName()
 	canaryNetworkPolicyPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -256,7 +265,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 	}
 
-	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec)
+	// Get the cluster ingress config for the canary node placement tolerations.
+	ingressConfig := &operatorv1.Ingress{}
+	if err := r.client.Get(ctx, operatorcontroller.IngressClusterConfigName(), ingressConfig); err != nil {
+		return result, fmt.Errorf("failed to get ingress config: %w", err)
+	}
+
+	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec, ingressConfig.Spec.Canary.NodePlacement.Tolerations)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary daemonset: %w", err)
 	} else if !haveDs {
