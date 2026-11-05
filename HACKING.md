@@ -119,6 +119,23 @@ Assuming `KUBECONFIG` is set, run end-to-end tests:
 $ make test-e2e
 ```
 
+## Gateway API ListenerSets
+
+ListenerSets are enabled in both managed Istio installation paths, without an
+Istiod version gate. DNS exposure requires current Istio acceptance and matching,
+non-rejected listener status. Istio owns attachment authorization,
+conflict detection, and Accepted/Programmed/Conflicted conditions; CIO owns only
+DNSReady on ListenerSets and their listeners. DNSRecords live with the parent
+Gateway in `openshift-ingress` and are owned by its Service.
+
+User conflicts do not degrade the ClusterOperator or default IngressController.
+
+An upgrade lets Istio replace the old CIO `Accepted=False` rejection. On downgrade
+to a release without ListenerSet support, ListenerSets remain stored but are not
+reconciled; routes must be moved back to Gateway listeners and provisioned DNS
+requires manual cleanup. The e2e ListenerSet test seeds a persisted old rejection;
+a real cluster upgrade/downgrade still requires separate validation.
+
 ## OSSM Pre-release Image Testing
 
 ### Purpose

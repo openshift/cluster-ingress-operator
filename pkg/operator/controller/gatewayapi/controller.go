@@ -8,7 +8,6 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 
 	"k8s.io/client-go/tools/record"
 
@@ -209,6 +208,9 @@ type Config struct {
 	// resources.  The gatewayapi controller starts these controllers once
 	// the Gateway API CRDs have been created.
 	DependentControllers []controller.Controller
+
+	// ListenerSetIndexer uses the all-namespace cache, not the manager's namespace-limited cache.
+	ListenerSetIndexer client.FieldIndexer
 }
 
 // reconciler reconciles gatewayclasses.
@@ -513,21 +515,15 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 	}
 	if !r.listenerSetIndexed {
 		// Index ListenerSets by parent Gateway after CRDs are installed.
-		if err := r.fieldIndexer.IndexField(
+		indexer := r.config.ListenerSetIndexer
+		if indexer == nil {
+			indexer = r.fieldIndexer
+		}
+		if err := indexer.IndexField(
 			ctx,
 			&gatewayapiv1.ListenerSet{},
-			listenersetstatuscontroller.ListenerSetParentGatewayIndex,
-			client.IndexerFunc(func(o client.Object) []string {
-				ls, ok := o.(*gatewayapiv1.ListenerSet)
-				if !ok {
-					return []string{}
-				}
-				parentNS := ls.GetNamespace()
-				if ls.Spec.ParentRef.Namespace != nil {
-					parentNS = string(*ls.Spec.ParentRef.Namespace)
-				}
-				return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
-			})); err != nil {
+			operatorcontroller.ListenerSetParentGatewayIndex,
+			operatorcontroller.IndexListenerSetParent); err != nil {
 			return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
 		}
 		r.listenerSetIndexed = true
