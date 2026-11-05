@@ -15,6 +15,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure/client"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/ipfamily"
 )
 
 const (
@@ -53,6 +54,11 @@ type Config struct {
 	InfraID string
 	// Tags is a map of user-defined tags which should be applied to new resources created by the operator.
 	Tags map[string]*string
+	// IPFamily is the cluster's IP family configuration from the
+	// Infrastructure's PlatformStatus. It is fixed for the lifetime of the
+	// operator and determines whether a record is expected to have both an
+	// A and an AAAA record set.
+	IPFamily configv1.IPFamilyType
 }
 
 type provider struct {
@@ -61,7 +67,8 @@ type provider struct {
 }
 
 // NewProvider creates a new dns.Provider for Azure. It supports DNSRecords
-// with type A or AAAA.
+// with type A or AAAA; on a dual-stack cluster a single DNSRecord publishes
+// both an A and an AAAA record set.
 func NewProvider(config Config) (dns.Provider, error) {
 	var env azure.Environment
 	var err error
@@ -114,6 +121,15 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		}
 	}
 
+	// The cluster's IP family is fixed at install time, so a dual-stack
+	// cluster must end up with both an A and an AAAA record set. Report a
+	// record that is missing one as unpublished rather than silently
+	// publishing half of it; the missing target is expected to show up on
+	// a later reconcile once the load balancer reports both addresses.
+	if ipfamily.IsDualStack(m.config.IPFamily) && len(recordSets) < 2 {
+		return fmt.Errorf("dual-stack cluster requires both an IPv4 and an IPv6 target for %s, got %v", record.Spec.DNSName, record.Spec.Targets)
+	}
+
 	log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
 
 	return nil
@@ -130,21 +146,33 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return err
 	}
 
-	// The record type comes from the spec rather than from parsing the
+	// Delete every record type this record could have published. On a
+	// dual-stack cluster that is both A and AAAA regardless of the targets
+	// currently in the spec, so that a record whose targets were already
+	// trimmed does not leave the other record set orphaned in the zone.
+	//
+	// The record types come from the spec rather than from parsing the
 	// targets: deleting a record set needs only its name and type, so an
 	// empty or malformed target must not be able to block finalization.
-	recordType := client.RecordTypeA
-	if record.Spec.RecordType == iov1.AAAARecordType {
-		recordType = client.RecordTypeAAAA
+	recordTypes := []client.RecordType{}
+	switch {
+	case ipfamily.IsDualStack(m.config.IPFamily):
+		recordTypes = append(recordTypes, client.RecordTypeA, client.RecordTypeAAAA)
+	case record.Spec.RecordType == iov1.AAAARecordType:
+		recordTypes = append(recordTypes, client.RecordTypeAAAA)
+	default:
+		recordTypes = append(recordTypes, client.RecordTypeA)
 	}
 
-	rs := client.RecordSet{
-		Name: recordName,
-		Type: recordType,
-		TTL:  record.Spec.RecordTTL,
-	}
-	if err := m.client.Delete(context.TODO(), *targetZone, rs); err != nil {
-		return err
+	for _, recordType := range recordTypes {
+		rs := client.RecordSet{
+			Name: recordName,
+			Type: recordType,
+			TTL:  record.Spec.RecordTTL,
+		}
+		if err := m.client.Delete(context.TODO(), *targetZone, rs); err != nil {
+			return err
+		}
 	}
 
 	log.Info("deleted DNS record", "record", record.Spec, "zone", zone)

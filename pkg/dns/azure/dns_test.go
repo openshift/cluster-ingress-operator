@@ -229,6 +229,74 @@ func Test_Delete_UsesTheRecordTypeFromTheSpec(t *testing.T) {
 	}
 }
 
+func fakeManagerWithIPFamily(fc *client.FakeDNSClient, ipFamily configv1.IPFamilyType) (dns.Provider, error) {
+	return azure.NewFakeProvider(azure.Config{IPFamily: ipFamily}, fc)
+}
+
+func Test_Ensure_DualStackReportsMissingAddressFamily(t *testing.T) {
+	fc, _ := client.NewFake(client.Config{})
+	mgr, err := fakeManagerWithIPFamily(fc, configv1.DualStackIPv4Primary)
+	if err != nil {
+		t.Fatalf("failed to set up the manager under test: %v", err)
+	}
+
+	// The load balancer has not reported its IPv6 address yet.
+	record := azureRecord(iov1.ARecordType, "55.11.22.33")
+	err = mgr.Ensure(record, configv1.DNSZone{ID: testZoneID})
+	if err == nil {
+		t.Error("expected an error for a dual-stack record with no IPv6 target, got nil")
+	}
+
+	// The IPv4 address is still published, so the record is not held back
+	// entirely while waiting for the second family.
+	if call, _ := fc.RecordedCall("test-rg", "dnszone.io", "subdomain", client.RecordTypeA); call != "PUT" {
+		t.Errorf("expected the A record set to be published anyway, got %q", call)
+	}
+	if _, ok := fc.RecordedCall("test-rg", "dnszone.io", "subdomain", client.RecordTypeAAAA); ok {
+		t.Error("expected no AAAA record set to be written")
+	}
+}
+
+func Test_Ensure_SingleStackIsUnaffectedByDualStackSupport(t *testing.T) {
+	fc, _ := client.NewFake(client.Config{})
+	mgr, err := fakeManagerWithIPFamily(fc, configv1.IPv4)
+	if err != nil {
+		t.Fatalf("failed to set up the manager under test: %v", err)
+	}
+
+	record := azureRecord(iov1.ARecordType, "55.11.22.33")
+	if err := mgr.Ensure(record, configv1.DNSZone{ID: testZoneID}); err != nil {
+		t.Fatalf("failed to ensure dns: %v", err)
+	}
+	if call, _ := fc.RecordedCall("test-rg", "dnszone.io", "subdomain", client.RecordTypeA); call != "PUT" {
+		t.Errorf("expected a PUT for the A record set, got %q", call)
+	}
+	if _, ok := fc.RecordedCall("test-rg", "dnszone.io", "subdomain", client.RecordTypeAAAA); ok {
+		t.Error("expected no AAAA record set on a single-stack cluster")
+	}
+}
+
+func Test_Delete_DualStackRemovesBothRecordTypes(t *testing.T) {
+	fc, _ := client.NewFake(client.Config{})
+	mgr, err := fakeManagerWithIPFamily(fc, configv1.DualStackIPv4Primary)
+	if err != nil {
+		t.Fatalf("failed to set up the manager under test: %v", err)
+	}
+
+	// Only the IPv4 target remains in the spec; the AAAA record set must
+	// still be deleted so it is not orphaned in the zone.
+	record := azureRecord(iov1.ARecordType, "55.11.22.33")
+	if err := mgr.Delete(record, configv1.DNSZone{ID: testZoneID}); err != nil {
+		t.Fatalf("failed to delete dns: %v", err)
+	}
+
+	for _, recordType := range []client.RecordType{client.RecordTypeA, client.RecordTypeAAAA} {
+		if call, _ := fc.RecordedCall("test-rg", "dnszone.io", "subdomain", recordType); call != "DELETE" {
+			t.Errorf("expected a DELETE for the %s record set, got %q", recordType, call)
+		}
+	}
+}
+
 func Test_GetTagList(t *testing.T) {
 	infra := configv1.Infrastructure{
 		Status: configv1.InfrastructureStatus{
