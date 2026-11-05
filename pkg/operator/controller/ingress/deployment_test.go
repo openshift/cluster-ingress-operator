@@ -1091,6 +1091,141 @@ func TestDesiredRouterDeploymentSpecHAProxyVersion(t *testing.T) {
 	}
 }
 
+func TestDesiredRouterDeploymentResources(t *testing.T) {
+	var (
+		cpu500m     = resource.MustParse("500m")
+		cpu1        = resource.MustParse("1")
+		memory512Mi = resource.MustParse("512Mi")
+		storage1Gi  = resource.MustParse("1Gi")
+	)
+
+	defaultRouterResources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("25m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi"),
+		},
+	}
+	defaultHAProxyResources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+	}
+
+	testCases := map[string]struct {
+		resources       operatorv1.IngressControllerResources
+		expectedRouter  corev1.ResourceRequirements
+		expectedHAProxy corev1.ResourceRequirements
+	}{
+		"defaults when unset": {
+			expectedRouter:  defaultRouterResources,
+			expectedHAProxy: defaultHAProxyResources,
+		},
+		"defaults when lists are empty": {
+			resources: operatorv1.IngressControllerResources{
+				Router:  []operatorv1.IngressControllerContainerResource{},
+				HAProxy: []operatorv1.IngressControllerContainerResource{},
+			},
+			expectedRouter:  defaultRouterResources,
+			expectedHAProxy: defaultHAProxyResources,
+		},
+		"router request only keeps default memory request": {
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{
+					{Name: "cpu", Request: &cpu500m},
+				},
+			},
+			expectedRouter: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    cpu500m,
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+			},
+			expectedHAProxy: defaultHAProxyResources,
+		},
+		"haproxy limit only becomes both limit and request": {
+			resources: operatorv1.IngressControllerResources{
+				HAProxy: []operatorv1.IngressControllerContainerResource{
+					{Name: "memory", Limit: &memory512Mi},
+				},
+			},
+			expectedRouter: defaultRouterResources,
+			expectedHAProxy: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: memory512Mi,
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceMemory: memory512Mi,
+				},
+			},
+		},
+		"request and limit": {
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{
+					{Name: "cpu", Request: &cpu500m, Limit: &cpu1},
+				},
+			},
+			expectedRouter: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    cpu500m,
+					corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU: cpu1,
+				},
+			},
+			expectedHAProxy: defaultHAProxyResources,
+		},
+		"extra resource keeps cpu and memory defaults": {
+			resources: operatorv1.IngressControllerResources{
+				HAProxy: []operatorv1.IngressControllerContainerResource{
+					{Name: "ephemeral-storage", Request: &storage1Gi, Limit: &storage1Gi},
+				},
+			},
+			expectedRouter: defaultRouterResources,
+			expectedHAProxy: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:              resource.MustParse("100m"),
+					corev1.ResourceMemory:           resource.MustParse("256Mi"),
+					corev1.ResourceEphemeralStorage: storage1Gi,
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceEphemeralStorage: storage1Gi,
+				},
+			},
+		},
+	}
+
+	defaultHash := func() string {
+		ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+		deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, nil, proxyNeeded, false, nil, clusterProxyConfig)
+		require.NoError(t, err)
+		return deploymentHash(deployment)
+	}()
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+			ic.Spec.Resources = tc.resources
+
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, nil, proxyNeeded, false, nil, clusterProxyConfig)
+			require.NoError(t, err)
+
+			containers := deployment.Spec.Template.Spec.Containers
+			require.Len(t, containers, 1)
+			require.Equal(t, tc.expectedRouter, containers[0].Resources, "router container resources")
+
+			initContainers := deployment.Spec.Template.Spec.InitContainers
+			require.Len(t, initContainers, 2)
+			require.Equal(t, tc.expectedHAProxy, initContainers[1].Resources, "haproxy container resources")
+
+			expectedHashChanged := len(tc.resources.Router) != 0 || len(tc.resources.HAProxy) != 0
+			require.Equal(t, expectedHashChanged, deploymentHash(deployment) != defaultHash, "deployment hash changed")
+		})
+	}
+}
+
 func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
