@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"regexp"
 	"regexp/syntax"
@@ -33,6 +34,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -192,11 +194,16 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForDefaultIngressController(config.Namespace), routerDenyAllNetworkPolicyPredicate)); err != nil {
 		return nil, err
 	}
-	// Add watch for deleted pods specifically for ensuring ingress deletion.
+	// Add watch for deleted pods for ensuring ingress deletion, and for pods
+	// that newly cannot be scheduled so that the unschedulable condition, event,
+	// and metric are refreshed without waiting for the deployment's progress
+	// deadline.
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Pod{}, enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return false },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+		CreateFunc: func(e event.CreateEvent) bool { return false },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return podUnschedulabilityChanged(e.ObjectOld, e.ObjectNew)
+		},
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	})); err != nil {
 		return nil, err
@@ -272,6 +279,34 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 				return []reconcile.Request{}
 			}
 		})
+}
+
+// podUnschedulableCondition returns the pod's PodScheduled condition if the
+// scheduler cannot place it on any node.
+func podUnschedulableCondition(obj client.Object) (corev1.PodCondition, bool) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return corev1.PodCondition{}, false
+	}
+	cond := findPodCondition(pod, corev1.PodScheduled)
+	if cond != nil && cond.Status != corev1.ConditionTrue && cond.Reason == corev1.PodReasonUnschedulable {
+		return *cond, true
+	}
+	return corev1.PodCondition{}, false
+}
+
+// podUnschedulabilityChanged reports whether a pod newly became unschedulable,
+// or its unschedulable condition now reports a different message, so that the
+// owning IngressController's diagnosis is refreshed. The scheduler rewrites the
+// message as the cluster changes, for example from a taint failure to
+// "Insufficient cpu", without the pod leaving the unschedulable state.
+func podUnschedulabilityChanged(oldObj, newObj client.Object) bool {
+	newCond, newUnschedulable := podUnschedulableCondition(newObj)
+	if !newUnschedulable {
+		return false
+	}
+	oldCond, oldUnschedulable := podUnschedulableCondition(oldObj)
+	return !oldUnschedulable || oldCond.Message != newCond.Message
 }
 
 func enqueueRequestForDefaultIngressController(namespace string) handler.EventHandler {
@@ -1026,11 +1061,44 @@ func (r *reconciler) validate(ic *operatorv1.IngressController, apiConfig *confi
 	if err := validateClientTLS(ic); err != nil {
 		errors = append(errors, err)
 	}
+	if err := validateIngressControllerResources(ic); err != nil {
+		errors = append(errors, err)
+	}
 	if err := utilerrors.NewAggregate(errors); err != nil {
 		return &admissionRejection{err.Error()}
 	}
 
 	return nil
+}
+
+// validateIngressControllerResources rejects spec.resources quantities that
+// overflow the int64 values consumers derive from them.  Kubernetes converts
+// CPU to millicores and every other resource to whole units, and a quantity
+// that does not fit silently becomes zero, so the pod would schedule with no
+// reservation instead of staying Pending.
+func validateIngressControllerResources(ic *operatorv1.IngressController) error {
+	cpuMax := resource.NewMilliQuantity(math.MaxInt64, resource.DecimalSI)
+	otherMax := resource.NewQuantity(math.MaxInt64, resource.DecimalSI)
+
+	var errs []error
+	validateContainer := func(container string, overrides []operatorv1.IngressControllerContainerResource) {
+		for _, override := range overrides {
+			max := otherMax
+			if corev1.ResourceName(override.Name) == corev1.ResourceCPU {
+				max = cpuMax
+			}
+			check := func(field string, q *resource.Quantity) {
+				if q != nil && q.Cmp(*max) > 0 {
+					errs = append(errs, fmt.Errorf("invalid spec.resources: %s %q %s %q exceeds the maximum supported quantity %q", container, override.Name, field, q.String(), max.String()))
+				}
+			}
+			check("request", override.Request)
+			check("limit", override.Limit)
+		}
+	}
+	validateContainer("router", ic.Spec.Resources.Router)
+	validateContainer("haproxy", ic.Spec.Resources.HAProxy)
+	return utilerrors.NewAggregate(errs)
 }
 
 func validateDomain(ic *operatorv1.IngressController) error {
@@ -1240,6 +1308,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	DeleteActiveNLBMetrics(ingress)
 	DeleteNLBHairpinRiskMetric(ingress)
 	DeleteDeploymentAvailableTransitionsMetric(ingress)
+	DeleteIngressControllerResourceConfigurationUnschedulableMetric(ingress.Name)
 
 	// Delete the RoutesPerShard metric label corresponding to the Ingress Controller.
 	routemetrics.DeleteRouteMetricsControllerRoutesPerShardMetric(ingress.Name)
@@ -1407,7 +1476,11 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	pods := &corev1.PodList{}
 	if err := r.cache.List(context.TODO(), pods, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
-		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
+		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
+		// A list failure must not be treated as an empty list, or the
+		// status sync would report recovery from unknown pod state and
+		// reset the resource-configuration alert.
+		pods = nil
 	}
 
 	// The node list is used only for external-control-plane clusters to
@@ -1423,7 +1496,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		}
 	}
 
-	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, platformStatus, ingressConfig, infraConfig.Status.ControlPlaneTopology, nodes)
+	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods, lbService, operandEvents.Items, wildcardRecord, dnsConfig, platformStatus, ingressConfig, infraConfig.Status.ControlPlaneTopology, nodes)
 	errs = append(errs, syncStatusErr)
 
 	// If syncIngressControllerStatus updated our ingress status, it's important we query for that new object.

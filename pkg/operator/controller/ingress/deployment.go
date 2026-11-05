@@ -302,6 +302,34 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 	return headerValues
 }
 
+// applyContainerResourceOverrides applies spec.resources entries for one
+// container on top of the platform defaults.  A limit without a request also
+// sets the effective request, and an omitted request or limit leaves the
+// platform default in place.
+func applyContainerResourceOverrides(container *corev1.Container, overrides []operatorv1.IngressControllerContainerResource) {
+	for _, override := range overrides {
+		name := corev1.ResourceName(override.Name)
+		if override.Request != nil {
+			if container.Resources.Requests == nil {
+				container.Resources.Requests = corev1.ResourceList{}
+			}
+			container.Resources.Requests[name] = *override.Request
+		}
+		if override.Limit != nil {
+			if container.Resources.Limits == nil {
+				container.Resources.Limits = corev1.ResourceList{}
+			}
+			container.Resources.Limits[name] = *override.Limit
+			if override.Request == nil {
+				if container.Resources.Requests == nil {
+					container.Resources.Requests = corev1.ResourceList{}
+				}
+				container.Resources.Requests[name] = *override.Limit
+			}
+		}
+	}
+}
+
 // desiredRouterDeployment returns the desired router deployment.
 //
 // Methods hashableDeployment() and deploymentConfigChanged()
@@ -1354,6 +1382,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.InitContainers[1].VolumeMounts = haproxyVolumeMounts
 
+	applyContainerResourceOverrides(&deployment.Spec.Template.Spec.Containers[0], ci.Spec.Resources.Router)
+	applyContainerResourceOverrides(&deployment.Spec.Template.Spec.InitContainers[1], ci.Spec.Resources.HAProxy)
+
 	// If MIMETypes were supplied, expose the RouterEnableCompression and RouterCompressionMIMETypes
 	// environment variables.
 	if len(ci.Spec.HTTPCompression.MimeTypes) != 0 {
@@ -1827,7 +1858,7 @@ func hashableContainer(container corev1.Container, initContainer bool) corev1.Co
 		LivenessProbe:   hashableProbe(container.LivenessProbe),
 		Ports:           container.Ports,
 		ReadinessProbe:  hashableProbe(container.ReadinessProbe),
-		Resources:       container.Resources,
+		Resources:       canonicalResourceRequirements(container.Resources),
 		RestartPolicy:   container.RestartPolicy,
 		SecurityContext: container.SecurityContext,
 		StartupProbe:    hashableProbe(container.StartupProbe),
@@ -1838,6 +1869,37 @@ func hashableContainer(container corev1.Container, initContainer bool) corev1.Co
 		hashContainer.Command = container.Command
 	}
 	return hashContainer
+}
+
+func canonicalResourceRequirements(in corev1.ResourceRequirements) corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Limits:   canonicalResourceList(in.Limits),
+		Requests: canonicalResourceList(in.Requests),
+		Claims:   in.Claims,
+	}
+}
+
+// canonicalResourceList returns in with each quantity re-parsed from its
+// string form.  hashableContainer passes these values to deepHashObject, which
+// hashes with spew's DisableMethods, so it reflects over resource.Quantity's
+// internal fields rather than calling String().  Equal values can carry
+// different internals depending on where they came from: the manifest default,
+// a value read back from the API server, or a freshly applied override.
+// Without this, the current and desired hashes differ for equal values and
+// every reconcile rolls the router.
+func canonicalResourceList(in corev1.ResourceList) corev1.ResourceList {
+	if in == nil {
+		return nil
+	}
+	out := make(corev1.ResourceList, len(in))
+	for k, v := range in {
+		if parsed, err := resource.ParseQuantity(v.String()); err == nil {
+			out[k] = parsed
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // cmpMatchExpressions is a helper for hashableDeployment.

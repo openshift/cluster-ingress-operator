@@ -387,6 +387,47 @@ func Test_RecordDeploymentAvailableTransition_Cumulative(t *testing.T) {
 	}
 }
 
+func Test_SetIngressControllerResourceConfigurationUnschedulableMetric(t *testing.T) {
+	resourceConfigurationUnschedulable.Reset()
+	defer resourceConfigurationUnschedulable.Reset()
+
+	const help = `# HELP ingress_controller_resource_configuration_unschedulable Reports whether an IngressController's router pods cannot be scheduled because the cluster lacks the resources requested in spec.resources. 0 is no issue, 1 is an issue.
+# TYPE ingress_controller_resource_configuration_unschedulable gauge
+`
+	testCases := []struct {
+		name          string
+		unschedulable bool
+		value         string
+	}{
+		{name: "schedulable", unschedulable: false, value: "0"},
+		{name: "unschedulable", unschedulable: true, value: "1"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resourceConfigurationUnschedulable.Reset()
+
+			SetIngressControllerResourceConfigurationUnschedulableMetric("test1", tc.unschedulable)
+
+			expected := help + fmt.Sprintf(`ingress_controller_resource_configuration_unschedulable{name="test1"} %s
+`, tc.value)
+			if err := testutil.CollectAndCompare(resourceConfigurationUnschedulable, strings.NewReader(expected)); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+
+	t.Run("deleted", func(t *testing.T) {
+		resourceConfigurationUnschedulable.Reset()
+
+		SetIngressControllerResourceConfigurationUnschedulableMetric("test1", true)
+		DeleteIngressControllerResourceConfigurationUnschedulableMetric("test1")
+
+		if err := testutil.CollectAndCompare(resourceConfigurationUnschedulable, strings.NewReader("")); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
 func testIngressControllerWithSpecAndStatus(name string, spec, status *operatorv1.EndpointPublishingStrategy) *operatorv1.IngressController {
 	return &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
