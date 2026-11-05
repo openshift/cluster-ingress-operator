@@ -156,6 +156,8 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/davidesalerno/api v0.0.0-20261109172831-ae9d9c44d4e3 h1:GZj0FB9Z4LLg7ClnIwrkSWy/9yYSsUP9VKcoNMYyHDg=
+github.com/davidesalerno/api v0.0.0-20261109172831-ae9d9c44d4e3/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
 github.com/distribution/distribution/v3 v3.1.1 h1:KUbk7C8CfaLXy8kbf/hGq9cad/wCoLB6dbWH6DMbmX0=
@@ -498,10 +500,8 @@ github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJw
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/openshift-service-mesh/sail-operator v0.0.0-20261030133317-9d8aa8ff0499 h1:GeDlzDANm7GaOGa9vPXbdWjTwXYT0dBnZLeMSqHmN80=
 github.com/openshift-service-mesh/sail-operator v0.0.0-20261030133317-9d8aa8ff0499/go.mod h1:JhEdRuKqkQ1OuCey+fAr9KPPxdXbXdm8ou/uyEOuJaE=
-github.com/openshift/api v0.0.0-20261013084449-5a61bfba6d60 h1:aQEmdTpj9NUH201k35G5vEcVLK5paXO0wTwfDAVFozE=
-github.com/openshift/api v0.0.0-20261013084449-5a61bfba6d60/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
-github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847 h1:i96ZYwZrCbqxsSrtO/qLJ7Olvu5M9xBU/yVz4Xg8LK4=
-github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847/go.mod h1:il93009qOuWG58FeXsVnXD4Yurtm+RMtxIpJv231JdU=
+github.com/openshift/client-go v0.0.0-20261027103500-48133ed95dad h1:KJ8Fs8QpXjtT854HjMLZyIjptLEHm4I6RC2OCZu6DvY=
+github.com/openshift/client-go v0.0.0-20261027103500-48133ed95dad/go.mod h1:g4WVqRD/NuQWnM6lQP+LhLSryRganEdhYq68YghbXi4=
 github.com/openshift/controller-runtime-common v0.0.0-20260428152732-64ee174f5e2e h1:k89oIo2EjX0PRSdi1kesktCyWp50SC9WwKurvupvRGs=
 github.com/openshift/controller-runtime-common v0.0.0-20260428152732-64ee174f5e2e/go.mod h1:XGabTMnNbz0M5Oa7IbscZp/jmcc7aHobvOCUWwkzKvM=
 github.com/openshift/library-go v0.0.0-20260722141911-d8f45c2a4f64 h1:pJm/aglcdT+TnBlxdtcEVvKfMHn+KqjiFOloYPK2tss=

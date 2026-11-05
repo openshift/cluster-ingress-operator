@@ -29,8 +29,8 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
 	github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b
-	github.com/openshift/api v0.0.0-20261013084449-5a61bfba6d60
-	github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847
+	github.com/openshift/api v0.0.0-20261026215420-da0032bf0c5f
+	github.com/openshift/client-go v0.0.0-20261027103500-48133ed95dad
 	github.com/openshift/controller-runtime-common v0.0.0-20260428152732-64ee174f5e2e
 	github.com/openshift/library-go v0.0.0-20260722141911-d8f45c2a4f64
 	github.com/operator-framework/api v0.30.0
@@ -259,3 +259,6 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 // Use OSSM release-3.5.0 branch (downstream fork of sail-operator).
 // Replace needed because the fork keeps upstream module name for compatibility.
 replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20261030133317-9d8aa8ff0499
+
+// This replace will be removed when PR#3134 in openshift/api is merged and released.
+replace github.com/openshift/api => github.com/davidesalerno/api v0.0.0-20261109172831-ae9d9c44d4e3
