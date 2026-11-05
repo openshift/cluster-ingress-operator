@@ -195,6 +195,9 @@ type Config struct {
 	// feature gate is enabled, allowing Sail Library-based installation.
 	GatewayAPIWithoutOLMEnabled bool
 
+	// OperandNamespace is the namespace for Gateway API data-plane resources.
+	OperandNamespace string
+
 	// ModeAccessor is the shared mode accessor that this controller
 	// updates after computing CRD management conditions. May be nil
 	// when the management mode gate is disabled.

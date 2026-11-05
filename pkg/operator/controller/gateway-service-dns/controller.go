@@ -69,14 +69,16 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	})
 	gatewayListenersChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec.Listeners
-			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec.Listeners
-			// A DNSRecord CR needs to be updated if, and only if,
-			// the hostname has changed (a listener's port and
-			// protocol have no bearing on the DNS record).
-			changed := gatewayListenersHostnamesChanged(old, new)
+			old := e.ObjectOld.(*gatewayapiv1.Gateway)
+			new := e.ObjectNew.(*gatewayapiv1.Gateway)
+			// A DNSRecord CR needs to be updated if the
+			// hostname or the Gateway's gatewayClassName has
+			// changed (a listener's port and protocol have no
+			// bearing on the DNS record).
+			changed := old.Spec.GatewayClassName != new.Spec.GatewayClassName ||
+				gatewayListenersHostnamesChanged(old.Spec.Listeners, new.Spec.Listeners)
 			if changed {
-				log.Info("Listener hostname changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+				log.Info("Gateway listener hostname or gatewayClassName changed", "gateway", new.Name)
 			}
 			return changed
 		},
@@ -206,6 +208,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	dnsConfig := &configv1.DNS{}
+	// ClusterIP gateways have no external load balancer address for DNS records.
+	// Remove stale records when a DNS-supported Gateway switches to the ClusterIP GatewayClass.
+	if gateway.Spec.GatewayClassName == operatorcontroller.OpenShiftClusterIPGatewayClassName {
+		errs := r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, sets.NewString())
+		return reconcile.Result{}, utilerrors.NewAggregate(errs)
+	}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}

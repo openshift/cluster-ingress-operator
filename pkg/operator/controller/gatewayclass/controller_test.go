@@ -21,18 +21,21 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	corev1 "k8s.io/api/core/v1"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -204,6 +207,26 @@ func Test_Reconcile(t *testing.T) {
 		for _, name := range gatewayclasses {
 			payload[name] = json.RawMessage(config)
 		}
+		b, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("an error occurred during json creation for gatewayclassesConfig: %s", err)
+		}
+		return b
+	}
+	// Sail inputs include desired profile defaults before the profile itself exists.
+	sailGatewayclassesConfig := func(config string, gatewayclasses ...string) json.RawMessage {
+		var payload map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(gatewayclassesConfig(config, gatewayclasses...), &payload))
+		for _, name := range []string{operatorcontroller.OpenShiftClusterIPGatewayClassName} {
+			var overlay map[string]any
+			require.NoError(t, json.Unmarshal([]byte(config), &overlay))
+			service := map[string]any{"spec": map[string]any{"type": "ClusterIP"}}
+			overlay["service"] = service
+			managedProfile, err := json.Marshal(overlay)
+			require.NoError(t, err)
+			payload[name] = managedProfile
+		}
+
 		b, err := json.Marshal(payload)
 		if err != nil {
 			t.Fatalf("an error occurred during json creation for gatewayclassesConfig: %s", err)
@@ -712,7 +735,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: installs Istio (single replica)",
@@ -728,7 +751,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(1), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(1), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: installs Istio (highly available)",
@@ -744,7 +767,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: installs Istio with system proxy configuration",
@@ -761,7 +784,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: installs Istio for multiple gatewayclasses in single-topology mode with system proxy configuration",
@@ -788,7 +811,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(gatewayclassConfig(1), "openshift-default", "openshift-internal", "openshift-custom"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, sailGatewayclassesConfig(gatewayclassConfig(1), "openshift-default", "openshift-internal", "openshift-custom"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: experimental InferencePool CRD",
@@ -809,7 +832,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: stable InferencePool CRD",
@@ -830,7 +853,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: Istio version override",
@@ -850,7 +873,7 @@ func Test_Reconcile(t *testing.T) {
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: full removal of last GatewayClass",
@@ -910,7 +933,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"), &config.OpenShiftTLS{}),
 		},
 		{
 			name:              "Sail Library: installs Istio with intermediate TLSProfile and strict adherence",
@@ -930,7 +953,7 @@ func Test_Reconcile(t *testing.T) {
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileIntermediateType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 		{
@@ -951,7 +974,7 @@ func Test_Reconcile(t *testing.T) {
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 		{
@@ -979,7 +1002,7 @@ func Test_Reconcile(t *testing.T) {
 				"v1.24.4",
 				false,
 				nil,
-				gatewayclassesConfig(gatewayclassConfig(2), "openshift-default"),
+				sailGatewayclassesConfig(gatewayclassConfig(2), "openshift-default"),
 				expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 				"some.collector.tld", 4317),
 		},
@@ -1006,7 +1029,7 @@ func Test_Reconcile(t *testing.T) {
 				}, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 		{
@@ -1032,7 +1055,7 @@ func Test_Reconcile(t *testing.T) {
 				}, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 		{
@@ -1058,7 +1081,7 @@ func Test_Reconcile(t *testing.T) {
 				}, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 		{
@@ -1084,7 +1107,7 @@ func Test_Reconcile(t *testing.T) {
 				}, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 		{
@@ -1110,12 +1133,13 @@ func Test_Reconcile(t *testing.T) {
 				}, installedConditions(), false),
 			},
 			expectedSailLibraryOptions: expectedSailLibraryOptions(
-				"v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2),
+				"v1.24.4", false, nil, sailGatewayclassesConfig(gatewayclassConfig(2),
 					"openshift-default"), expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)),
 		},
 	}
 
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
 	if err := configv1.Install(scheme); err != nil {
 		t.Fatalf("failed to install configv1 scheme: %v", err)
 	}
@@ -1252,6 +1276,105 @@ func Test_Reconcile(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+// Test_enqueueRequestForSomeGatewayClass verifies the NoOLM event mapping:
+// managed profile events reconcile only the profile, and every other event fans
+// out so Sail drops the defaults of a user-created GatewayClass that was deleted but
+// is not the last one.
+func Test_enqueueRequestForSomeGatewayClass(t *testing.T) {
+	const (
+		userGatewayClassA = "user-a"
+		userGatewayClassB = "user-b"
+	)
+	newUserGatewayClass := func(name string) *gatewayapiv1.GatewayClass {
+		return &gatewayapiv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
+		}
+	}
+
+	r := managedProfileTestReconciler(t,
+		newUserGatewayClass(userGatewayClassA),
+		newUserGatewayClass(userGatewayClassB),
+		newUserGatewayClass(operatorcontroller.OpenShiftClusterIPGatewayClassName),
+	)
+	handler := r.enqueueRequestForSomeGatewayClass()
+	ctx := t.Context()
+
+	requests := func(names ...string) []reconcile.Request {
+		out := make([]reconcile.Request, 0, len(names))
+		for _, name := range names {
+			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+		}
+		return out
+	}
+	allGatewayClasses := requests(userGatewayClassA, userGatewayClassB, operatorcontroller.OpenShiftClusterIPGatewayClassName)
+
+	drain := func(t *testing.T, q workqueue.TypedRateLimitingInterface[reconcile.Request]) []reconcile.Request {
+		t.Helper()
+		var got []reconcile.Request
+		for q.Len() > 0 {
+			request, shutdown := q.Get()
+			require.False(t, shutdown)
+			got = append(got, request)
+			q.Done(request)
+		}
+		return got
+	}
+	newQueue := func(t *testing.T) workqueue.TypedRateLimitingInterface[reconcile.Request] {
+		t.Helper()
+		q := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
+		t.Cleanup(q.ShutDown)
+		return q
+	}
+
+	tests := []struct {
+		name     string
+		enqueue  func(q workqueue.TypedRateLimitingInterface[reconcile.Request])
+		expected []reconcile.Request
+	}{
+		{
+			name: "user GatewayClass event fans out",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Create(ctx, event.CreateEvent{Object: newUserGatewayClass(userGatewayClassA)}, q)
+			},
+			expected: allGatewayClasses,
+		},
+		{
+			name: "deleted user GatewayClass fans out",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Delete(ctx, event.DeleteEvent{Object: newUserGatewayClass(userGatewayClassA)}, q)
+			},
+			expected: allGatewayClasses,
+		},
+		{
+			name: "managed profile event maps to itself",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Create(ctx, event.CreateEvent{Object: newUserGatewayClass(operatorcontroller.OpenShiftClusterIPGatewayClassName)}, q)
+			},
+			expected: requests(operatorcontroller.OpenShiftClusterIPGatewayClassName),
+		},
+		{
+			name: "shared event fans out",
+			enqueue: func(q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+				handler.Create(ctx, event.CreateEvent{Object: &configv1.Proxy{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}}, q)
+			},
+			expected: allGatewayClasses,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q := newQueue(t)
+			tc.enqueue(q)
+			got := drain(t, q)
+			sortSlices := cmpopts.SortSlices(func(a, b reconcile.Request) bool { return a.Name < b.Name })
+			if diff := cmp.Diff(tc.expected, got, sortSlices); diff != "" {
+				t.Errorf("unexpected requests (-want +got):\n%s", diff)
+			}
 		})
 	}
 }
