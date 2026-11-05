@@ -263,6 +263,23 @@ rules:
 - apiGroups:
   - gateway.networking.k8s.io
   resources:
+  - udproutes
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - udproutes/status
+  verbs:
+  - patch
+  - update
+
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
   - gateways/status
   verbs:
   - patch
