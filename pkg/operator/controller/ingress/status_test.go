@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"k8s.io/utils/pointer"
 
@@ -24,6 +26,7 @@ import (
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -32,11 +35,16 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/record"
 	utilclock "k8s.io/utils/clock"
 	utilclocktesting "k8s.io/utils/clock/testing"
+
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
@@ -259,6 +267,173 @@ func Test_checkPodsScheduledForDeployment(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_resourceUnschedulablePodMessage(t *testing.T) {
+	const (
+		ownerLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
+		hashLabel  = "ingresscontroller.operator.openshift.io/hash"
+	)
+	deployment := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{ownerLabel: "default"}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{ownerLabel: "default", hashLabel: "current"},
+			}},
+		},
+	}
+	pod := func(name string, labels map[string]string, conditions ...corev1.PodCondition) corev1.Pod {
+		return corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+			Status:     corev1.PodStatus{Conditions: conditions},
+		}
+	}
+	matching := map[string]string{ownerLabel: "default", hashLabel: "current"}
+	previous := map[string]string{ownerLabel: "default", hashLabel: "previous"}
+	scheduled := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}
+	insufficientCPU := corev1.PodCondition{
+		Type:    corev1.PodScheduled,
+		Status:  corev1.ConditionFalse,
+		Reason:  corev1.PodReasonUnschedulable,
+		Message: "0/3 nodes are available: 3 Insufficient cpu.",
+	}
+	insufficientMemory := corev1.PodCondition{
+		Type:    corev1.PodScheduled,
+		Status:  corev1.ConditionFalse,
+		Reason:  corev1.PodReasonUnschedulable,
+		Message: "0/3 nodes are available: 3 Insufficient memory.",
+	}
+	nodeSelector := corev1.PodCondition{
+		Type:    corev1.PodScheduled,
+		Status:  corev1.ConditionFalse,
+		Reason:  corev1.PodReasonUnschedulable,
+		Message: "0/3 nodes are available: 3 node(s) didn't match node selector.",
+	}
+	cpuOverride := map[corev1.ResourceName]struct{}{corev1.ResourceCPU: {}}
+	memoryOverride := map[corev1.ResourceName]struct{}{corev1.ResourceMemory: {}}
+	tests := []struct {
+		name       string
+		deployment *appsv1.Deployment
+		pods       []corev1.Pod
+		overridden map[corev1.ResourceName]struct{}
+		expectHit  bool
+	}{
+		{
+			name:       "nil deployment",
+			deployment: nil,
+		},
+		{
+			name:       "no pods",
+			deployment: deployment,
+		},
+		{
+			name:       "all pods scheduled",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", matching, scheduled)},
+		},
+		{
+			name:       "pod pending for insufficient overridden cpu",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", matching, insufficientCPU)},
+			overridden: cpuOverride,
+			expectHit:  true,
+		},
+		{
+			name:       "insufficient cpu with a memory override only",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", matching, insufficientCPU)},
+			overridden: memoryOverride,
+		},
+		{
+			name:       "pod pending for insufficient overridden memory",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", matching, insufficientMemory)},
+			overridden: memoryOverride,
+			expectHit:  true,
+		},
+		{
+			name:       "pod from a previous revision",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", previous, insufficientCPU)},
+			overridden: cpuOverride,
+		},
+		{
+			name:       "pod pending for another reason",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", matching, nodeSelector)},
+			overridden: cpuOverride,
+		},
+		{
+			name:       "unrelated pod",
+			deployment: deployment,
+			pods:       []corev1.Pod{pod("pod", map[string]string{"unrelated": "true"}, insufficientCPU)},
+			overridden: cpuOverride,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := resourceUnschedulablePodMessage(test.deployment, test.pods, test.overridden)
+			if test.expectHit != (got != "") {
+				t.Errorf("expected hit %v, got %q", test.expectHit, got)
+			}
+		})
+	}
+}
+
+// Test_syncIngressControllerStatus_resourceGaugePodListFailure verifies that
+// a failed pod list does not clear the resource-configuration gauge:
+// reporting recovery from unknown state would reset the alert while the
+// router pods remain unschedulable.
+func Test_syncIngressControllerStatus_resourceGaugePodListFailure(t *testing.T) {
+	resourceConfigurationUnschedulable.Reset()
+	defer resourceConfigurationUnschedulable.Reset()
+
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, proxyConfig := getRouterDeploymentComponents(t)
+	ic.Name = "resource-gauge"
+	ic.Namespace = controller.DefaultOperatorNamespace
+	ic.Spec.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{Type: operatorv1.PrivateStrategyType}
+	ic.Status.EndpointPublishingStrategy = ic.Spec.EndpointPublishingStrategy.DeepCopy()
+	cpuRequest := resource.MustParse("500m")
+	ic.Spec.Resources = operatorv1.IngressControllerResources{
+		Router: []operatorv1.IngressControllerContainerResource{{Name: "cpu", Request: &cpuRequest}},
+	}
+	config := Config{IngressControllerImage: ingressControllerImage}
+	deployment, err := desiredRouterDeployment(ic, &config, ingressConfig, infraConfig, apiConfig, networkConfig, nil, false, false, nil, proxyConfig)
+	require.NoError(t, err)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, operatorv1.AddToScheme(scheme))
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(ic).WithObjects(ic).Build()
+	r := &reconciler{client: kubeClient, config: config, recorder: record.NewFakeRecorder(10)}
+
+	unschedulable := corev1.PodList{Items: []corev1.Pod{{
+		ObjectMeta: metav1.ObjectMeta{Name: "router-pod", Labels: deployment.Spec.Template.Labels},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+			Type:    corev1.PodScheduled,
+			Status:  corev1.ConditionFalse,
+			Reason:  corev1.PodReasonUnschedulable,
+			Message: "0/3 nodes are available: 3 Insufficient cpu.",
+		}}},
+	}}}
+	syncStatus := func(pods *corev1.PodList) {
+		_, _ = r.syncIngressControllerStatus(ic, deployment, metav1.OwnerReference{}, pods, nil, nil, nil, &configv1.DNS{}, infraConfig.Status.PlatformStatus, ingressConfig, infraConfig.Status.ControlPlaneTopology, nil)
+	}
+	gauge := func() float64 {
+		return testutil.ToFloat64(resourceConfigurationUnschedulable.WithLabelValues(ic.Name))
+	}
+
+	// With the shortage visible, the gauge reports it.
+	syncStatus(&unschedulable)
+	require.Equal(t, float64(1), gauge())
+
+	// A failed pod list must not report recovery; the gauge keeps its value.
+	syncStatus(nil)
+	require.Equal(t, float64(1), gauge())
+
+	// A successful list that shows no unschedulable pod does report recovery.
+	syncStatus(&corev1.PodList{})
+	require.Equal(t, float64(0), gauge())
 }
 
 func Test_computeIngressDegradedCondition(t *testing.T) {

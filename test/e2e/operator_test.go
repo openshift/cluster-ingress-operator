@@ -4031,7 +4031,8 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 				if err := kclient.Get(context.Background(), deploymentName, &deployment); err != nil {
 					t.Logf("failed to get ingresscontroller deployment: %v", err)
 				}
-				actualEnv := getDeploymentContainer(&deployment, "router").Env
+				router, _ := findContainer(deployment.Spec.Template.Spec.Containers, "router")
+				actualEnv := router.Env
 				t.Fatalf("expected updated deployment to set env. vars. %#v, found %#v: %v", tt.expectedEnv, actualEnv, err)
 			}
 		})
@@ -4651,7 +4652,7 @@ func waitForDeploymentEnv(t *testing.T, deployment *appsv1.Deployment, container
 			currentEnv[k] = ""
 		}
 
-		container := getDeploymentContainer(deployment, containerName)
+		container, _ := findContainer(deployment.Spec.Template.Spec.Containers, containerName)
 		for _, envVar := range container.Env {
 			k, v := envVar.Name, envVar.Value
 
@@ -4666,17 +4667,6 @@ func waitForDeploymentEnv(t *testing.T, deployment *appsv1.Deployment, container
 
 		return reflect.DeepEqual(expectedEnv, currentEnv)
 	})
-}
-
-// getDeploymentContainer returns the named container from the given deployment.
-func getDeploymentContainer(deployment *appsv1.Deployment, containerName string) corev1.Container {
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == containerName {
-			return container
-		}
-	}
-
-	return corev1.Container{}
 }
 
 // waitForDeploymentFunc polls the given deployment until the given condition

@@ -75,7 +75,7 @@ const (
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, controlPlaneTopology configv1.TopologyMode, nodes *corev1.NodeList) (error, bool) {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods *corev1.PodList, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, controlPlaneTopology configv1.TopologyMode, nodes *corev1.NodeList) (error, bool) {
 	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
@@ -83,6 +83,21 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	}
 	waitingForNodes := shouldWaitForNodes(ic, deployment, controlPlaneTopology, nodes)
 	wasWaitingForNodes := ingressControllerWasWaitingForNodes(ic)
+
+	// Compute and publish the resource-configuration gauge before the
+	// certificate lookup below, which can fail and return early, so a stale
+	// value cannot survive an API error.  A nil pod list means the list call
+	// failed; keep the last published value.
+	var podItems []corev1.Pod
+	resourceSchedulingProblem := ""
+	if pods != nil {
+		podItems = pods.Items
+		overriddenResources := overriddenResourceNames(ic.Spec.Resources)
+		if len(overriddenResources) > 0 {
+			resourceSchedulingProblem = resourceUnschedulablePodMessage(deployment, podItems, overriddenResources)
+		}
+		SetIngressControllerResourceConfigurationUnschedulableMetric(ic.Name, resourceSchedulingProblem != "")
+	}
 
 	secret := &corev1.Secret{}
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, deployment.Namespace)
@@ -121,7 +136,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	deploymentAvailableCondition := computeDeploymentAvailableCondition(deployment)
 	previousDeploymentAvailableCondition, hasPreviousDeploymentAvailableCondition := findOperatorCondition(ic.Status.Conditions, IngressControllerDeploymentAvailableConditionType)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, deploymentAvailableCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, podItems))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeLoadBalancerStatus(ic, service, operandEvents, false)...)
@@ -143,6 +158,15 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name, deployment.Spec.MinReadySeconds, waitingForNodes)
 	errs = append(errs, err)
+	// When spec.resources is set and the router pods cannot be scheduled
+	// because the cluster cannot satisfy the requested resources, name
+	// spec.resources as the likely cause. The administrator chose these
+	// values, and Red Hat does not support failures they cause. The event is
+	// recorded below, when the status actually changes, so that a persistent
+	// problem does not emit an event on every status sync.
+	if resourceSchedulingProblem != "" && degradedCondition.Status == operatorv1.ConditionTrue {
+		degradedCondition.Message += " The router pods may not fit the resources configured in spec.resources; reduce those values or add capacity to the cluster."
+	}
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(updated, r.config, deploymentRef, service, platformStatus, secret))
@@ -157,6 +181,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 			updatedIc = true
 			if hasPreviousDeploymentAvailableCondition {
 				RecordDeploymentAvailableTransition(ic.Name, previousDeploymentAvailableCondition, deploymentAvailableCondition)
+			}
+			if resourceSchedulingProblem != "" {
+				r.recorder.Eventf(ic, "Warning", "ResourceConfigurationUnschedulable", "Router pod cannot be scheduled with the resources configured in spec.resources: %s. Reduce the requests or limits in spec.resources or add capacity to the cluster.", resourceSchedulingProblem)
 			}
 		}
 	}
@@ -218,6 +245,16 @@ func findOperatorCondition(conditions []operatorv1.OperatorCondition, conditionT
 		}
 	}
 	return operatorv1.OperatorCondition{}, false
+}
+
+// findPodCondition returns the pod's condition of the given type, or nil.
+func findPodCondition(pod *corev1.Pod, conditionType corev1.PodConditionType) *corev1.PodCondition {
+	for i := range pod.Status.Conditions {
+		if pod.Status.Conditions[i].Type == conditionType {
+			return &pod.Status.Conditions[i]
+		}
+	}
+	return nil
 }
 
 // PruneConditions removes any conditions that are not currently supported.
@@ -328,6 +365,69 @@ func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev
 		return errors.New(message)
 	}
 	return nil
+}
+
+// overriddenResourceNames returns the resource names that spec.resources sets
+// for either ingress container.
+func overriddenResourceNames(resources operatorv1.IngressControllerResources) map[corev1.ResourceName]struct{} {
+	names := map[corev1.ResourceName]struct{}{}
+	for _, overrides := range [][]operatorv1.IngressControllerContainerResource{resources.Router, resources.HAProxy} {
+		for _, override := range overrides {
+			names[corev1.ResourceName(override.Name)] = struct{}{}
+		}
+	}
+	return names
+}
+
+// resourceUnschedulablePodMessage returns a description of the first of the
+// deployment's current pods that is unschedulable because the cluster cannot
+// satisfy an overridden resource, or the empty string if there is none.
+// This lets the operator point the cluster administrator at spec.resources when
+// a configured resource override is the likely cause of a degraded ingress
+// controller; the platform does not validate those values against the cluster's
+// capacity.
+func resourceUnschedulablePodMessage(deployment *appsv1.Deployment, pods []corev1.Pod, overriddenResources map[corev1.ResourceName]struct{}) string {
+	if deployment == nil {
+		return ""
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil || selector.Empty() {
+		return ""
+	}
+	// Pods from a previous ReplicaSet linger briefly after a change and still
+	// carry the old resource values, so only consider the current revision.
+	currentHash := deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
+	for _, pod := range pods {
+		if !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		if currentHash != "" && pod.Labels[controller.ControllerDeploymentHashLabel] != currentHash {
+			continue
+		}
+		cond := findPodCondition(&pod, corev1.PodScheduled)
+		if cond == nil || cond.Status == corev1.ConditionTrue || cond.Reason != corev1.PodReasonUnschedulable || !mentionsOverriddenResource(cond.Message, overriddenResources) {
+			continue
+		}
+		return fmt.Sprintf("pod %q is pending because the cluster does not have the resources requested for it: %s", pod.Name, cond.Message)
+	}
+	return ""
+}
+
+// mentionsOverriddenResource reports whether an unschedulable message reports a
+// shortage of one of the overridden resources. Scheduler messages list the
+// resource names, for example "3 Insufficient cpu".
+func mentionsOverriddenResource(message string, overriddenResources map[corev1.ResourceName]struct{}) bool {
+	fields := strings.Fields(message)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] != "Insufficient" {
+			continue
+		}
+		name := corev1.ResourceName(strings.Trim(fields[i+1], ".,;:()"))
+		if _, ok := overriddenResources[name]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state
