@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/Azure/go-autorest/autorest/azure"
@@ -59,8 +60,8 @@ type provider struct {
 	client client.DNSClient
 }
 
-// NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
-// type A.
+// NewProvider creates a new dns.Provider for Azure. It supports DNSRecords
+// with type A or AAAA.
 func NewProvider(config Config) (dns.Provider, error) {
 	var env azure.Environment
 	var err error
@@ -88,8 +89,8 @@ func NewProvider(config Config) (dns.Provider, error) {
 }
 
 func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
-	if record.Spec.RecordType != iov1.ARecordType {
-		return fmt.Errorf("only A record types are supported")
+	if record.Spec.RecordType != iov1.ARecordType && record.Spec.RecordType != iov1.AAAARecordType {
+		return fmt.Errorf("only A and AAAA record types are supported, got %q", record.Spec.RecordType)
 	}
 
 	targetZone, err := client.ParseZone(zone.ID)
@@ -97,25 +98,25 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
+	recordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
-	recordSet := client.RecordSet{
-		Name:      ARecordName,
-		Type:      client.RecordTypeA,
-		Addresses: []string{record.Spec.Targets[0]},
-		TTL:       record.Spec.RecordTTL,
+
+	recordSets, err := recordSetsForTargets(recordName, record.Spec.Targets, record.Spec.RecordTTL)
+	if err != nil {
+		return err
 	}
 
-	// TODO: handle >0 targets
-	err = m.client.Put(context.TODO(), *targetZone, recordSet, m.config.Tags)
-
-	if err == nil {
-		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
+	for _, rs := range recordSets {
+		if err := m.client.Put(context.TODO(), *targetZone, rs, m.config.Tags); err != nil {
+			return err
+		}
 	}
 
-	return err
+	log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
+
+	return nil
 }
 
 func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
@@ -124,27 +125,65 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
+	recordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
 
-	// TODO: handle >0 targets
-	err = m.client.Delete(
-		context.TODO(),
-		*targetZone,
-		client.RecordSet{
-			Name:      ARecordName,
-			Type:      client.RecordTypeA,
-			Addresses: []string{record.Spec.Targets[0]},
-			TTL:       record.Spec.RecordTTL,
-		})
-
-	if err == nil {
-		log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
+	// The record type comes from the spec rather than from parsing the
+	// targets: deleting a record set needs only its name and type, so an
+	// empty or malformed target must not be able to block finalization.
+	recordType := client.RecordTypeA
+	if record.Spec.RecordType == iov1.AAAARecordType {
+		recordType = client.RecordTypeAAAA
 	}
 
-	return err
+	rs := client.RecordSet{
+		Name: recordName,
+		Type: recordType,
+		TTL:  record.Spec.RecordTTL,
+	}
+	if err := m.client.Delete(context.TODO(), *targetZone, rs); err != nil {
+		return err
+	}
+
+	log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
+
+	return nil
+}
+
+// recordSetsForTargets partitions targets by address family and returns the
+// record sets to publish: at most one A set holding every IPv4 target and one
+// AAAA set holding every IPv6 target. The A set is returned first.
+//
+// An IPv4-mapped IPv6 address belongs in an A record, so it is normalized to
+// its IPv4 form rather than written in its "::ffff:" spelling, which Azure
+// would reject as an A record address.
+func recordSetsForTargets(name string, targets []string, ttl int64) ([]client.RecordSet, error) {
+	var ipv4, ipv6 []string
+	for _, target := range targets {
+		ip, err := netip.ParseAddr(target)
+		if err != nil {
+			return nil, fmt.Errorf("target %q is not a valid IP address: %w", target, err)
+		}
+		if ip.Is4() || ip.Is4In6() {
+			ipv4 = append(ipv4, ip.Unmap().String())
+		} else {
+			ipv6 = append(ipv6, ip.String())
+		}
+	}
+
+	var recordSets []client.RecordSet
+	if len(ipv4) > 0 {
+		recordSets = append(recordSets, client.RecordSet{Name: name, Type: client.RecordTypeA, Addresses: ipv4, TTL: ttl})
+	}
+	if len(ipv6) > 0 {
+		recordSets = append(recordSets, client.RecordSet{Name: name, Type: client.RecordTypeAAAA, Addresses: ipv6, TTL: ttl})
+	}
+	if len(recordSets) == 0 {
+		return nil, fmt.Errorf("no targets to publish")
+	}
+	return recordSets, nil
 }
 
 func (m *provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error {
