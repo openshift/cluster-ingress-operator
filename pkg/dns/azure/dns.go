@@ -97,22 +97,19 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	metadataLabel := m.config.InfraID
 	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
-	ARecord := client.ARecord{
-		Address: record.Spec.Targets[0],
-		Name:    ARecordName,
-		TTL:     record.Spec.RecordTTL,
-	}
-	if metadataLabel != "" {
-		ARecord.Label = fmt.Sprintf("kubernetes.io_cluster.%s", metadataLabel)
+	recordSet := client.RecordSet{
+		Name:      ARecordName,
+		Type:      client.RecordTypeA,
+		Addresses: []string{record.Spec.Targets[0]},
+		TTL:       record.Spec.RecordTTL,
 	}
 
 	// TODO: handle >0 targets
-	err = m.client.Put(context.TODO(), *targetZone, ARecord, m.config.Tags)
+	err = m.client.Put(context.TODO(), *targetZone, recordSet, m.config.Tags)
 
 	if err == nil {
 		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
@@ -136,10 +133,11 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	err = m.client.Delete(
 		context.TODO(),
 		*targetZone,
-		client.ARecord{
-			Address: record.Spec.Targets[0],
-			Name:    ARecordName,
-			TTL:     record.Spec.RecordTTL,
+		client.RecordSet{
+			Name:      ARecordName,
+			Type:      client.RecordTypeA,
+			Addresses: []string{record.Spec.Targets[0]},
+			TTL:       record.Spec.RecordTTL,
 		})
 
 	if err == nil {
