@@ -2,7 +2,7 @@ diff --git a/conformance/utils/tls/tls.go b/conformance/utils/tls/tls.go
 index 866327c7..e6cb00fa 100644
 --- a/conformance/utils/tls/tls.go
 +++ b/conformance/utils/tls/tls.go
-@@ -121,9 +121,24 @@ func MakeTLSRequestAndExpectFailureResponse(t *testing.T, r roundtripper.RoundTr
+@@ -121,8 +121,23 @@ func MakeTLSRequestAndExpectFailureResponse(t *testing.T, r roundtripper.RoundTr
  		}
  	}
  
@@ -28,5 +28,3 @@ index 866327c7..e6cb00fa 100644
 +		}
 +		time.Sleep(time.Second)
  	}
- 
- 	if clientCertificate != nil && clientCertificateKey != nil {
