@@ -82,11 +82,6 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 # - GatewayStaticAddresses: we don't support specific address pool configuration (https://redhat.atlassian.net/browse/NE-2416).
 # - GatewayBackendClientCertificate, GatewayHTTPSListenerDetectMisdirectedRequests:
 #   not supported by Istio 1.31.1 (https://github.com/istio/istio/blob/1.31.1/pilot/pkg/config/kube/gateway/supported_features.go#L22).
-# - ListenerSet: not supported by the OpenShift Gateway API implementation even though
-#   Istio 1.31.1 supports it; the operator configures Istio to ignore listenersets and
-#   marks them NotAccepted (see PILOT_IGNORE_RESOURCES in
-#   pkg/operator/controller/gatewayclass/istio_olm.go). Downstream enablement is tracked
-#   by https://redhat.atlassian.net/browse/NE-2598.
 # - HTTPRouteRetry, HTTPRouteRetryBackendTimeout, HTTPRouteRetryConnectionError: retry is
 #   not part of the Gateway API v1.6.x standard-channel HTTPRoute schema installed here;
 #   it exists only in the experimental channel. With strict validation the API server
@@ -96,7 +91,7 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.g
 #   which is not run because the OpenShift Gateway API implementation does not
 #   support UDPRoute; the operator configures Istio to ignore udproutes
 #   (see PILOT_IGNORE_RESOURCES in pkg/operator/controller/gatewayclass/istio_olm.go).
-SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPListenerIsolation,GatewayInfrastructure,GatewayPort8080,GRPCRoute,HTTPRoute,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
+SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,Gateway,GatewayAddressEmpty,GatewayFrontendClientCertificateValidation,GatewayFrontendClientCertificateValidationInsecureFallback,GatewayHTTPListenerIsolation,GatewayInfrastructure,GatewayPort8080,GRPCRoute,HTTPRoute,ListenerSet,HTTPRoute303RedirectStatusCode,HTTPRoute307RedirectStatusCode,HTTPRoute308RedirectStatusCode,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant,TLSRoute,TLSRouteModeMixed,TLSRouteModeTerminate"
 echo "Start Gateway API Conformance Testing"
 go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.5.0" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--contact=https://github.com/openshift/cluster-ingress-operator" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC,GATEWAY-TLS" "--supported-features=${SUPPORTED_FEATURES}"
 cat conformance/openshift.yaml
