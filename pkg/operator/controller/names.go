@@ -28,6 +28,14 @@ const (
 	// subscriptions, and only when creating a new subscription.
 	IngressOperatorOwnedAnnotation = "ingress.operator.openshift.io/owned"
 
+	// RouterTLSOwningComponent is the value used for the
+	// openshift.io/owning-component annotation (annotations.OpenShiftComponent)
+	// on the TLS-related resources that the ingress operator manages, such as
+	// the router CA secret, the operator-generated default certificate secret,
+	// and the published default ingress CA bundle configmap.  It identifies the
+	// owning Jira component for these resources.
+	RouterTLSOwningComponent = "Networking / router"
+
 	// ControllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
 	ControllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
