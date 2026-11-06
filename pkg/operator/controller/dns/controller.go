@@ -399,7 +399,7 @@ func (r *reconciler) publishRecordToZones(ctx context.Context, zones []configv1.
 			}
 			requeue = true
 		} else if !isOldestRecord {
-			log.Info("DNS record not published: domain name already used by another DNS record", "record", record.Spec)
+			log.Info("DNS record not published: domain name and record type already used by another DNS record", "record", record.Spec)
 			condition = iov1.DNSZoneCondition{
 				Message: "Domain name is already in use",
 				Reason:  "DomainAlreadyInUse",
@@ -443,13 +443,16 @@ func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *confi
 
 // isOldestRecordForDomain returns true if the provided DNSRecord is the oldest
 // record claiming its domain name. Unmanaged records are treated as claimants
-// and block publishing (same DNS name may only have one owner). Records that
-// are being deleted are ignored. When creation timestamps are equal, the
-// lexicographically earlier namespace wins, then name (Gateway API-style
-// tie-break). A subject with a zero CreationTimestamp always yields to any
-// non-deleted peer (it is still being created and must not win). An empty
-// index result is treated as an error so the caller requeues with an
-// InternalError condition rather than publishing under cache lag.
+// and block publishing. An A record and an AAAA record for the same name are
+// independent and do not conflict; any other combination (including CNAME
+// versus A or AAAA) is a conflict because a CNAME cannot coexist with any
+// other record type at the same name. Records that are being deleted are
+// ignored. When creation timestamps are equal, the lexicographically earlier
+// namespace wins, then name (Gateway API-style tie-break). A subject with a
+// zero CreationTimestamp always yields to any non-deleted peer (it is still
+// being created and must not win). An empty index result is treated as an
+// error so the caller requeues with an InternalError condition rather than
+// publishing under cache lag.
 func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov1.DNSRecord) (bool, error) {
 	records := iov1.DNSRecordList{}
 	if err := cache.List(ctx, &records, client.MatchingFields{dnsRecordIndexFieldName: record.Spec.DNSName}); err != nil {
@@ -460,12 +463,15 @@ func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov
 	// indicates the index is not yet consistent; requeue rather than risk
 	// publishing a duplicate while another record for the same name is racing.
 	if len(records.Items) == 0 {
-		return false, fmt.Errorf("DNS name %q not found in DNSRecord index", record.Spec.DNSName)
+		return false, fmt.Errorf("DNS name %q with record type %q not found in DNSRecord index", record.Spec.DNSName, record.Spec.RecordType)
 	}
 
 	// Look for any older (or tie-break preferred) DNS records.
 	for i := range records.Items {
 		existingRecord := &records.Items[i]
+		if addressRecordTypesCanCoexist(record.Spec.RecordType, existingRecord.Spec.RecordType) {
+			continue
+		}
 		// This record is, by definition, not older than itself.
 		if record.UID == existingRecord.UID {
 			continue
@@ -489,6 +495,18 @@ func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov
 		}
 	}
 	return true, nil
+}
+
+// addressRecordTypesCanCoexist returns true when two record types are both
+// address types (A and AAAA) and therefore independent at the same DNS name.
+// A CNAME cannot coexist with any other record type, so this returns false
+// whenever either type is CNAME (or any non-address type).
+func addressRecordTypesCanCoexist(a, b iov1.DNSRecordType) bool {
+	return a != b && isAddressRecordType(a) && isAddressRecordType(b)
+}
+
+func isAddressRecordType(t iov1.DNSRecordType) bool {
+	return t == iov1.ARecordType || t == iov1.AAAARecordType
 }
 
 // dnsRecordIsPreferred reports whether a is preferred over b for ownership of
@@ -725,6 +743,13 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 	var oldestExistingRecord *iov1.DNSRecord
 	for i := range otherRecords.Items {
 		existingRecord := &otherRecords.Items[i]
+		// A and AAAA records are independent and never block each other,
+		// so an A record deletion cannot unblock an AAAA record and vice
+		// versa. Any other combination (e.g. CNAME removal unblocking an
+		// A or AAAA record) must be considered.
+		if addressRecordTypesCanCoexist(deletedRecord.Spec.RecordType, existingRecord.Spec.RecordType) {
+			continue
+		}
 		// mapOnRecordDelete should be called after the deleted record is
 		// actually removed from the cache, but just in case, filter out the
 		// deleted record.

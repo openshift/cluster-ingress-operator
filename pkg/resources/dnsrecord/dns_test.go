@@ -17,13 +17,23 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+func azureStatus(ipFamily configv1.IPFamilyType) *configv1.PlatformStatus {
+	return &configv1.PlatformStatus{
+		Type: configv1.AzurePlatformType,
+		Azure: &configv1.AzurePlatformStatus{
+			IPFamily: ipFamily,
+		},
+	}
+}
+
 func Test_desiredWildcardDNSRecord(t *testing.T) {
 	tests := []struct {
-		description string
-		domain      string
-		publish     operatorv1.EndpointPublishingStrategy
-		ingresses   []corev1.LoadBalancerIngress
-		expect      *iov1.DNSRecordSpec
+		description    string
+		domain         string
+		publish        operatorv1.EndpointPublishingStrategy
+		ingresses      []corev1.LoadBalancerIngress
+		platformStatus *configv1.PlatformStatus
+		expect         *iov1.DNSRecordSpec
 	}{
 		{
 			description: "null endpointPublishingStrategy.loadBalancer",
@@ -119,6 +129,154 @@ func Test_desiredWildcardDNSRecord(t *testing.T) {
 			},
 		},
 		{
+			description: "IPv6 IP to AAAA record",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "2603:1030:c02:9::7a7"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.AAAARecordType,
+				Targets:             []string{"2603:1030:c02:9::7a7"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description: "IPv4-mapped IPv6 IP to A record with a normalized target",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "::ffff:192.0.2.1"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.ARecordType,
+				Targets:             []string{"192.0.2.1"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description:    "dual-stack IPv4-primary publishes both addresses, IPv4 first",
+			platformStatus: azureStatus(configv1.DualStackIPv4Primary),
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1"},
+				{IP: "2603:1030:c02:9::7a7"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.ARecordType,
+				Targets:             []string{"192.0.2.1", "2603:1030:c02:9::7a7"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description:    "dual-stack IPv6-primary publishes both addresses, IPv6 first",
+			platformStatus: azureStatus(configv1.DualStackIPv6Primary),
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1"},
+				{IP: "2603:1030:c02:9::7a7"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.AAAARecordType,
+				Targets:             []string{"2603:1030:c02:9::7a7", "192.0.2.1"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description:    "dual-stack with only the IPv4 address so far",
+			platformStatus: azureStatus(configv1.DualStackIPv4Primary),
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.ARecordType,
+				Targets:             []string{"192.0.2.1"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description:    "dual-stack with a hostname yields a CNAME",
+			platformStatus: azureStatus(configv1.DualStackIPv4Primary),
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{Hostname: "lb.cloud.example.com"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.CNAMERecordType,
+				Targets:             []string{"lb.cloud.example.com"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description:    "single-stack Azure uses only the first ingress",
+			platformStatus: azureStatus(configv1.IPv4),
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1"},
+				{IP: "2603:1030:c02:9::7a7"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.ARecordType,
+				Targets:             []string{"192.0.2.1"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
 			description: "unmanaged DNS policy",
 			publish: operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.LoadBalancerServiceStrategyType,
@@ -138,6 +296,20 @@ func Test_desiredWildcardDNSRecord(t *testing.T) {
 				RecordTTL:           defaultRecordTTL,
 				DNSManagementPolicy: iov1.UnmanagedDNS,
 			},
+		},
+		{
+			description: "hostname and IP in the same ingress yields no record",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{Hostname: "lb.cloud.example.com", IP: "192.0.2.1"},
+			},
+			expect: nil,
 		},
 	}
 
@@ -164,7 +336,7 @@ func Test_desiredWildcardDNSRecord(t *testing.T) {
 				service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
 			}
 
-			haveWC, actual := desiredWildcardDNSRecord(name, labels, icRef, test.domain, &test.publish, service)
+			haveWC, actual := desiredWildcardDNSRecord(name, labels, icRef, test.domain, &test.publish, service, test.platformStatus)
 			switch {
 			case test.expect != nil && haveWC:
 				if !cmp.Equal(actual.Spec, *test.expect) {

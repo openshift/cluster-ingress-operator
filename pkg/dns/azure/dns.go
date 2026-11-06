@@ -88,8 +88,8 @@ func NewProvider(config Config) (dns.Provider, error) {
 }
 
 func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
-	if record.Spec.RecordType != iov1.ARecordType {
-		return fmt.Errorf("only A record types are supported")
+	if record.Spec.RecordType != iov1.ARecordType && record.Spec.RecordType != iov1.AAAARecordType {
+		return fmt.Errorf("only A and AAAA record types are supported")
 	}
 
 	targetZone, err := client.ParseZone(zone.ID)
