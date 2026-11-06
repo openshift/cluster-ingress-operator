@@ -102,10 +102,10 @@ const (
 	// CVO installs the manifests.
 	NamespaceManifest = "manifests/00-namespace.yaml"
 	// CustomResourceDefinitionManifest is the asset for the
-	// ingresscontrollers CRD.  This manifest is usually installed by CVO,
-	// but it is also used by the "ingress-operator render" command to write
-	// out manifests that are required in order to customize ingress at
-	// installation time, before CVO installs the manifests.
+	// ingresscontrollers CRD.  It is used only by the "ingress-operator
+	// render" command to write out manifests at installation time, before
+	// CVO installs the payload.  The CRD itself is delivered by
+	// openshift/api, not from this component's manifests/.
 	CustomResourceDefinitionManifest = "manifests/00-custom-resource-definition.yaml"
 )
 
@@ -113,9 +113,14 @@ const (
 // to embed these files here because manifests/ is a top-level directory in the
 // source tree, and go:embed does not allow paths containing "../".
 //
+// The ingresscontrollers CRD is not shipped from manifests/: openshift/api
+// delivers it in the release payload.  The copy embedded here is used only by
+// the "ingress-operator render" command at install time, so it is taken
+// directly from the vendored openshift/api Default CRD.
+//
 //go:generate mkdir -p manifests
 //go:generate cp ../../manifests/00-namespace.yaml manifests/
-//go:generate cp ../../manifests/00-custom-resource-definition.yaml manifests/
+//go:generate bash -O extglob -c "cp ../../vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers?(-Default).crd.yaml manifests/00-custom-resource-definition.yaml"
 
 //go:embed assets manifests
 var content embed.FS
