@@ -3,6 +3,7 @@ package dnsrecord
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -13,6 +14,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/ipfamily"
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -34,12 +36,12 @@ const defaultRecordTTL int64 = 30
 
 // EnsureWildcardDNSRecord will create wildcard DNS records for the given LB
 // service.  If service is nil (haveLBS is false), nothing is done.
-func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool, platformStatus *configv1.PlatformStatus) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
 		return false, nil, nil
 	}
 
-	wantWC, desired := desiredWildcardDNSRecord(name, dnsRecordLabels, ownerRef, domain, endpointPublishingStrategy, service)
+	wantWC, desired := desiredWildcardDNSRecord(name, dnsRecordLabels, ownerRef, domain, endpointPublishingStrategy, service, platformStatus)
 	haveWC, current, err := CurrentDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
@@ -65,8 +67,8 @@ func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dn
 
 // EnsureDNSRecord will create DNS records for the given LB service.  If service
 // is nil (haveLBS is false), nothing is done.
-func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service) (bool, *iov1.DNSRecord, error) {
-	wantWC, desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service)
+func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service, platformStatus *configv1.PlatformStatus) (bool, *iov1.DNSRecord, error) {
+	wantWC, desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service, platformStatus)
 	haveWC, current, err := CurrentDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
@@ -94,7 +96,7 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 
 // desiredWildcardDNSRecord will return any necessary wildcard DNS records for the
 // given service.
-func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, dnsDomain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service) (bool, *iov1.DNSRecord) {
+func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, dnsDomain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, platformStatus *configv1.PlatformStatus) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(dnsDomain) == 0 {
@@ -119,19 +121,26 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 		dnsPolicy = iov1.UnmanagedDNS
 	}
 
-	return desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service)
+	return desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service, platformStatus)
 }
 
 // desiredDNSRecord will return any necessary DNS records for the given domain
 // and service.
 //
-// For now, if the service has more than one .status.loadbalancer.ingress, only
-// the first will be used.
+// On a single-stack cluster, if the service has more than one
+// .status.loadbalancer.ingress, only the first will be used.
+//
+// On a dual-stack cluster, every load balancer IP address is published as a
+// target of one record, primary address family first, and the DNS provider
+// writes an A record set and an AAAA record set from them. The cluster's IP
+// family is fixed when the operator starts, so it -- not the set of addresses
+// that happens to be present in the service status on this reconcile -- is
+// what decides whether both families are expected.
 //
 // TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
 // later becomes empty, what should we do? Currently we'll treat it as an intent
 // to not have a desired record.
-func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service) (bool, *iov1.DNSRecord) {
+func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service, platformStatus *configv1.PlatformStatus) (bool, *iov1.DNSRecord) {
 	// No LB target exists for the domain record to point at.
 	if len(service.Status.LoadBalancer.Ingress) == 0 {
 		log.Info("No load balancer target for dnsrecord", "dnsrecord", name, "service", service.Name)
@@ -147,15 +156,24 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 		return false, nil
 	}
 
-	var target string
+	var targets []string
 	var recordType iov1.DNSRecordType
 
-	if len(ingress.Hostname) > 0 {
+	switch {
+	case len(ingress.Hostname) > 0:
+		// A CNAME serves both address families, so it is unaffected by
+		// the cluster's IP family.
 		recordType = iov1.CNAMERecordType
-		target = ingress.Hostname
-	} else {
+		targets = []string{ingress.Hostname}
+	case ipfamily.IsDualStack(ipfamily.ForPlatform(platformStatus)):
+		var ok bool
+		recordType, targets, ok = dualStackTargets(name, service, ipfamily.ForPlatform(platformStatus))
+		if !ok {
+			return false, nil
+		}
+	default:
 		recordType = iov1.ARecordType
-		target = ingress.IP
+		targets = []string{ingress.IP}
 	}
 
 	return true, &iov1.DNSRecord{
@@ -169,11 +187,52 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 		Spec: iov1.DNSRecordSpec{
 			DNSName:             domain,
 			DNSManagementPolicy: dnsPolicy,
-			Targets:             []string{target},
+			Targets:             targets,
 			RecordType:          recordType,
 			RecordTTL:           defaultRecordTTL,
 		},
 	}
+}
+
+// dualStackTargets returns the record type and targets for a dual-stack
+// cluster: every load balancer IP address, ordered with the primary address
+// family first so that the target list is stable across reconciles. The
+// returned record type names the primary family.
+//
+// Publishing whatever addresses are available is safe because both families
+// live in one DNSRecord: an address arriving later is an update that adds a
+// target, never a delete that unpublishes a record set. If a family is still
+// missing, the Azure provider reports the record as unpublished.
+func dualStackTargets(name types.NamespacedName, service *corev1.Service, ipFamily configv1.IPFamilyType) (iov1.DNSRecordType, []string, bool) {
+	var ipv4, ipv6 []string
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		if len(ingress.IP) == 0 {
+			continue
+		}
+		if addr, err := netip.ParseAddr(ingress.IP); err == nil && addr.Is6() && !addr.Is4In6() {
+			ipv6 = append(ipv6, ingress.IP)
+		} else {
+			ipv4 = append(ipv4, ingress.IP)
+		}
+	}
+
+	recordType := iov1.ARecordType
+	primary, secondary := ipv4, ipv6
+	if ipfamily.PrimaryIsIPv6(ipFamily) {
+		recordType = iov1.AAAARecordType
+		primary, secondary = ipv6, ipv4
+	}
+
+	targets := append(append([]string{}, primary...), secondary...)
+	if len(targets) == 0 {
+		log.Info("No load balancer IP address for dnsrecord", "dnsrecord", name, "service", service.Name)
+		return "", nil, false
+	}
+	if len(ipv4) == 0 || len(ipv6) == 0 {
+		log.Info("Load balancer does not yet report both address families for dual-stack dnsrecord", "dnsrecord", name, "service", service.Name, "targets", targets)
+	}
+
+	return recordType, targets, true
 }
 
 func CurrentDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
