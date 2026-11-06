@@ -29,6 +29,8 @@ var (
 	FipsEnableFilePath = "/proc/sys/crypto/fips_enabled"
 )
 
+var istio1_30 = semver.MustParse("1.30.0")
+
 // detectFipsMode checks if FIPS mode is enabled in the system.
 func init() {
 	detectFipsMode(FipsEnableFilePath)

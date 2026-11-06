@@ -18,6 +18,7 @@ package v1
 
 import (
 	json "encoding/json"
+
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	k8sv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -464,12 +465,20 @@ type GlobalConfig struct {
 	Agentgateway *Agentgateway `json:"agentgateway,omitempty"`
 	// If true, install istio-reader service account and associated cluster role/binding,
 	// which are used for multicluster remote-secret workflows.
-	EnableReaderRBAC *bool `json:"enableReaderRBAC,omitempty"` // The next available key is 79
+	EnableReaderRBAC *bool `json:"enableReaderRBAC,omitempty"`
+	// Optionally specify a custom service account to bind to the istio-reader ClusterRole.
+	// When set, the default istio-reader-service-account is not created.
+	ReaderServiceAccount *ReaderServiceAccount `json:"readerServiceAccount,omitempty"` // The next available key is 80
 
 }
 
 type Agentgateway struct {
 	Image *string `json:"image,omitempty"`
+}
+
+type ReaderServiceAccount struct {
+	Name      *string `json:"name,omitempty"`
+	Namespace *string `json:"namespace,omitempty"`
 }
 
 // Configuration for Security Token Service (STS) server.
@@ -1193,7 +1202,7 @@ const filePkgApisValuesTypesProtoRawDesc = "" +
 	"\x14istio_ingressgateway\x18\x04 \x01(\v2-.istio.operator.v1alpha1.IngressGatewayConfigR\x14istio-ingressgateway\x12@\n" +
 	"\x0fsecurityContext\x18\n" +
 	" \x01(\v2\x16.google.protobuf.ValueR\x0fsecurityContext\x12>\n" +
-	"\x0eseccompProfile\x18\f \x01(\v2\x16.google.protobuf.ValueR\x0eseccompProfile\"\xb9\x15\n" +
+	"\x0eseccompProfile\x18\f \x01(\v2\x16.google.protobuf.ValueR\x0eseccompProfile\"\x9c\x16\n" +
 	"\fGlobalConfig\x12;\n" +
 	"\x04arch\x18\x01 \x01(\v2#.istio.operator.v1alpha1.ArchConfigB\x02\x18\x01R\x04arch\x12 \n" +
 	"\vcertSigners\x18D \x03(\tR\vcertSigners\x12F\n" +
@@ -1246,9 +1255,13 @@ const filePkgApisValuesTypesProtoRawDesc = "" +
 	"\rnetworkPolicy\x18K \x01(\v2,.istio.operator.v1alpha1.NetworkPolicyConfigR\rnetworkPolicy\x12L\n" +
 	"\rresourceScope\x18L \x01(\x0e2&.istio.operator.v1alpha1.ResourceScopeR\rresourceScope\x12I\n" +
 	"\fagentgateway\x18M \x01(\v2%.istio.operator.v1alpha1.AgentgatewayR\fagentgateway\x12F\n" +
-	"\x10enableReaderRBAC\x18N \x01(\v2\x1a.google.protobuf.BoolValueR\x10enableReaderRBAC\"$\n" +
+	"\x10enableReaderRBAC\x18N \x01(\v2\x1a.google.protobuf.BoolValueR\x10enableReaderRBAC\x12a\n" +
+	"\x14readerServiceAccount\x18O \x01(\v2-.istio.operator.v1alpha1.ReaderServiceAccountR\x14readerServiceAccount\"$\n" +
 	"\fAgentgateway\x12\x14\n" +
-	"\x05image\x18\x01 \x01(\tR\x05image\"-\n" +
+	"\x05image\x18\x01 \x01(\tR\x05image\"H\n" +
+	"\x14ReaderServiceAccount\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"-\n" +
 	"\tSTSConfig\x12 \n" +
 	"\vservicePort\x18\x01 \x01(\rR\vservicePort\"R\n" +
 	"\fIstiodConfig\x12B\n" +
@@ -1568,6 +1581,8 @@ type CNIGlobalConfig struct { // Default k8s resources settings for all Istio co
 
 	// Specifies whether native nftables rules should be used instead of iptables rules for traffic redirection.
 	NativeNftables *bool `json:"nativeNftables,omitempty"`
+	// Settings related to Kubernetes NetworkPolicy.
+	NetworkPolicy *NetworkPolicyConfig `json:"networkPolicy,omitempty"`
 }
 
 // Resource describes the source of configuration
@@ -1652,6 +1667,7 @@ const (
 	// In `ALLOW_ANY_DYNAMIC_DNS` mode, traffic to unknown destinations will be allowed via dynamic DNS resolution.
 	// This mode allows users that do not have all possible egress destinations registered through `ServiceEntry` configurations to still connect
 	// to arbitrary destinations. Client TLS settings can be configured for connections to such destinations.
+	// This mode cannot be used at the Sidecar level.
 	MeshConfigOutboundTrafficPolicyModeAllowAnyDynamicDns MeshConfigOutboundTrafficPolicyMode = "ALLOW_ANY_DYNAMIC_DNS"
 )
 
@@ -1789,6 +1805,35 @@ const (
 	MeshConfigTLSConfigTLSProtocolTlsv13 MeshConfigTLSConfigTLSProtocol = "TLSV1_3"
 )
 
+// Visibility defines how widely a matching ServiceEntry is visible.
+// +kubebuilder:validation:Enum=VISIBILITY_UNSPECIFIED;NONE;NAMESPACE;PUBLIC
+type ServiceEntryVisibilityVisibility string
+
+const (
+	// Default. Resolves to `PUBLIC` to preserve legacy behavior.
+	ServiceEntryVisibilityVisibilityVisibilityUnspecified ServiceEntryVisibilityVisibility = "VISIBILITY_UNSPECIFIED"
+	// Not visible anywhere: the ServiceEntry may be written, but Istio
+	// configures no dataplane for it. Useful to expressly forbid a class of
+	// ServiceEntry.
+	ServiceEntryVisibilityVisibilityNone ServiceEntryVisibilityVisibility = "NONE"
+	// Visible only within the namespace the ServiceEntry is defined in.
+	// Equivalent to the legacy `exportTo: "."`.
+	ServiceEntryVisibilityVisibilityNamespace ServiceEntryVisibilityVisibility = "NAMESPACE"
+	// Visible to every workload the holding control plane configures.
+	// Equivalent to the legacy `exportTo: "*"`.
+	//
+	// The reach of `PUBLIC` is a control-plane-connectivity boundary, not a
+	// fixed topological one: it extends exactly as far as the control plane
+	// that holds this ServiceEntry distributes configuration. Mesh topology
+	// therefore determines how far `PUBLIC` actually reaches, and the same
+	// entry scopes differently under different topologies. For example, in a
+	// single-primary multi-cluster mesh a `PUBLIC` ServiceEntry reaches every
+	// proxy that primary configures, spanning clusters; in a multi-primary
+	// mesh it reaches only the proxies of the control plane that holds the
+	// entry and does not propagate to the other control planes.
+	ServiceEntryVisibilityVisibilityPublic ServiceEntryVisibilityVisibility = "PUBLIC"
+)
+
 // MeshConfig defines mesh-wide settings for the Istio service mesh.
 type MeshConfig struct {
 	// Port on which Envoy should listen for all outbound traffic to other services.
@@ -1874,7 +1919,7 @@ type MeshConfig struct {
 	// On Kubernetes, this can be overridden on individual pods with the `proxy.istio.io/config` annotation.
 	DefaultConfig *MeshConfigProxyConfig `json:"defaultConfig,omitempty"`
 	// Set the default behavior of the sidecar for handling outbound
-	// traffic from the application.
+	// traffic from the application. This does not apply to gateways.
 	//
 	// Can be overridden at a Sidecar level by setting the `OutboundTrafficPolicy` in the
 	// [Sidecar API](https://istio.io/docs/reference/config/networking/sidecar/#OutboundTrafficPolicy).
@@ -1966,9 +2011,19 @@ type MeshConfig struct {
 	RootNamespace *string `json:"rootNamespace,omitempty"`
 	// Locality based load balancing distribution or failover settings.
 	// If unspecified, locality based load balancing will be enabled by default.
-	// However, this requires outlierDetection to actually take effect for a particular
+	// Only one of locality_lb_setting and zone_aware_lb_setting should be enabled;
+	// if both are set, zone_aware_lb_setting takes precedence and this setting is ignored.
+	// Failover settings, require outlierDetection to actually take effect for a particular
 	// service, see https://istio.io/latest/docs/tasks/traffic-management/locality-load-balancing/failover/
 	LocalityLbSetting *LocalityLoadBalancerSetting `json:"localityLbSetting,omitempty"`
+	// Zone Aware based load balancing settings.
+	// Only one of locality_lb_setting and zone_aware_lb_setting should be enabled,
+	// if unspecified zone_aware_lb_setting is disabled by default.
+	// If both are set, zone_aware_lb_setting takes precedence over locality_lb_setting.
+	// Additionally, Zone Aware LB is only supported in Sidecar mode and only takes effect
+	// on proxies configured with `ISTIO_META_ENABLE_SELF_DISCOVERY=true` (via `proxyMetadata`); see
+	// [ZoneAwareLoadBalancerSetting](https://istio.io/latest/docs/reference/config/networking/destination-rule/#ZoneAwareLoadBalancerSetting).
+	ZoneAwareLbSetting *ZoneAwareLoadBalancerSetting `json:"zoneAwareLbSetting,omitempty"`
 	// Configures DNS refresh rate for Envoy clusters of type `STRICT_DNS`
 	// Default refresh rate is `60s`.
 	DnsRefreshRate *metav1.Duration `json:"dnsRefreshRate,omitempty"`
@@ -2135,6 +2190,38 @@ type MeshConfig struct {
 	// Configuration of TLS for all traffic except for ISTIO_MUTUAL mode.
 	// For ISTIO_MUTUAL TLS settings, use meshMTLS configuration.
 	TlsDefaults *MeshConfigTLSConfig `json:"tlsDefaults,omitempty"`
+	// The default traffic policy applied to outbound clusters in the mesh, providing a
+	// baseline that DestinationRules inherit and override per block. Without this, a
+	// DestinationRule that sets `connectionPool` or `outlierDetection` has no mesh-level
+	// baseline, and unset blocks fall back to Istio's built-in defaults.
+	DefaultTrafficPolicy *MeshConfigDefaultTrafficPolicy `json:"defaultTrafficPolicy,omitempty"`
+	// ServiceEntryVisibility lets a mesh administrator control the visibility
+	// of ServiceEntry resources mesh-wide, without relying on external admission
+	// validation. When unset, ServiceEntry behaves as it does today (public visibility,
+	// cluster-wide; ambient ignores `exportTo`).
+	ServiceEntryVisibility *ServiceEntryVisibility `json:"serviceEntryVisibility,omitempty"`
+}
+
+// ServiceEntryVisibility controls the visibility of ServiceEntry resources
+// across the mesh, giving a mesh administrator a way to constrain ServiceEntry
+// visibility without relying on external (VAP/CEL/OPA) admission validation.
+//
+// Policies are evaluated in order; the first policy whose rules all match sets
+// the ServiceEntry's visibility. If no policy matches, `defaultVisibility`
+// applies. When this entire message is absent from `MeshConfig`, every
+// ServiceEntry is visible `PUBLIC`, preserving current Istio behavior.
+type ServiceEntryVisibility struct {
+	// The visibility used when no policy matches a ServiceEntry. If left
+	// `VISIBILITY_UNSPECIFIED`, it resolves to `PUBLIC`.
+	DefaultVisibility ServiceEntryVisibilityVisibility `json:"defaultVisibility,omitempty"`
+	// Whether sidecars honor these visibility semantics. When false (default),
+	// only ambient proxies (ztunnel and waypoints) apply them and sidecars
+	// continue to use `exportTo`. This enables incremental adoption during an
+	// ambient migration without affecting a working sidecar environment.
+	ApplyToSidecars *bool `json:"applyToSidecars,omitempty"`
+	// An ordered list of policies. Each policy is evaluated in turn; the first
+	// policy whose rules all match determines the ServiceEntry's visibility.
+	Policies []*ServiceEntryVisibilityPolicy `json:"policies,omitempty"`
 }
 
 // ConfigSource describes information about a configuration store inside a
@@ -2421,6 +2508,19 @@ type MeshConfigTLSConfig struct {
 	// AES128-GCM-SHA256
 	// ```
 	CipherSuites []string `json:"cipherSuites,omitempty"`
+}
+
+// DefaultTrafficPolicy defines mesh-wide baseline traffic settings for outbound
+// clusters. Only connection pool and outlier detection are configurable here, the
+// two settings that benefit from a mesh-wide baseline. A DestinationRule overrides a
+// baseline block when it sets the corresponding policy, and inherits it otherwise.
+type MeshConfigDefaultTrafficPolicy struct {
+	// Baseline connection pool settings for outbound clusters. A DestinationRule that
+	// sets `connectionPool` overrides this whole block; otherwise this baseline applies.
+	ConnectionPool *ConnectionPoolSettings `json:"connectionPool,omitempty"`
+	// Baseline outlier detection for outbound clusters. A DestinationRule that sets
+	// `outlierDetection` overrides this whole block; otherwise this baseline applies.
+	OutlierDetection *OutlierDetection `json:"outlierDetection,omitempty"`
 }
 
 // Settings for the selected services.
@@ -3212,9 +3312,26 @@ type MeshConfigExtensionProviderResourceDetectorsEnvironmentResourceDetector str
 type MeshConfigExtensionProviderResourceDetectorsDynatraceResourceDetector struct {
 }
 
+// Policy assigns a visibility to ServiceEntries that match all of its rules.
+type ServiceEntryVisibilityPolicy struct {
+	// The visibility applied to a ServiceEntry when all `matchingRules` match.
+	Visibility ServiceEntryVisibilityVisibility `json:"visibility,omitempty"`
+	// The rules to evaluate. All rules must match (AND semantics) for this
+	// policy to apply.
+	MatchingRules []*ServiceEntryVisibilityMatchRule `json:"matchingRules,omitempty"`
+}
+
+// MatchRule is a single matcher.
+// +kubebuilder:validation:XValidation:message="At most one of [namespaceSelector] should be set",rule="(has(self.namespaceSelector)?1:0) <= 1"
+type ServiceEntryVisibilityMatchRule struct {
+	// Matches when the namespace the ServiceEntry is defined in matches this
+	// label selector.
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+}
+
 const fileMeshV1alpha1ConfigProtoRawDesc = "" +
 	"\n" +
-	"\x1amesh/v1alpha1/config.proto\x12\x13istio.mesh.v1alpha1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19mesh/v1alpha1/proxy.proto\x1a*networking/v1alpha3/destination_rule.proto\x1a)networking/v1alpha3/virtual_service.proto\"\xc1s\n" +
+	"\x1amesh/v1alpha1/config.proto\x12\x13istio.mesh.v1alpha1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x19mesh/v1alpha1/proxy.proto\x1a*networking/v1alpha3/destination_rule.proto\x1a)networking/v1alpha3/virtual_service.proto\"\xcfw\n" +
 	"\n" +
 	"MeshConfig\x12*\n" +
 	"\x11proxy_listen_port\x18\x04 \x01(\x05R\x0fproxyListenPort\x129\n" +
@@ -3246,7 +3363,8 @@ const fileMeshV1alpha1ConfigProtoRawDesc = "" +
 	"!default_virtual_service_export_to\x18  \x03(\tR\x1ddefaultVirtualServiceExportTo\x12J\n" +
 	"\"default_destination_rule_export_to\x18! \x03(\tR\x1edefaultDestinationRuleExportTo\x12%\n" +
 	"\x0eroot_namespace\x18\" \x01(\tR\rrootNamespace\x12f\n" +
-	"\x13locality_lb_setting\x18# \x01(\v26.istio.networking.v1alpha3.LocalityLoadBalancerSettingR\x11localityLbSetting\x12C\n" +
+	"\x13locality_lb_setting\x18# \x01(\v26.istio.networking.v1alpha3.LocalityLoadBalancerSettingR\x11localityLbSetting\x12j\n" +
+	"\x15zone_aware_lb_setting\x18I \x01(\v27.istio.networking.v1alpha3.ZoneAwareLoadBalancerSettingR\x12zoneAwareLbSetting\x12C\n" +
 	"\x10dns_refresh_rate\x18$ \x01(\v2\x19.google.protobuf.DurationR\x0ednsRefreshRate\x12[\n" +
 	"\x11h2_upgrade_policy\x18) \x01(\x0e2/.istio.mesh.v1alpha1.MeshConfig.H2UpgradePolicyR\x0fh2UpgradePolicy\x129\n" +
 	"\x19inbound_cluster_stat_name\x18, \x01(\tR\x16inboundClusterStatName\x12;\n" +
@@ -3263,7 +3381,9 @@ const fileMeshV1alpha1ConfigProtoRawDesc = "" +
 	"\x12path_normalization\x18= \x01(\v26.istio.mesh.v1alpha1.MeshConfig.ProxyPathNormalizationR\x11pathNormalization\x12_\n" +
 	"\x19default_http_retry_policy\x18> \x01(\v2$.istio.networking.v1alpha3.HTTPRetryR\x16defaultHttpRetryPolicy\x12F\n" +
 	"\tmesh_mTLS\x18? \x01(\v2).istio.mesh.v1alpha1.MeshConfig.TLSConfigR\bmeshMTLS\x12L\n" +
-	"\ftls_defaults\x18@ \x01(\v2).istio.mesh.v1alpha1.MeshConfig.TLSConfigR\vtlsDefaults\x1a\x88\x02\n" +
+	"\ftls_defaults\x18@ \x01(\v2).istio.mesh.v1alpha1.MeshConfig.TLSConfigR\vtlsDefaults\x12j\n" +
+	"\x16default_traffic_policy\x18G \x01(\v24.istio.mesh.v1alpha1.MeshConfig.DefaultTrafficPolicyR\x14defaultTrafficPolicy\x12e\n" +
+	"\x18service_entry_visibility\x18H \x01(\v2+.istio.mesh.v1alpha1.ServiceEntryVisibilityR\x16serviceEntryVisibility\x1a\x88\x02\n" +
 	"\x15OutboundTrafficPolicy\x12N\n" +
 	"\x04mode\x18\x01 \x01(\x0e2:.istio.mesh.v1alpha1.MeshConfig.OutboundTrafficPolicy.ModeR\x04mode\x12>\n" +
 	"\x03tls\x18\x02 \x01(\v2,.istio.networking.v1alpha3.ClientTLSSettingsR\x03tls\"_\n" +
@@ -3507,7 +3627,10 @@ const fileMeshV1alpha1ConfigProtoRawDesc = "" +
 	"\vTLSProtocol\x12\f\n" +
 	"\bTLS_AUTO\x10\x00\x12\v\n" +
 	"\aTLSV1_2\x10\x01\x12\v\n" +
-	"\aTLSV1_3\x10\x02\"J\n" +
+	"\aTLSV1_3\x10\x02\x1a\xcc\x01\n" +
+	"\x14DefaultTrafficPolicy\x12Z\n" +
+	"\x0fconnection_pool\x18\x01 \x01(\v21.istio.networking.v1alpha3.ConnectionPoolSettingsR\x0econnectionPool\x12X\n" +
+	"\x11outlier_detection\x18\x02 \x01(\v2+.istio.networking.v1alpha3.OutlierDetectionR\x10outlierDetection\"J\n" +
 	"\x15IngressControllerMode\x12\x0f\n" +
 	"\vUNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03OFF\x10\x01\x12\v\n" +
@@ -3535,7 +3658,26 @@ const fileMeshV1alpha1ConfigProtoRawDesc = "" +
 	"\x18LabelSelectorRequirement\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1a\n" +
 	"\boperator\x18\x02 \x01(\tR\boperator\x12\x16\n" +
-	"\x06values\x18\x03 \x03(\tR\x06values\"\xcb\x01\n" +
+	"\x06values\x18\x03 \x03(\tR\x06values\"\xf8\x04\n" +
+	"\x16ServiceEntryVisibility\x12e\n" +
+	"\x12default_visibility\x18\x01 \x01(\x0e26.istio.mesh.v1alpha1.ServiceEntryVisibility.VisibilityR\x11defaultVisibility\x12*\n" +
+	"\x11apply_to_sidecars\x18\x02 \x01(\bR\x0fapplyToSidecars\x12N\n" +
+	"\bpolicies\x18\x03 \x03(\v22.istio.mesh.v1alpha1.ServiceEntryVisibility.PolicyR\bpolicies\x1a\xbe\x01\n" +
+	"\x06Policy\x12V\n" +
+	"\n" +
+	"visibility\x18\x01 \x01(\x0e26.istio.mesh.v1alpha1.ServiceEntryVisibility.VisibilityR\n" +
+	"visibility\x12\\\n" +
+	"\x0ematching_rules\x18\x02 \x03(\v25.istio.mesh.v1alpha1.ServiceEntryVisibility.MatchRuleR\rmatchingRules\x1ak\n" +
+	"\tMatchRule\x12S\n" +
+	"\x12namespace_selector\x18\x01 \x01(\v2\".istio.mesh.v1alpha1.LabelSelectorH\x00R\x11namespaceSelectorB\t\n" +
+	"\amatcher\"M\n" +
+	"\n" +
+	"Visibility\x12\x1a\n" +
+	"\x16VISIBILITY_UNSPECIFIED\x10\x00\x12\b\n" +
+	"\x04NONE\x10\x01\x12\r\n" +
+	"\tNAMESPACE\x10\x02\x12\n" +
+	"\n" +
+	"\x06PUBLIC\x10\x03\"\xcb\x01\n" +
 	"\fConfigSource\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12O\n" +
 	"\ftls_settings\x18\x02 \x01(\v2,.istio.networking.v1alpha3.ClientTLSSettingsR\vtlsSettings\x12P\n" +
@@ -3793,6 +3935,71 @@ const (
 	// Only append the istio metadata exchange headers for services considered in-mesh.
 	// Traffic is considered in-mesh if it is secured with Istio mutual TLS. This means that `MESH_EXTERNAL` services, unmatched passthrough traffic, and requests to workloads without Istio enabled will be considered out of mesh.
 	ProxyConfigProxyHeadersMetadataExchangeModeInMesh ProxyConfigProxyHeadersMetadataExchangeMode = "IN_MESH"
+)
+
+// Profile selects a default value set for the fields in this message.
+// Explicitly setting any field always takes precedence over profile defaults.
+// +kubebuilder:validation:Enum=SIDECAR;EDGE
+type ProxyConfigConnectionSettingsProfile string
+
+const (
+	// SIDECAR profile preserves existing Istio behavior.
+	// This is the default profile. No additional defaults are applied.
+	ProxyConfigConnectionSettingsProfileSidecar ProxyConfigConnectionSettingsProfile = "SIDECAR"
+	// EDGE profile applies Envoy's recommended defaults for edge gateway deployments.
+	// See https://www.envoyproxy.io/docs/envoy/latest/configuration/best_practices/edge
+	// Explicitly setting any field overrides the corresponding profile default.
+	//
+	// Defaults applied by this profile:
+	//
+	//	listener_per_connection_buffer_limit_bytes: 32768 (32 KiB)
+	//	cluster_per_connection_buffer_limit_bytes:  32768 (32 KiB)
+	//	http_idle_timeout:                          3600s (1 hour)
+	//	http_request_timeout:                       300s  (5 minutes)
+	//	http_stream_idle_timeout:                   300s  (5 minutes)
+	//	http_max_concurrent_streams:                100
+	//	http2_initial_stream_window_size:           65536 (64 KiB)
+	//	http2_initial_connection_window_size:       1048576 (1 MiB)
+	//	http_headers_with_underscores_action:       HEADERS_WITH_UNDERSCORES_REJECT_REQUEST
+	//	http_merge_slashes:                         true
+	//	http_path_with_escaped_slashes_action:      UNESCAPE_AND_REDIRECT
+	ProxyConfigConnectionSettingsProfileEdge ProxyConfigConnectionSettingsProfile = "EDGE"
+)
+
+// Action to take when Envoy receives client request with header names containing underscore characters.
+// +kubebuilder:validation:Enum=HEADERS_WITH_UNDERSCORES_UNSPECIFIED;HEADERS_WITH_UNDERSCORES_ALLOW;HEADERS_WITH_UNDERSCORES_REJECT_REQUEST;HEADERS_WITH_UNDERSCORES_DROP_HEADER
+type ProxyConfigConnectionSettingsHeadersWithUnderscoresAction string
+
+const (
+	// Unspecified. When profile is EDGE, defaults to HEADERS_WITH_UNDERSCORES_REJECT_REQUEST.
+	// Otherwise defaults to HEADERS_WITH_UNDERSCORES_ALLOW.
+	ProxyConfigConnectionSettingsHeadersWithUnderscoresActionHeadersWithUnderscoresUnspecified ProxyConfigConnectionSettingsHeadersWithUnderscoresAction = "HEADERS_WITH_UNDERSCORES_UNSPECIFIED"
+	// Allow headers with underscores.
+	ProxyConfigConnectionSettingsHeadersWithUnderscoresActionHeadersWithUnderscoresAllow ProxyConfigConnectionSettingsHeadersWithUnderscoresAction = "HEADERS_WITH_UNDERSCORES_ALLOW"
+	// Reject client request with 400 status. HTTP/1 requests are rejected with the "underscore_in_headers" response code.
+	ProxyConfigConnectionSettingsHeadersWithUnderscoresActionHeadersWithUnderscoresRejectRequest ProxyConfigConnectionSettingsHeadersWithUnderscoresAction = "HEADERS_WITH_UNDERSCORES_REJECT_REQUEST"
+	// Drop the header with name containing underscores. The header is dropped before the filter chain is invoked
+	// and as such filters will not see the header.
+	ProxyConfigConnectionSettingsHeadersWithUnderscoresActionHeadersWithUnderscoresDropHeader ProxyConfigConnectionSettingsHeadersWithUnderscoresAction = "HEADERS_WITH_UNDERSCORES_DROP_HEADER"
+)
+
+// Determines the action for request paths that contain escaped slashes (%2F, %2f, %5C, %5c).
+// +kubebuilder:validation:Enum=PATH_WITH_ESCAPED_SLASHES_UNSPECIFIED;KEEP_UNCHANGED;REJECT_REQUEST;UNESCAPE_AND_REDIRECT;UNESCAPE_AND_FORWARD
+type ProxyConfigConnectionSettingsPathWithEscapedSlashesAction string
+
+const (
+	// Unspecified. When profile is EDGE, defaults to UNESCAPE_AND_REDIRECT.
+	// Otherwise defaults to KEEP_UNCHANGED.
+	ProxyConfigConnectionSettingsPathWithEscapedSlashesActionPathWithEscapedSlashesUnspecified ProxyConfigConnectionSettingsPathWithEscapedSlashesAction = "PATH_WITH_ESCAPED_SLASHES_UNSPECIFIED"
+	// Keep escaped slashes as they are.
+	ProxyConfigConnectionSettingsPathWithEscapedSlashesActionKeepUnchanged ProxyConfigConnectionSettingsPathWithEscapedSlashesAction = "KEEP_UNCHANGED"
+	// Reject client request with 400 status.
+	ProxyConfigConnectionSettingsPathWithEscapedSlashesActionRejectRequest ProxyConfigConnectionSettingsPathWithEscapedSlashesAction = "REJECT_REQUEST"
+	// Unescape %2F and %5C sequences and redirect the request to the new path if the result path is different.
+	ProxyConfigConnectionSettingsPathWithEscapedSlashesActionUnescapeAndRedirect ProxyConfigConnectionSettingsPathWithEscapedSlashesAction = "UNESCAPE_AND_REDIRECT"
+	// Unescape %2F and %5C sequences and forward the request. Note that this option may introduce path confusion
+	// vulnerabilities if the backend service does not expect unescaped slashes.
+	ProxyConfigConnectionSettingsPathWithEscapedSlashesActionUnescapeAndForward ProxyConfigConnectionSettingsPathWithEscapedSlashesAction = "UNESCAPE_AND_FORWARD"
 )
 
 // Tracing defines configuration for the tracing performed by Envoy instances.
@@ -4153,6 +4360,10 @@ type MeshConfigProxyConfig struct {
 	// Defaults to true.
 	// Optional.
 	StatsCompression *bool `json:"statsCompression,omitempty"`
+	// Connection handling settings for this proxy, including buffer limits, timeouts,
+	// HTTP/2 tuning, header/path normalization, and connection limits.
+	// Use `profile` within this message to apply a recommended set of defaults.
+	ConnectionSettings *ProxyConfigConnectionSettings `json:"connectionSettings,omitempty"`
 }
 
 type RemoteService struct {
@@ -4374,6 +4585,98 @@ type ProxyConfigProxyHeaders struct {
 	XForwardedPort *ProxyConfigProxyHeadersXForwardedPort `json:"xForwardedPort,omitempty"`
 }
 
+// Settings that control proxy connection handling, buffering, timeouts,
+// HTTP/2 tuning, header/path normalization, and connection limits.
+//
+// The `profile` field selects a set of recommended defaults for these settings.
+// Any field explicitly set always takes precedence over profile defaults.
+//
+// These settings primarily configure the downstream side of the proxy —
+// listeners and the HTTP Connection Manager. The exception is
+// `cluster_per_connection_buffer_limit_bytes`, which applies at the
+// cluster level.
+//
+// Where DestinationRule configures behavior at the upstream cluster level
+// (notably `connectionPoolSettings.tcp.idleTimeout`), both apply
+// independently at different hops rather than one overriding the other:
+// DestinationRule governs Envoy → upstream connections, while these
+// settings govern downstream → Envoy connections. For per-destination
+// connection pool configuration, use DestinationRule's
+// `connectionPoolSettings`.
+type ProxyConfigConnectionSettings struct {
+	// The config profile to use. Determines default values for all fields in this message.
+	Profile ProxyConfigConnectionSettingsProfile `json:"profile,omitempty"`
+	// Soft limit on size of the listener's new connection read and write buffers in bytes.
+	// See Envoy's [per_connection_buffer_limit_bytes](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/listener/v3/listener.proto#envoy-v3-api-field-config-listener-v3-listener-per-connection-buffer-limit-bytes).
+	ListenerPerConnectionBufferLimitBytes *int32 `json:"listenerPerConnectionBufferLimitBytes,omitempty"`
+	// Soft limit on size of the cluster's new connection read and write buffers in bytes.
+	// See Envoy's [per_connection_buffer_limit_bytes](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/cluster.proto#envoy-v3-api-field-config-cluster-v3-cluster-per-connection-buffer-limit-bytes).
+	ClusterPerConnectionBufferLimitBytes *int32 `json:"clusterPerConnectionBufferLimitBytes,omitempty"`
+	// The idle timeout for HTTP connections. The idle timeout is defined as the period in which there are no active requests.
+	// When the idle timeout is reached, the connection will be closed.
+	// Note that request-based timeouts mean that HTTP/2 PINGs will not keep the connection alive.
+	// See Envoy's [idle_timeout](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-httpprotocoloptions-idle-timeout).
+	HttpIdleTimeout *metav1.Duration `json:"httpIdleTimeout,omitempty"`
+	// The maximum duration of a connection.
+	// When this duration is reached, a drain sequence will begin and the connection will be closed
+	// after the drain timeout period if there are no active streams.
+	// See Envoy's [max_connection_duration](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-httpprotocoloptions-max-connection-duration).
+	HttpMaxConnectionDuration *metav1.Duration `json:"httpMaxConnectionDuration,omitempty"`
+	// The time that Envoy will wait between sending an HTTP/2 shutdown notification (GOAWAY frame with max stream ID)
+	// and a final GOAWAY frame. This is used so that Envoy can drain in-flight requests.
+	// See Envoy's [drain_timeout](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/network/http_connection_manager/v3/http_connection_manager.proto#envoy-v3-api-field-extensions-filters-network-http-connection-manager-v3-httpconnectionmanager-drain-timeout).
+	HttpDrainTimeout *metav1.Duration `json:"httpDrainTimeout,omitempty"`
+	// The amount of time that Envoy will wait for the entire request to be received.
+	// The timer is activated when the request is initiated, and is disarmed when the last byte of
+	// the request is sent upstream or when the response is initiated.
+	// See Envoy's [request_timeout](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/network/http_connection_manager/v3/http_connection_manager.proto#envoy-v3-api-field-extensions-filters-network-http-connection-manager-v3-httpconnectionmanager-request-timeout).
+	HttpRequestTimeout *metav1.Duration `json:"httpRequestTimeout,omitempty"`
+	// The amount of time Envoy will wait for the request headers to be received.
+	// The timer is activated when the first byte of the headers is received and is disarmed when the last byte of the headers has been received.
+	// See Envoy's [request_headers_timeout](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/network/http_connection_manager/v3/http_connection_manager.proto#envoy-v3-api-field-extensions-filters-network-http-connection-manager-v3-httpconnectionmanager-request-headers-timeout).
+	HttpRequestHeadersTimeout *metav1.Duration `json:"httpRequestHeadersTimeout,omitempty"`
+	// The amount of time that Envoy will allow a stream to exist with no activity.
+	// The timer is reset each time an encode/decode event for headers or data is processed for the stream.
+	// See Envoy's [stream_idle_timeout](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/network/http_connection_manager/v3/http_connection_manager.proto#envoy-v3-api-field-extensions-filters-network-http-connection-manager-v3-httpconnectionmanager-stream-idle-timeout).
+	HttpStreamIdleTimeout *metav1.Duration `json:"httpStreamIdleTimeout,omitempty"`
+	// Total duration to keep alive an HTTP request/response stream.
+	// If the time limit is reached, the stream will be reset independent of any other timeouts.
+	// See Envoy's [max_stream_duration](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-httpprotocoloptions-max-stream-duration).
+	HttpMaxStreamDuration *metav1.Duration `json:"httpMaxStreamDuration,omitempty"`
+	// Maximum number of concurrent streams allowed for HTTP/2 connections.
+	// See Envoy's [max_concurrent_streams](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-http2protocoloptions-max-concurrent-streams).
+	HttpMaxConcurrentStreams *int32 `json:"httpMaxConcurrentStreams,omitempty"`
+	// Initial stream-level flow-control window size for HTTP/2 connections.
+	// Valid values range from 65535 (2^16 - 1, HTTP/2 default) to 2147483647 (2^31 - 1, HTTP/2 maximum).
+	// See Envoy's [initial_stream_window_size](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-http2protocoloptions-initial-stream-window-size).
+	Http2InitialStreamWindowSize *int32 `json:"http2InitialStreamWindowSize,omitempty"`
+	// Initial connection-level flow-control window size for HTTP/2 connections.
+	// Valid values range from 65535 (2^16 - 1, HTTP/2 default) to 2147483647 (2^31 - 1, HTTP/2 maximum).
+	// See Envoy's [initial_connection_window_size](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-http2protocoloptions-initial-connection-window-size).
+	Http2InitialConnectionWindowSize *int32 `json:"http2InitialConnectionWindowSize,omitempty"`
+	// Action to take when a client request contains header names with underscore characters.
+	// See Envoy's [headers_with_underscores_action](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/protocol.proto#envoy-v3-api-field-config-core-v3-httpprotocoloptions-headers-with-underscores-action).
+	HttpHeadersWithUnderscoresAction ProxyConfigConnectionSettingsHeadersWithUnderscoresAction `json:"httpHeadersWithUnderscoresAction,omitempty"`
+	// Determines if adjacent slashes in the path are merged into a single slash.
+	// This is useful for protecting against path confusion attacks where different backend services
+	// interpret paths with multiple slashes differently.
+	// See Envoy's [merge_slashes](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/network/http_connection_manager/v3/http_connection_manager.proto#envoy-v3-api-field-extensions-filters-network-http-connection-manager-v3-httpconnectionmanager-merge-slashes).
+	HttpMergeSlashes *bool `json:"httpMergeSlashes,omitempty"`
+	// Action to take when a request path contains escaped slash sequences (%2F, %5C).
+	// See Envoy's [path_with_escaped_slashes_action](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/network/http_connection_manager/v3/http_connection_manager.proto#envoy-v3-api-field-extensions-filters-network-http-connection-manager-v3-httpconnectionmanager-path-with-escaped-slashes-action).
+	HttpPathWithEscapedSlashesAction ProxyConfigConnectionSettingsPathWithEscapedSlashesAction `json:"httpPathWithEscapedSlashesAction,omitempty"`
+	// The maximum number of connections that a single listener will accept.
+	// Maps to Envoy's per-listener connection limit via runtime configuration
+	// (`envoy.resource_limits.listener.<listener_name>.connection_limit`).
+	// See Envoy's [edge best practices](https://www.envoyproxy.io/docs/envoy/latest/configuration/best_practices/edge).
+	ListenerConnectionLimit *int32 `json:"listenerConnectionLimit,omitempty"`
+	// The maximum number of downstream connections allowed across all listeners.
+	// Maps to Envoy's global downstream max connections via runtime configuration
+	// (`overload.global_downstream_max_connections`).
+	// See Envoy's [edge best practices](https://www.envoyproxy.io/docs/envoy/latest/configuration/best_practices/edge).
+	GlobalDownstreamConnectionLimit *int32 `json:"globalDownstreamConnectionLimit,omitempty"`
+}
+
 type ProxyConfigProxyHeadersServer struct {
 	Disabled *bool `json:"disabled,omitempty"`
 	// If set, and the server header is enabled, this value will be set as the server header. By default, `istio-envoy` will be used.
@@ -4498,7 +4801,7 @@ const fileMeshV1alpha1ProxyProtoRawDesc = "" +
 	"poll_delay\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\tpollDelay\x126\n" +
 	"\bfallback\x18\x02 \x01(\v2\x1a.google.protobuf.BoolValueR\bfallbackB\n" +
 	"\n" +
-	"\bprovider\"\xeb'\n" +
+	"\bprovider\"\xfd9\n" +
 	"\vProxyConfig\x12\x1f\n" +
 	"\vconfig_path\x18\x01 \x01(\tR\n" +
 	"configPath\x12\x1f\n" +
@@ -4542,7 +4845,8 @@ const fileMeshV1alpha1ProxyProtoRawDesc = "" +
 	"\rproxy_headers\x18' \x01(\v2-.istio.mesh.v1alpha1.ProxyConfig.ProxyHeadersR\fproxyHeaders\x12I\n" +
 	"\x13file_flush_interval\x18( \x01(\v2\x19.google.protobuf.DurationR\x11fileFlushInterval\x122\n" +
 	"\x16file_flush_min_size_kb\x18) \x01(\rR\x12fileFlushMinSizeKb\x12G\n" +
-	"\x11stats_compression\x18* \x01(\v2\x1a.google.protobuf.BoolValueR\x10statsCompression\x1a@\n" +
+	"\x11stats_compression\x18* \x01(\v2\x1a.google.protobuf.BoolValueR\x10statsCompression\x12d\n" +
+	"\x13connection_settings\x18+ \x01(\v23.istio.mesh.v1alpha1.ProxyConfig.ConnectionSettingsR\x12connectionSettings\x1a@\n" +
 	"\x12ProxyMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a@\n" +
@@ -4588,7 +4892,41 @@ const fileMeshV1alpha1ProxyProtoRawDesc = "" +
 	"\x03uri\x18\x05 \x01(\v2\x1a.google.protobuf.BoolValueR\x03uri\"2\n" +
 	"\x14MetadataExchangeMode\x12\r\n" +
 	"\tUNDEFINED\x10\x00\x12\v\n" +
-	"\aIN_MESH\x10\x01\"l\n" +
+	"\aIN_MESH\x10\x01\x1a\xa9\x11\n" +
+	"\x12ConnectionSettings\x12U\n" +
+	"\aprofile\x18\x01 \x01(\x0e2;.istio.mesh.v1alpha1.ProxyConfig.ConnectionSettings.ProfileR\aprofile\x12v\n" +
+	"*listener_per_connection_buffer_limit_bytes\x18\x02 \x01(\v2\x1b.google.protobuf.Int32ValueR%listenerPerConnectionBufferLimitBytes\x12t\n" +
+	")cluster_per_connection_buffer_limit_bytes\x18\x03 \x01(\v2\x1b.google.protobuf.Int32ValueR$clusterPerConnectionBufferLimitBytes\x12E\n" +
+	"\x11http_idle_timeout\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\x0fhttpIdleTimeout\x12Z\n" +
+	"\x1chttp_max_connection_duration\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\x19httpMaxConnectionDuration\x12G\n" +
+	"\x12http_drain_timeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\x10httpDrainTimeout\x12K\n" +
+	"\x14http_request_timeout\x18\a \x01(\v2\x19.google.protobuf.DurationR\x12httpRequestTimeout\x12Z\n" +
+	"\x1chttp_request_headers_timeout\x18\b \x01(\v2\x19.google.protobuf.DurationR\x19httpRequestHeadersTimeout\x12R\n" +
+	"\x18http_stream_idle_timeout\x18\t \x01(\v2\x19.google.protobuf.DurationR\x15httpStreamIdleTimeout\x12R\n" +
+	"\x18http_max_stream_duration\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\x15httpMaxStreamDuration\x12Z\n" +
+	"\x1bhttp_max_concurrent_streams\x18\v \x01(\v2\x1b.google.protobuf.Int32ValueR\x18httpMaxConcurrentStreams\x12c\n" +
+	" http2_initial_stream_window_size\x18\f \x01(\v2\x1b.google.protobuf.Int32ValueR\x1chttp2InitialStreamWindowSize\x12k\n" +
+	"$http2_initial_connection_window_size\x18\r \x01(\v2\x1b.google.protobuf.Int32ValueR http2InitialConnectionWindowSize\x12\xa0\x01\n" +
+	"$http_headers_with_underscores_action\x18\x0e \x01(\x0e2P.istio.mesh.v1alpha1.ProxyConfig.ConnectionSettings.HeadersWithUnderscoresActionR httpHeadersWithUnderscoresAction\x12H\n" +
+	"\x12http_merge_slashes\x18\x0f \x01(\v2\x1a.google.protobuf.BoolValueR\x10httpMergeSlashes\x12\xa1\x01\n" +
+	"%http_path_with_escaped_slashes_action\x18\x10 \x01(\x0e2P.istio.mesh.v1alpha1.ProxyConfig.ConnectionSettings.PathWithEscapedSlashesActionR httpPathWithEscapedSlashesAction\x12W\n" +
+	"\x19listener_connection_limit\x18\x11 \x01(\v2\x1b.google.protobuf.Int32ValueR\x17listenerConnectionLimit\x12h\n" +
+	"\"global_downstream_connection_limit\x18\x12 \x01(\v2\x1b.google.protobuf.Int32ValueR\x1fglobalDownstreamConnectionLimit\" \n" +
+	"\aProfile\x12\v\n" +
+	"\aSIDECAR\x10\x00\x12\b\n" +
+	"\x04EDGE\x10\x01\"\xc3\x01\n" +
+	"\x1cHeadersWithUnderscoresAction\x12(\n" +
+	"$HEADERS_WITH_UNDERSCORES_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eHEADERS_WITH_UNDERSCORES_ALLOW\x10\x01\x12+\n" +
+	"'HEADERS_WITH_UNDERSCORES_REJECT_REQUEST\x10\x02\x12(\n" +
+	"$HEADERS_WITH_UNDERSCORES_DROP_HEADER\x10\x03\"\xa6\x01\n" +
+	"\x1cPathWithEscapedSlashesAction\x12)\n" +
+	"%PATH_WITH_ESCAPED_SLASHES_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eKEEP_UNCHANGED\x10\x01\x12\x12\n" +
+	"\x0eREJECT_REQUEST\x10\x02\x12\x19\n" +
+	"\x15UNESCAPE_AND_REDIRECT\x10\x03\x12\x18\n" +
+	"\x14UNESCAPE_AND_FORWARD\x10\x04\"l\n" +
 	"\x12TracingServiceName\x12\x1b\n" +
 	"\x17APP_LABEL_AND_NAMESPACE\x10\x00\x12\x17\n" +
 	"\x13CANONICAL_NAME_ONLY\x10\x01\x12 \n" +
@@ -4619,7 +4957,7 @@ const fileMeshV1alpha1ProxyProtoRawDesc = "" +
 
 	// The following values are used to construct proxy image url.
 // format: `${hub}/${image_name}/${tag}-${image_type}`,
-// example: `docker.io/istio/proxyv2:1.11.1` or `docker.io/istio/proxyv2:1.11.1-distroless`.
+// example: `registry.istio.io/release/proxyv2:1.11.1` or `registry.istio.io/release/proxyv2:1.11.1-distroless`.
 // This information was previously part of the Values API.
 type ProxyImage struct {
 	// The image type of the image.
@@ -4761,8 +5099,23 @@ const fileTypeV1beta1SelectorProtoRawDesc = "" +
 	"\x06SERVER\x10\x02\x12\x15\n" +
 	"\x11CLIENT_AND_SERVER\x10\x03B\x1bZ\x19istio.io/api/type/v1beta1b\x06proto3"
 
-	// TLS connection mode
-	// +kubebuilder:validation:Enum=DISABLE;SIMPLE;MUTUAL;ISTIO_MUTUAL
+	// Policy for upgrading http1.1 connections to http2.
+	// +kubebuilder:validation:Enum=DEFAULT;DO_NOT_UPGRADE;UPGRADE
+type ConnectionPoolSettingsHTTPSettingsH2UpgradePolicy string
+
+const (
+	// Use the global default.
+	ConnectionPoolSettingsHTTPSettingsH2UpgradePolicyDefault ConnectionPoolSettingsHTTPSettingsH2UpgradePolicy = "DEFAULT"
+	// Do not upgrade the connection to http2.
+	// This opt-out option overrides the default.
+	ConnectionPoolSettingsHTTPSettingsH2UpgradePolicyDoNotUpgrade ConnectionPoolSettingsHTTPSettingsH2UpgradePolicy = "DO_NOT_UPGRADE"
+	// Upgrade the connection to http2.
+	// This opt-in option overrides the default.
+	ConnectionPoolSettingsHTTPSettingsH2UpgradePolicyUpgrade ConnectionPoolSettingsHTTPSettingsH2UpgradePolicy = "UPGRADE"
+)
+
+// TLS connection mode
+// +kubebuilder:validation:Enum=DISABLE;SIMPLE;MUTUAL;ISTIO_MUTUAL
 type ClientTLSSettingsTLSmode string
 
 const (
@@ -4780,6 +5133,176 @@ const (
 	// used, all other fields in `ClientTLSSettings` should be empty.
 	ClientTLSSettingsTLSmodeIstioMutual ClientTLSSettingsTLSmode = "ISTIO_MUTUAL"
 )
+
+// Connection pool settings for an upstream host. The settings apply to
+// each individual host in the upstream service.  See Envoy's [circuit
+// breaker](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking)
+// for more details. Connection pool settings can be applied at the TCP
+// level as well as at HTTP level.
+//
+// For example, the following rule sets a limit of 100 connections to redis
+// service called myredissrv with a connect timeout of 30ms
+//
+// ```yaml
+// apiVersion: networking.istio.io/v1
+// kind: DestinationRule
+// metadata:
+//
+//	name: bookinfo-redis
+//
+// spec:
+//
+//	host: myredissrv.prod.svc.cluster.local
+//	trafficPolicy:
+//	  connectionPool:
+//	    tcp:
+//	      maxConnections: 100
+//	      connectTimeout: 30ms
+//	      tcpKeepalive:
+//	        time: 7200s
+//	        interval: 75s
+//
+// ```
+type ConnectionPoolSettings struct {
+	// Settings common to both HTTP and TCP upstream connections.
+	Tcp *ConnectionPoolSettingsTCPSettings `json:"tcp,omitempty"`
+	// HTTP connection pool settings.
+	Http *ConnectionPoolSettingsHTTPSettings `json:"http,omitempty"`
+}
+
+// A Circuit breaker implementation that tracks the status of each
+// individual host in the upstream service.  Applicable to both HTTP and
+// TCP services.  For HTTP services, hosts that continually return 5xx
+// errors for API calls are ejected from the pool for a pre-defined period
+// of time. For TCP services, connection timeouts or connection
+// failures to a given host counts as an error when measuring the
+// consecutive errors metric. See Envoy's [outlier
+// detection](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier)
+// for more details.
+//
+// **Note:** Istio's default mesh configuration enables locality load balancing
+// (`localityLbSetting.enabled: true`). As a result, configuring
+// `OutlierDetection` in a `DestinationRule` will automatically activate
+// locality-aware failover behavior — Envoy uses the outlier detection state to
+// determine when endpoints are unhealthy and should be failed over to the next
+// locality. To suppress this implicit failover, explicitly set
+// `localityLbSetting.enabled: false` in the `DestinationRule`'s load balancer
+// settings.
+//
+// The following rule sets a connection pool size of 100 HTTP1 connections
+// with no more than 10 req/connection to the "reviews" service. In addition,
+// it sets a limit of 1000 concurrent HTTP/2 requests and configures upstream
+// hosts to be scanned every 5 mins so that any host that fails 7 consecutive
+// times with a 502, 503, or 504 error code will be ejected for 15 minutes.
+//
+// ```yaml
+// apiVersion: networking.istio.io/v1
+// kind: DestinationRule
+// metadata:
+//
+//	name: reviews-cb-policy
+//
+// spec:
+//
+//	host: reviews.prod.svc.cluster.local
+//	trafficPolicy:
+//	  connectionPool:
+//	    tcp:
+//	      maxConnections: 100
+//	    http:
+//	      http2MaxRequests: 1000
+//	      maxRequestsPerConnection: 10
+//	  outlierDetection:
+//	    consecutive5xxErrors: 7
+//	    interval: 5m
+//	    baseEjectionTime: 15m
+//
+// ```
+type OutlierDetection struct {
+	// Number of errors before a host is ejected from the connection
+	// pool. Defaults to 5. When the upstream host is accessed over HTTP, a
+	// 502, 503, or 504 return code qualifies as an error. When the upstream host
+	// is accessed over an opaque TCP connection, connect timeouts and
+	// connection error/failure events qualify as an error.
+	// +hidefromdoc
+	//
+	// Deprecated: Marked as deprecated in networking/v1alpha3/destination_rule.proto.
+	ConsecutiveErrors *int32 `json:"consecutiveErrors,omitempty"`
+	// Determines whether to distinguish local origin failures from external errors. If set to true
+	// `consecutiveLocalOriginFailures` is taken into account for outlier detection calculations.
+	// This should be used when you want to derive the outlier detection status based on the errors
+	// seen locally such as failure to connect, timeout while connecting etc. rather than the status code
+	// returned by upstream service. This is especially useful when the upstream service explicitly returns
+	// a 5xx for some requests and you want to ignore those responses from upstream service while determining
+	// the outlier detection status of a host.
+	// Defaults to false.
+	SplitExternalLocalOriginErrors *bool `json:"splitExternalLocalOriginErrors,omitempty"`
+	// The number of consecutive locally originated failures before ejection
+	// occurs. Defaults to 5. Parameter takes effect only when `splitExternalLocalOriginErrors`
+	// is set to true.
+	ConsecutiveLocalOriginFailures *uint32 `json:"consecutiveLocalOriginFailures,omitempty"`
+	// Number of gateway errors before a host is ejected from the connection pool.
+	// When the upstream host is accessed over HTTP, a 502, 503, or 504 return
+	// code qualifies as a gateway error. When the upstream host is accessed over
+	// an opaque TCP connection, connect timeouts and connection error/failure
+	// events qualify as a gateway error.
+	// This feature is disabled by default or when set to the value 0.
+	//
+	// Note that `consecutiveGatewayErrors` and `consecutive5xxErrors` can be
+	// used separately or together. Because the errors counted by
+	// `consecutiveGatewayErrors` are also included in `consecutive5xxErrors`,
+	// if the value of `consecutiveGatewayErrors` is greater than or equal to
+	// the value of `consecutive5xxErrors`, `consecutiveGatewayErrors` will have
+	// no effect.
+	ConsecutiveGatewayErrors *uint32 `json:"consecutiveGatewayErrors,omitempty"`
+	// Number of 5xx errors before a host is ejected from the connection pool.
+	// When the upstream host is accessed over an opaque TCP connection, connect
+	// timeouts, connection error/failure and request failure events qualify as a
+	// 5xx error.
+	// This feature defaults to 5 but can be disabled by setting the value to 0.
+	//
+	// Note that `consecutiveGatewayErrors` and `consecutive5xxErrors` can be
+	// used separately or together. Because the errors counted by
+	// `consecutiveGatewayErrors` are also included in `consecutive5xxErrors`,
+	// if the value of `consecutiveGatewayErrors` is greater than or equal to
+	// the value of `consecutive5xxErrors`, `consecutiveGatewayErrors` will have
+	// no effect.
+	Consecutive5XxErrors *uint32 `json:"consecutive5xxErrors,omitempty"`
+	// Time interval between ejection sweep analysis. format:
+	// 1h/1m/1s/1ms. MUST be >=1ms. Default is 10s.
+	Interval *metav1.Duration `json:"interval,omitempty"`
+	// Minimum ejection duration. A host will remain ejected for a period
+	// equal to the product of minimum ejection duration and the number of
+	// times the host has been ejected. This technique allows the system to
+	// automatically increase the ejection period for unhealthy upstream
+	// servers. format: 1h/1m/1s/1ms. MUST be >=1ms. Default is 30s.
+	BaseEjectionTime *metav1.Duration `json:"baseEjectionTime,omitempty"`
+	// Maximum % of hosts in the load balancing pool for the upstream
+	// service that can be ejected. Defaults to 10%.
+	MaxEjectionPercent *int32 `json:"maxEjectionPercent,omitempty"`
+	// Outlier detection will be enabled as long as the associated load balancing
+	// pool has at least `minHealthPercent` hosts in healthy mode. When the
+	// percentage of healthy hosts in the load balancing pool drops below this
+	// threshold, outlier detection will be disabled and the proxy will load balance
+	// across all hosts in the pool (healthy and unhealthy). The threshold can be
+	// disabled by setting it to 0%. The default is 0% as it's not typically
+	// applicable in k8s environments with few pods per service.
+	MinHealthPercent *int32 `json:"minHealthPercent,omitempty"`
+	// Specifies the HTTP response status codes that are treated as outlier
+	// detection errors. If specified, only responses with one of these status
+	// codes will be treated as errors by outlier detection. If not specified,
+	// only 5xx responses are treated as errors.
+	//
+	// Note: Host ejection is still driven by the `consecutive5xxErrors` and
+	// `consecutiveGatewayErrors` thresholds; this field only redefines which
+	// HTTP status codes are counted as errors toward those thresholds.
+	//
+	// Values must be in the range [100, 599].
+	//
+	// +protoc-gen-crd:list-value-validation:Minimum=100
+	// +protoc-gen-crd:list-value-validation:Maximum=599
+	OutlierDetectionHttpErrorCodes []uint32 `json:"outlierDetectionHttpErrorCodes,omitempty"`
+}
 
 // SSL/TLS related settings for upstream connections. See Envoy's [TLS
 // context](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/transport_sockets/tls/v3/common.proto.html#common-tls-configuration)
@@ -5035,6 +5558,266 @@ type LocalityLoadBalancerSetting struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
+// Zone Aware Load Balancer automatically routes traffic to endpoints in the same
+// availability zone as the downstream proxy, reducing cross-zone latency and
+// inter-zone data transfer costs. Unlike
+// [LocalityLoadBalancerSetting](#LocalityLoadBalancerSetting), which requires
+// explicitly specifying traffic weights per locality, Zone Aware Load Balancer
+// automatically calculates routing percentages based on the relative number of
+// upstream endpoints in each zone — no manual distribution configuration is
+// needed.
+//
+// When the local zone has proportionally fewer endpoints than the share of
+// traffic it would need to absorb, Envoy automatically overflows the excess to
+// other zones rather than overloading local endpoints.
+//
+// Additionally Zone Aware Load Balancer always partitions endpoints by region: the proxy's own region
+// forms the highest-priority tier and Envoy's automatic zone balancing operates
+// only among the endpoints within that region. Endpoints in other regions form
+// lower-priority failover tiers that receive traffic only when the local region is
+// unhealthy or runs out of capacity. The `failover` and `failoverPriority` fields
+// only influence how those lower tiers are ordered; the regional partitioning
+// itself is always applied whenever zone-aware load balancing is enabled.
+//
+// For proxies to activate Zone Aware Load Balancer all of the following conditions are needed:
+//
+//   - The downstream proxy is configured with  `ISTIO_META_ENABLE_SELF_DISCOVERY=true`
+//     (set via `proxyMetadata`).
+//   - The upstream cluster spans more than one zone.
+//   - The upstream cluster has at least `minClusterSize` hosts (default 6) in the local region.
+//   - There is at least one healthy endpoint in the local zone.
+//
+// If any of these conditions are not met, Envoy falls back to the configured load balancing policy
+// (e.g. round-robin or least-request) across all endpoints in the local region.
+//
+// For additional details on the algorithm, refer to Envoy's
+// [Zone Aware Routing](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/zone_aware)
+// documentation.
+//
+// Note: Zone Aware Load Balancer is not supported on Ambient mode.
+//
+// The following example enables zone-aware load balancing for the ratings service:
+//
+// ```yaml
+// apiVersion: networking.istio.io/v1
+// kind: DestinationRule
+// metadata:
+//
+//	name: ratings-zone-aware
+//
+// spec:
+//
+//	host: ratings.prod.svc.cluster.local
+//	trafficPolicy:
+//	  loadBalancer:
+//	    simple: ROUND_ROBIN
+//	    zoneAwareLbSetting:
+//	      enabled: true
+//
+// ```
+//
+// The following example adds a cross-region failover policy so that when all
+// endpoints in `us-east` become unhealthy, traffic fails over to `eu-west`
+// instead of any region globally:
+//
+// ```yaml
+// apiVersion: networking.istio.io/v1
+// kind: DestinationRule
+// metadata:
+//
+//	name: ratings-zone-aware-failover
+//
+// spec:
+//
+//	host: ratings.prod.svc.cluster.local
+//	trafficPolicy:
+//	  loadBalancer:
+//	    simple: LEAST_REQUEST
+//	    zoneAwareLbSetting:
+//	      enabled: true
+//	      failover:
+//	        - from: us-east
+//	          to: eu-west
+//	        - from: us-west
+//	          to: us-east
+//	  outlierDetection:
+//	    consecutive5xxErrors: 5
+//	    interval: 30s
+//	    baseEjectionTime: 30s
+//
+// ```
+type ZoneAwareLoadBalancerSetting struct {
+	// Enable zone aware load balancing. This is DestinationRule-level and will
+	// override mesh-wide settings in entirety, meaning no merging is performed
+	// with MeshConfig.
+	Enabled *bool `json:"enabled,omitempty"`
+	// Optional. Explicitly specifies the region traffic will land on when the endpoints
+	// in the local region become unhealthy. Regional partitioning is always
+	// applied; this field only customizes the ordering of the cross-region tiers.
+	// It may be used on its own, or together with `failoverPriority`, in which case
+	// it orders the regional tiers applied on top of the label-based priorities.
+	// For this to be effective consider one of the following:
+	// - Use together with `OutlierDetection` to detect unhealthy endpoints in the local zone so that traffic fails over to other zones according to the specified priority.
+	// - Enable `PILOT_SEND_UNHEALTHY_ENDPOINTS` to allow Envoy to know when endpoints in the local zone are unhealthy and failover according to the specified priority.
+	Failover []*ZoneAwareLoadBalancerSettingFailover `json:"failover,omitempty"`
+	// failoverPriority is an ordered list of labels used to sort endpoints for
+	// priority-based load balancing. This supports traffic failover across
+	// different groups of endpoints and complements the automatic zone-level
+	// routing by allowing label-based priority tiers on top of it.
+	//
+	// Regional partitioning is always applied in addition to these labels: within
+	// each tier produced by `failoverPriority`, endpoints in the proxy's own region
+	// are preferred over endpoints in other regions (ordered by `failover` when it
+	// is also set). Because region-, zone-, and subzone-level routing are all handled
+	// automatically, `failoverPriority` must not include the
+	// `topology.kubernetes.io/region`, `topology.kubernetes.io/zone`, or
+	// `topology.istio.io/subzone` labels.
+	//
+	// Two kinds of labels can be specified:
+	//
+	//   - Specify only label keys `[key1, key2, key3]`, istio would compare the label values of client with endpoints.
+	//     Suppose there are total N label keys `[key1, key2, key3, ...keyN]` specified:
+	//
+	//     1. Endpoints matching all N labels with the client proxy have priority P(0) i.e. the highest priority.
+	//     2. Endpoints matching the first N-1 labels with the client proxy have priority P(1) i.e. second highest priority.
+	//     3. By extension of this logic, endpoints matching only the first label with the client proxy has priority P(N-1) i.e. second lowest priority.
+	//     4. All the other endpoints have priority P(N) i.e. lowest priority.
+	//
+	//   - Specify labels with key and value `[key1=value1, key2=value2, key3=value3]`, istio would compare the labels with endpoints.
+	//     Suppose there are total N labels `[key1=value1, key2=value2, key3=value3, ...keyN=valueN]` specified:
+	//
+	//     1. Endpoints matching all N labels have priority P(0) i.e. the highest priority.
+	//     2. Endpoints matching the first N-1 labels have priority P(1) i.e. second highest priority.
+	//     3. By extension of this logic, endpoints matching only the first label has priority P(N-1) i.e. second lowest priority.
+	//     4. All the other endpoints have priority P(N) i.e. lowest priority.
+	//
+	// Note: For a label to be considered for match, the previous labels must match, i.e. nth label would be considered matched only if first n-1 labels match.
+	//
+	// It can be any label specified on both client and server workloads.
+	// The following labels which have special semantic meaning are also supported:
+	//
+	//   - `topology.istio.io/network` is used to match the network metadata of an endpoint, which can be specified by pod/namespace label `topology.istio.io/network`, sidecar env `ISTIO_META_NETWORK` or MeshNetworks.
+	//   - `topology.istio.io/cluster` is used to match the clusterID of an endpoint, which can be specified by pod label `topology.istio.io/cluster` or pod env `ISTIO_META_CLUSTER_ID`.
+	//   - `topology.kubernetes.io/region` is used to match the region metadata of an endpoint, which maps to Kubernetes node label `topology.kubernetes.io/region` or the deprecated label `failure-domain.beta.kubernetes.io/region`.
+	//   - `topology.kubernetes.io/zone` is used to match the zone metadata of an endpoint, which maps to Kubernetes node label `topology.kubernetes.io/zone` or the deprecated label `failure-domain.beta.kubernetes.io/zone`.
+	//   - `kubernetes.io/hostname` is used to match the current node of an endpoint, which maps to Kubernetes node label `kubernetes.io/hostname`.
+	//
+	// The below topology config indicates the following priority levels:
+	//
+	// ```yaml
+	// failoverPriority:
+	// - "topology.istio.io/network"
+	// - "topology.kubernetes.io/region"
+	// - "topology.kubernetes.io/zone"
+	// ```
+	//
+	// 1. endpoints match same [network, region, zone] label with the client proxy have the highest priority.
+	// 2. endpoints have same [network, region] label but different [zone] label with the client proxy have the second highest priority.
+	// 3. endpoints have same [network] but different [region] labels with the client proxy have the third highest priority.
+	// 4. all the other endpoints have the same lowest priority.
+	//
+	// Suppose a service associated endpoints reside in multi clusters, the below example represents:
+	// 1. endpoints in `clusterA` and has `version=v1` label have P(0) priority.
+	// 2. endpoints not in `clusterA` but has `version=v1` label have P(1) priority.
+	// 3. all the other endpoints have P(2) priority.
+	//
+	// ```yaml
+	// failoverPriority:
+	// - "version=v1"
+	// - "topology.istio.io/cluster=clusterA"
+	// ```
+	//
+	// Optional. May be combined with `failover` (which then orders the regional
+	// tiers applied on top of these label-based priorities).
+	// For this to be effective consider one of the following:
+	// - Use together with `OutlierDetection` to detect unhealthy endpoints in the local zone so that traffic fails over to other zones according to the specified priority.
+	// - Enable `PILOT_SEND_UNHEALTHY_ENDPOINTS` to allow Envoy to know when endpoints in the local zone are unhealthy and failover according to the specified priority.
+	FailoverPriority []string `json:"failoverPriority,omitempty"`
+	// Minimum number of hosts in the upstream cluster's local region required for zone-aware
+	// load balancing to be enabled. If the total number of upstream hosts in the local region falls below
+	// this value, zone-aware load balancing is disabled for this cluster regardless of
+	// other settings. This guards against zone-skew issues that can occur with
+	// very small clusters where the uneven distribution of hosts across zones
+	// would produce poor load balancing results.
+	// If not specified, the default is 6.
+	// +kubebuilder:validation:Minimum=1
+	MinClusterSize *uint32 `json:"minClusterSize,omitempty"`
+}
+
+// Settings common to both HTTP and TCP upstream connections.
+type ConnectionPoolSettingsTCPSettings struct {
+	// Maximum number of HTTP1 /TCP connections to a destination host. Default 2^32-1.
+	MaxConnections *int32 `json:"maxConnections,omitempty"`
+	// TCP connection timeout. format:
+	// 1h/1m/1s/1ms. MUST be >=1ms. Default is 10s.
+	ConnectTimeout *metav1.Duration `json:"connectTimeout,omitempty"`
+	// If set then set SO_KEEPALIVE on the socket to enable TCP Keepalives.
+	TcpKeepalive *ConnectionPoolSettingsTCPSettingsTcpKeepalive `json:"tcpKeepalive,omitempty"`
+	// The maximum duration of a connection. The duration is defined as the period since a connection
+	// was established. If not set, there is no max duration. When `maxConnectionDuration`
+	// is reached the connection will be closed. Duration must be at least 1ms.
+	MaxConnectionDuration *metav1.Duration `json:"maxConnectionDuration,omitempty"`
+	// The idle timeout for TCP connections. This is applied to the outbound connections to the upstream service.
+	// The idle timeout is defined as the period in which there are no bytes sent or received on the
+	// upstream connection.
+	// If not set, the default idle timeout is 1 hour. If set to 0s, the timeout will be disabled.
+	// Idle timeout is not configured per each cluster individually when weighted destinations are used,
+	// because idleTimeout is a property of a listener, not a cluster. In that case, idleTimeout
+	// specified in a destination rule for the first weighted route is configured in the listener,
+	// which means also for all weighted routes.
+	// To set the idle timeout for downstream (inbound) connections, use the
+	// `ISTIO_META_IDLE_TIMEOUT` field in the proxy configuration (e.g., via the `proxy.istio.io/config`
+	// annotation) which applies to all inbound connections.
+	// ```
+	// proxy.istio.io/config: |-
+	//
+	//	proxyMetadata:
+	//	   ISTIO_META_IDLE_TIMEOUT: "100s"
+	//
+	// ```
+	// +protoc-gen-crd:duration-validation:none
+	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
+}
+
+// Settings applicable to HTTP1.1/HTTP2/GRPC connections.
+type ConnectionPoolSettingsHTTPSettings struct {
+	// Maximum number of requests that will be queued while waiting for
+	// a ready connection pool connection. Default 2^32-1.
+	// Refer to [Envoy Circuit Breaking](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking)
+	// under which conditions a new connection is created for HTTP/2.
+	// Please note that this is applicable to both HTTP/1.1 and HTTP/2.
+	Http1MaxPendingRequests *int32 `json:"http1MaxPendingRequests,omitempty"`
+	// Maximum number of active requests to a destination. Default 2^32-1.
+	// Please note that this is applicable to both HTTP/1.1 and HTTP/2.
+	Http2MaxRequests *int32 `json:"http2MaxRequests,omitempty"`
+	// Maximum number of requests per connection to a backend. Setting this
+	// parameter to 1 disables keep alive. Default 0, meaning "unlimited",
+	// up to 2^29.
+	MaxRequestsPerConnection *int32 `json:"maxRequestsPerConnection,omitempty"`
+	// Maximum number of retries that can be outstanding to all hosts in a
+	// cluster at a given time. Defaults to 2^32-1.
+	MaxRetries *int32 `json:"maxRetries,omitempty"`
+	// The idle timeout for upstream connection pool connections. The idle timeout
+	// is defined as the period in which there are no active requests.
+	// If not set, the default is 1 hour. When the idle timeout is reached,
+	// the connection will be closed. If the connection is an HTTP/2
+	// connection a drain sequence will occur prior to closing the connection.
+	// Note that request based timeouts mean that HTTP/2 PINGs will not
+	// keep the connection alive. Applies to both HTTP/1.1 and HTTP/2 connections.
+	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
+	// Specify if http1.1 connection should be upgraded to http2 for the associated destination.
+	H2UpgradePolicy ConnectionPoolSettingsHTTPSettingsH2UpgradePolicy `json:"h2UpgradePolicy,omitempty"`
+	// If set to true, client protocol will be preserved while initiating connection to backend.
+	// Note that when this is set to true, `h2UpgradePolicy` will be ineffective i.e. the client
+	// connections will not be upgraded to http2.
+	UseClientProtocol *bool `json:"useClientProtocol,omitempty"`
+	// The maximum number of concurrent streams allowed for a peer on one HTTP/2 connection.
+	// Defaults to 2^31-1.
+	MaxConcurrentStreams *int32 `json:"maxConcurrentStreams,omitempty"`
+	// Configure HTTP/2 PING frames for upstream connections.
+	Http2KeepAlive *ConnectionPoolSettingsHTTPSettingsConnectionKeepalive `json:"http2KeepAlive,omitempty"`
+}
+
 // TCP keepalive.
 type ConnectionPoolSettingsTCPSettingsTcpKeepalive struct {
 	// Maximum number of keepalive probes to send without response before
@@ -5049,6 +5832,16 @@ type ConnectionPoolSettingsTCPSettingsTcpKeepalive struct {
 	// Default is to use the OS level configuration
 	// (unless overridden, Linux defaults to 75s.)
 	Interval *metav1.Duration `json:"interval,omitempty"`
+}
+
+// Settings for HTTP/2 PING frames.
+type ConnectionPoolSettingsHTTPSettingsConnectionKeepalive struct {
+	// Send HTTP/2 PING frames at this interval. Required when
+	// `http2KeepAlive` is set.
+	Interval *metav1.Duration `json:"interval,omitempty"`
+	// How long to wait for a response to an HTTP/2 PING frame before
+	// closing the connection. Required when `http2KeepAlive` is set.
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
 }
 
 // Describes how traffic originating in the 'from' zone or sub-zone is
@@ -5078,6 +5871,21 @@ type LocalityLoadBalancerSettingDistribute struct {
 // improve service health or may need to be restricted for other reasons
 // like regulatory controls.
 type LocalityLoadBalancerSettingFailover struct {
+	// Originating region.
+	From *string `json:"from,omitempty"`
+	// Destination region the traffic will fail over to when endpoints in
+	// the 'from' region becomes unhealthy.
+	To *string `json:"to,omitempty"`
+}
+
+// Specify the traffic failover policy across regions. Since zone and sub-zone
+// failover is supported by default this only needs to be specified for
+// regions when the operator needs to constrain traffic failover so that
+// the default behavior of failing over to any endpoint globally does not
+// apply. This is useful when failing over traffic across regions would not
+// improve service health or may need to be restricted for other reasons
+// like regulatory controls.
+type ZoneAwareLoadBalancerSettingFailover struct {
 	// Originating region.
 	From *string `json:"from,omitempty"`
 	// Destination region the traffic will fail over to when endpoints in
