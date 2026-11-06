@@ -113,9 +113,14 @@ const (
 // to embed these files here because manifests/ is a top-level directory in the
 // source tree, and go:embed does not allow paths containing "../".
 //
+// The ingresscontrollers CRD is not shipped from manifests/: openshift/api
+// delivers it in the release payload.  The copy embedded here is used only by
+// the "ingress-operator render" command at install time, so it is taken
+// directly from the vendored openshift/api Default CRD.
+//
 //go:generate mkdir -p manifests
 //go:generate cp ../../manifests/00-namespace.yaml manifests/
-//go:generate cp ../../manifests/00-custom-resource-definition.yaml manifests/
+//go:generate cp ../../vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-Default.crd.yaml manifests/00-custom-resource-definition.yaml
 
 //go:embed assets manifests
 var content embed.FS

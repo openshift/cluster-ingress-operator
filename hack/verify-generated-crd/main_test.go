@@ -38,6 +38,15 @@ metadata:
 			matches: true,
 		},
 		{
+			name: "ingresscontrollers CRD",
+			manifest: `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ingresscontrollers.operator.openshift.io
+`,
+			matches: true,
+		},
+		{
 			name:     "flow YAML",
 			manifest: `{apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, metadata: {name: ingresses.operator.openshift.io}}`,
 			matches:  true,
