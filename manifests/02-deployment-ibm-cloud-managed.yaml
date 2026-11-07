@@ -74,6 +74,7 @@ spec:
           capabilities:
             drop:
             - ALL
+          readOnlyRootFilesystem: true
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - mountPath: /etc/pki/ca-trust/extracted/pem
@@ -82,6 +83,8 @@ spec:
         - mountPath: /var/run/secrets/openshift/serviceaccount
           name: bound-sa-token
           readOnly: true
+        - mountPath: /tmp
+          name: tmp
       - args:
         - --logtostderr
         - --secure-listen-address=:9393
@@ -144,3 +147,5 @@ spec:
           - serviceAccountToken:
               audience: openshift
               path: token
+      - emptyDir: {}
+        name: tmp
