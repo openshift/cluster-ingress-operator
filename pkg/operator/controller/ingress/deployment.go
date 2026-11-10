@@ -302,6 +302,37 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 	return headerValues
 }
 
+// applyContainerResourceOverrides applies spec.resources entries for one
+// container on top of the platform defaults.  A limit without a request also
+// sets the effective request, and an omitted request or limit leaves the
+// platform default in place.
+func applyContainerResourceOverrides(container *corev1.Container, overrides []operatorv1.IngressControllerContainerResource) {
+	if len(overrides) == 0 {
+		return
+	}
+	for _, override := range overrides {
+		name := corev1.ResourceName(override.Name)
+		if override.Request != nil {
+			if container.Resources.Requests == nil {
+				container.Resources.Requests = corev1.ResourceList{}
+			}
+			container.Resources.Requests[name] = *override.Request
+		}
+		if override.Limit != nil {
+			if container.Resources.Limits == nil {
+				container.Resources.Limits = corev1.ResourceList{}
+			}
+			container.Resources.Limits[name] = *override.Limit
+			if override.Request == nil {
+				if container.Resources.Requests == nil {
+					container.Resources.Requests = corev1.ResourceList{}
+				}
+				container.Resources.Requests[name] = *override.Limit
+			}
+		}
+	}
+}
+
 // desiredRouterDeployment returns the desired router deployment.
 //
 // Methods hashableDeployment() and deploymentConfigChanged()
@@ -1353,6 +1384,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.InitContainers[1].VolumeMounts = haproxyVolumeMounts
+
+	applyContainerResourceOverrides(&deployment.Spec.Template.Spec.Containers[0], ci.Spec.Resources.Router)
+	applyContainerResourceOverrides(&deployment.Spec.Template.Spec.InitContainers[1], ci.Spec.Resources.HAProxy)
 
 	// If MIMETypes were supplied, expose the RouterEnableCompression and RouterCompressionMIMETypes
 	// environment variables.
