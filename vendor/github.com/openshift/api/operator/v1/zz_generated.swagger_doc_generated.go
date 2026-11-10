@@ -277,6 +277,27 @@ func (Console) SwaggerDoc() map[string]string {
 	return map_Console
 }
 
+var map_ConsoleAuthProxyConfig = map[string]string{
+	"":           "ConsoleAuthProxyConfig holds proxy configuration scoped to Console's OIDC login clients. At least one of httpProxy or httpsProxy must be specified.",
+	"httpProxy":  "httpProxy is the URL of the proxy for HTTP requests. Must be a valid URL with http or https scheme, a non-empty hostname, and no path, query parameters, or fragment. Userinfo (e.g. user:password@host) is allowed for proxy authentication. Maximum length is 2048 characters.",
+	"httpsProxy": "httpsProxy is the URL of the proxy for HTTPS requests. Must be a valid URL with http or https scheme, a non-empty hostname, and no path, query parameters, or fragment. Userinfo (e.g. user:password@host) is allowed for proxy authentication. Maximum length is 2048 characters.",
+	"noProxy":    "noProxy is a list of hostnames and/or CIDRs and/or IPs for which the proxy should not be used. Must contain at least one entry when set. Each entry must be between 1 and 253 characters long and at most 64 entries are allowed. Duplicate entries are not permitted. Entries that are not valid hostnames, CIDRs, or IPs are silently ignored. Cluster-internal defaults (.cluster.local, .svc, 127.0.0.1, localhost) are always appended automatically and do not need to be included.",
+	"trustedCA":  "trustedCA is a reference to a ConfigMap in the openshift-config namespace containing a CA certificate bundle under the key \"ca-bundle.crt\". This bundle is appended to the system trust store used by Console's OIDC login clients for proxy TLS connections. When omitted, only the system trust store is used.",
+}
+
+func (ConsoleAuthProxyConfig) SwaggerDoc() map[string]string {
+	return map_ConsoleAuthProxyConfig
+}
+
+var map_ConsoleAuthProxyTrustedCAConfigMapReference = map[string]string{
+	"":     "ConsoleAuthProxyTrustedCAConfigMapReference references a ConfigMap in the openshift-config namespace.",
+	"name": "name is the metadata.name of the referenced ConfigMap. Must be a valid DNS subdomain name (RFC 1123): at most 253 characters, only lowercase alphanumeric characters, '-' or '.', starting and ending with an alphanumeric character.",
+}
+
+func (ConsoleAuthProxyTrustedCAConfigMapReference) SwaggerDoc() map[string]string {
+	return map_ConsoleAuthProxyTrustedCAConfigMapReference
+}
+
 var map_ConsoleConfigRoute = map[string]string{
 	"":         "ConsoleConfigRoute holds information on external route access to console. DEPRECATED",
 	"hostname": "hostname is the desired custom domain under which console will be available.",
@@ -336,6 +357,7 @@ func (ConsoleProviders) SwaggerDoc() map[string]string {
 
 var map_ConsoleSpec = map[string]string{
 	"":              "ConsoleSpec is the specification of the desired behavior of the Console.",
+	"authProxy":     "authProxy configures proxy settings for outbound connections made by Console's OIDC login clients, including discovery, JWKS retrieval, code exchange, and token refresh. When set, it replaces the cluster-wide proxy (proxy.config.openshift.io/cluster) entirely for these connections; individual fields are not inherited from the cluster-wide configuration. At least one of httpProxy or httpsProxy must be specified. When omitted, the cluster-wide proxy is used if configured; otherwise no proxy is used. Other Console clients retain their existing proxy settings.",
 	"customization": "customization is used to optionally provide a small set of customization options to the web console.",
 	"providers":     "providers contains configuration for using specific service providers.",
 	"route":         "route contains hostname and secret reference that contains the serving certificate. If a custom route is specified, a new route will be created with the provided hostname, under which console will be available. In case of custom hostname uses the default routing suffix of the cluster, the Secret specification for a serving certificate will not be needed. In case of custom hostname points to an arbitrary domain, manual DNS configurations steps are necessary. The default console route will be maintained to reserve the default hostname for console if the custom route is removed. If not specified, default route will be used. DEPRECATED",
@@ -895,6 +917,28 @@ func (EtcdSpec) SwaggerDoc() map[string]string {
 	return map_EtcdSpec
 }
 
+var map_CanaryNodePlacement = map[string]string{
+	"":            "CanaryNodePlacement describes node placement configuration for the ingress canary daemonset pods.",
+	"tolerations": "tolerations is a list of tolerations that are applied to the ingress canary daemonset pods in addition to the tolerations the canary daemonset has by default. The default toleration for the node-role.kubernetes.io/infra taint is always preserved.\n\nEach toleration is plumbed directly to the Pod specification of the canary daemonset pods: it is applied unmodified to the pods' tolerations and has the same semantics as the corresponding fields of the Kubernetes core/v1 Toleration type.\n\nIf unset, the canary daemonset has only its default tolerations. When specified, the list must contain at least 1 toleration; to remove all additional tolerations, omit the entire spec.canary field rather than setting an empty list or leaving empty parent objects. Retain at least one other valid spec field, such as spec.gatewayAPI, because spec must not be empty.\n\nEach toleration has the following constraints:\n\n* operator is required and must be \"Exists\" or \"Equal\"; omitted and empty\n  operators, as well as \"Lt\" and \"Gt\", are rejected.\n* effect is required and must be \"NoSchedule\", \"PreferNoSchedule\", or\n  \"NoExecute\"; omitted and empty effects are rejected.\n* value must be empty when operator is \"Exists\". * key must be non-empty. A toleration with an empty key is rejected; in\n  particular, a toleration with an empty key and operator \"Exists\", which\n  tolerates all taints, is rejected.\n* key must be a qualified label key: a 1-63 character name consisting of\n  alphanumeric characters, '-', '_', or '.', beginning and ending with an\n  alphanumeric character, optionally preceded by a lowercase DNS subdomain\n  prefix of at most 253 characters and a '/'. The total limit is 317 characters.\n* value for \"Equal\" must be empty or a label value of at most 63 characters,\n  using the same characters and beginning/end constraints as the key name.\n* tolerationSeconds may be specified only when effect is \"NoExecute\".\n\nAt least 1 and no more than 32 tolerations may be specified.\n\nList order is preserved, but duplicate tolerations are rejected: two tolerations must not have the same key, operator, value, and effect, regardless of their tolerationSeconds. Two tolerations are duplicates only when they also agree on whether value is set; if both set value, the values must be equal. Overlapping tolerations (for example, the same key with a different effect) are allowed. For NoExecute, omitted tolerationSeconds means tolerating indefinitely; finite values are preserved, including zero and negative values.\n\nSee https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/",
+}
+
+func (CanaryNodePlacement) SwaggerDoc() map[string]string {
+	return map_CanaryNodePlacement
+}
+
+var map_CanaryToleration = map[string]string{
+	"":                  "CanaryToleration describes a toleration added to the ingress canary daemonset.\n\nA CanaryToleration is plumbed directly to the Pod specification of the canary daemonset pods and corresponds to a Kubernetes core/v1 Toleration. Its fields have the same semantics as their core/v1 Toleration counterparts, with the validation constraints documented on each field.",
+	"key":               "key is required and identifies the taint to tolerate. It must be a qualified label key of 1-317 characters: an alphanumeric-bounded name of 1-63 characters using alphanumerics, '-', '_', or '.', optionally preceded by a lowercase DNS subdomain prefix of at most 253 characters and a '/'.",
+	"operator":          "operator is required and specifies how the taint value is matched. Equal matches the specified value; Exists matches any value and requires value to be empty or omitted. Only Equal and Exists are allowed; omitted or empty operators are rejected.",
+	"value":             "value is optional; when omitted, no value is matched. For Equal, it must be a non-empty label value of at most 63 characters, consisting of alphanumerics, '-', '_', or '.', beginning and ending with an alphanumeric character. The empty string is not allowed: omit value instead, as there is no semantic difference between the two. For Exists, it must be omitted.",
+	"effect":            "effect is required and specifies the taint effect to match. Only NoSchedule, PreferNoSchedule, and NoExecute are allowed; omitted or empty effects are rejected. NoSchedule prevents scheduling, PreferNoSchedule expresses a scheduling preference, and NoExecute also evicts pods that do not tolerate it.",
+	"tolerationSeconds": "tolerationSeconds is optional and may be set only for effect NoExecute. When omitted, the taint is tolerated indefinitely. When specified, this is the duration in seconds for which the taint is tolerated. Zero and negative values are preserved by the API and treated as zero by Kubernetes.",
+}
+
+func (CanaryToleration) SwaggerDoc() map[string]string {
+	return map_CanaryToleration
+}
+
 var map_GatewayAPIIngressConfig = map[string]string{
 	"":               "GatewayAPIIngressConfig holds configuration for Gateway API integration in the Cluster Ingress Operator.",
 	"managementMode": "managementMode specifies how the Cluster Ingress Operator manages Gateway API Custom Resource Definitions (CRDs), the OpenShift Gateway API implementation, and its Gateway API controllers.\n\nAllowed values are \"Managed\" and \"Unmanaged\".\n\nWhen omitted or set to \"Managed\", the ingress operator installs, owns, and upgrades the Gateway API CRDs, protects them with a Validating Admission Policy, and deploys the OpenShift Gateway API implementation and its Gateway API controllers.\n\nWhen set to \"Unmanaged\", the ingress operator does not install or manage Gateway API CRDs and does not deploy the OpenShift Gateway API implementation or its Gateway API controllers. The cluster administrator or a third-party product is responsible for providing their own CRDs and Gateway controller. The ingress operator reports observational status only.",
@@ -915,6 +959,15 @@ func (Ingress) SwaggerDoc() map[string]string {
 	return map_Ingress
 }
 
+var map_IngressCanary = map[string]string{
+	"":              "IngressCanary holds configuration for the ingress canary daemonset.",
+	"nodePlacement": "nodePlacement enables explicit control over the scheduling of the ingress canary daemonset pods.\n\nnodePlacement is optional. To leave the canary daemonset with its default scheduling configuration, which tolerates the node-role.kubernetes.io/infra taint, omit the parent canary field entirely: because canary requires at least one field, nodePlacement can only be absent when canary itself is absent. When specified, nodePlacement must set at least one of its fields; an empty object is rejected.",
+}
+
+func (IngressCanary) SwaggerDoc() map[string]string {
+	return map_IngressCanary
+}
+
 var map_IngressList = map[string]string{
 	"":         "IngressList is a collection of Ingresses.\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 	"metadata": "metadata is the standard list's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
@@ -928,6 +981,7 @@ func (IngressList) SwaggerDoc() map[string]string {
 var map_IngressSpec = map[string]string{
 	"":           "IngressSpec is the specification of the desired behavior of the Ingress Operator.",
 	"gatewayAPI": "gatewayAPI holds configuration for Gateway API integration, including how the ingress operator manages Gateway API CRDs, the OpenShift Gateway API implementation, and its Gateway API controllers.",
+	"canary":     "canary holds configuration for the ingress canary daemonset (the ingress-canary DaemonSet in the openshift-ingress-canary namespace).\n\ncanary is optional. When omitted, the ingress canary daemonset keeps its default configuration. When specified, canary must set at least one of its fields; an empty object is rejected.",
 }
 
 func (IngressSpec) SwaggerDoc() map[string]string {
@@ -1223,7 +1277,7 @@ var map_IngressControllerSpec = map[string]string{
 	"httpCompression":                 "httpCompression defines a policy for HTTP traffic compression. By default, there is no HTTP compression.",
 	"idleConnectionTerminationPolicy": "idleConnectionTerminationPolicy maps directly to HAProxy's idle-close-on-response option and controls whether HAProxy keeps idle frontend connections open during a soft stop (router reload).\n\nAllowed values for this field are \"Immediate\" and \"Deferred\". The default value is \"Immediate\".\n\nWhen set to \"Immediate\", idle connections are closed immediately during router reloads. This ensures immediate propagation of route changes but may impact clients sensitive to connection resets.\n\nWhen set to \"Deferred\", HAProxy will maintain idle connections during a soft reload instead of closing them immediately. These connections remain open until any of the following occurs:\n\n  - A new request is received on the connection, in which\n    case HAProxy handles it in the old process and closes\n    the connection after sending the response.\n\n  - HAProxy's `timeout http-keep-alive` duration expires.\n    By default this is 300 seconds, but it can be changed\n    using httpKeepAliveTimeout tuning option.\n\n  - The client's keep-alive timeout expires, causing the\n    client to close the connection.\n\nSetting Deferred can help prevent errors in clients or load balancers that do not properly handle connection resets. Additionally, this option allows you to retain the pre-2.4 HAProxy behaviour: in HAProxy version 2.2 (OpenShift versions < 4.14), maintaining idle connections during a soft reload was the default behaviour, but starting with HAProxy 2.4, the default changed to closing idle connections immediately.\n\nImportant Consideration:\n\n  - Using Deferred will result in temporary inconsistencies\n    for the first request on each persistent connection\n    after a route update and router reload. This request\n    will be processed by the old HAProxy process using its\n    old configuration. Subsequent requests will use the\n    updated configuration.\n\nOperational Considerations:\n\n  - Keeping idle connections open during reloads may lead\n    to an accumulation of old HAProxy processes if\n    connections remain idle for extended periods,\n    especially in environments where frequent reloads\n    occur.\n\n  - Consider monitoring the number of HAProxy processes in\n    the router pods when Deferred is set.\n\n  - You may need to enable or adjust the\n    `ingress.operator.openshift.io/hard-stop-after`\n    duration (configured via an annotation on the\n    IngressController resource) in environments with\n    frequent reloads to prevent resource exhaustion.",
 	"closedClientConnectionPolicy":    "closedClientConnectionPolicy controls how the IngressController behaves when the client closes the TCP connection while the TLS handshake or HTTP request is in progress. This option maps directly to HAProxy’s \"abortonclose\" option.\n\nValid values are: \"Abort\" and \"Continue\". The default value is \"Continue\".\n\nWhen set to \"Abort\", the router will stop processing the TLS handshake if it is in progress, and it will not send an HTTP request to the backend server if the request has not yet been sent when the client closes the connection.\n\nWhen set to \"Continue\", the router will complete the TLS handshake if it is in progress, or send an HTTP request to the backend server and wait for the backend server's response, regardless of whether the client has closed the connection.\n\nSetting \"Abort\" can help free CPU resources otherwise spent on TLS computation for connections the client has already closed, and can reduce request queue size, thereby reducing the load on saturated backend servers.\n\nImportant Considerations:\n\n  - The default policy (\"Continue\") is HTTP-compliant, and requests\n    for aborted client connections will still be served.\n    Use the \"Continue\" policy to allow a client to send a request\n    and then immediately close its side of the connection while\n    still receiving a response on the half-closed connection.\n\n  - When clients use keep-alive connections, the most common case for premature\n    closure is when the user wants to cancel the transfer or when a timeout\n    occurs. In that case, the \"Abort\" policy may be used to reduce resource consumption.\n\n  - Using RSA keys larger than 2048 bits can significantly slow down\n    TLS computations. Consider using the \"Abort\" policy to reduce CPU usage.",
-	"haproxyVersion":                  "haproxyVersion specifies the HAProxy version to use for this IngressController.\n\nOpenShift 5.1 continues with HAProxy 3.2 (same minor version introduced in OpenShift 5.0) and does not introduce a new HAProxy version.\n\nValid values for OpenShift 5.1: - Unset (default): Uses HAProxy 3.2 (the default for OpenShift 5.1) - \"3.2\": Uses the latest HAProxy 3.2.z available for this OpenShift release and pins the minor version.\n\nNote: HAProxy 2.8 support has been dropped in OpenShift 5.1. Upgrading from OpenShift 5.0 with haproxyVersion set to \"2.8\" is blocked.\n\nIf a specific HAProxy version is set and would become unsupported in a target cluster upgrade, a preflight check will block the cluster upgrade until this field is updated to unset or a supported version.",
+	"haproxyVersion":                  "haproxyVersion specifies the HAProxy version to use for this IngressController.\n\nOpenShift 5.1 uses HAProxy 3.2 as its default version and supports HAProxy 3.4 as an explicit, non-default opt-in.\n\nValid values for OpenShift 5.1: - Unset (default): Uses HAProxy 3.2 (the default for OpenShift 5.1) - \"3.2\": Uses the latest HAProxy 3.2.z available for this OpenShift release and pins the minor version. - \"3.4\": Uses the latest HAProxy 3.4.z available for this OpenShift release. This is an explicit opt-in; HAProxy 3.4 is not the default.\n\nPlanned lifecycle for later OpenShift releases: - OpenShift 5.2 plans to make HAProxy 3.4 the default when this field is unset, while continuing to support \"3.2\" as an explicit selection. - OpenShift 5.3 plans to retire support for selecting HAProxy 3.2.\n\nNote: HAProxy 2.8 support has been dropped in OpenShift 5.1. Upgrading from OpenShift 5.0 with haproxyVersion set to \"2.8\" is blocked.\n\nIf a specific HAProxy version is set and would become unsupported in a target cluster upgrade, a preflight check will block the cluster upgrade until this field is updated to unset or a supported version.",
 }
 
 func (IngressControllerSpec) SwaggerDoc() map[string]string {
@@ -1241,7 +1295,7 @@ var map_IngressControllerStatus = map[string]string{
 	"observedGeneration":         "observedGeneration is the most recent generation observed.",
 	"namespaceSelector":          "namespaceSelector is the actual namespaceSelector in use.",
 	"routeSelector":              "routeSelector is the actual routeSelector in use.",
-	"effectiveHAProxyVersion":    "effectiveHAProxyVersion reports the HAProxy version currently in use by this IngressController. This reflects the resolved value of the spec.haproxyVersion field. When omitted, the effective value has not yet been resolved by the operator or the feature is not enabled for this cluster.\n\nExamples for OpenShift 5.1: - \"3.2\": Using HAProxy 3.2",
+	"effectiveHAProxyVersion":    "effectiveHAProxyVersion reports the HAProxy version currently in use by this IngressController. This reflects the resolved value of the spec.haproxyVersion field. When omitted, the effective value has not yet been resolved by the operator or the feature is not enabled for this cluster.\n\nExamples for OpenShift 5.1: - \"3.2\": Using the default HAProxy 3.2 - \"3.4\": Using the explicitly selected, non-default HAProxy 3.4\n\nPlanned lifecycle for later OpenShift releases: - OpenShift 5.2 plans to make HAProxy 3.4 the default while keeping HAProxy 3.2 selectable. - OpenShift 5.3 plans to retire HAProxy 3.2.",
 }
 
 func (IngressControllerStatus) SwaggerDoc() map[string]string {
@@ -1451,9 +1505,9 @@ func (KMSEncryptionStatus) SwaggerDoc() map[string]string {
 var map_KMSPluginHealthReport = map[string]string{
 	"nodeName":        "nodeName is the name of the node this instance of the plugin runs on. The combination of nodeName and keyID makes this health report unique. The value must be a valid Kubernetes node name: a lowercase RFC 1123 subdomain consisting of lowercase alphanumeric characters, '-' or '.', starting and ending with an alphanumeric character, and be at most 253 characters in length.",
 	"keyID":           "keyID is the encryption-key-secret id (kms-{keyID}.sock), a unique identifier of the plugin on that node. This is not a cryptographic key used to encrypt/decrypt any resources. The value must be between 1 and 512 characters.",
-	"status":          "status contains a health indicator for the respective KMS plugin The field can have three states: healthy, unhealthy, error. With error and unhealthy containing additional information in Detail.",
+	"status":          "status contains a health indicator for the respective KMS plugin. status is required and must be one of Healthy, Unhealthy or Error. When set to Healthy, the plugin responded successfully to the KMS v2 Status call and remoteKeyID is set. When set to Unhealthy, the plugin responded but reported that it is not healthy. When set to Error, the Status call failed or returned no response, for example because the plugin was unreachable. Unhealthy and Error may include additional information in detail.",
 	"lastCheckedTime": "lastCheckedTime is a timestamp of when the probe was last checked.",
-	"remoteKeyID":     "remoteKeyID refers to the remote key identifier from KMS v2 StatusResponse.key_id. This is not a cryptographic key, but a unique representation of the KEK. The value must be between 1 and 1024 characters.",
+	"remoteKeyID":     "remoteKeyID refers to the remote key identifier from KMS v2 StatusResponse.key_id. This is not a cryptographic key, but a unique representation of the KEK. When omitted, no remote key identifier is available. This is expected when status is Unhealthy or Error, for example when the plugin reports that it is not healthy or could not be reached. When status is Healthy, remoteKeyID is required. When set, the value must be between 1 and 1024 characters.",
 	"detail":          "detail contains additional error/health information for the respective KMS plugin. When omitted, no additional error or health information is provided. When set, the value must be between 1 and 1024 characters.",
 }
 
