@@ -50,7 +50,9 @@ spec:
     reason: Forbidden
   # Require pod-bound token claims, rejecting unbound service account
   # credentials and username-only impersonation. This validation is omitted
-  # in the IBM Cloud managed release-profile variant.
+  # for HyperShift clusters (ibm-cloud-managed CVO profile), where generated
+  # kubeconfig credentials do not include the pod and node claims.
+  # See https://redhat.atlassian.net/browse/CNTRLPLANE-710.
   - expression: >-
       !variables.hasReservedName ||
       (has(request.userInfo.extra) &&

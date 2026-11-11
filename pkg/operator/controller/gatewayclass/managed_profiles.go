@@ -150,7 +150,7 @@ func (r *reconciler) markProfilesUnmanagedConfigured(ctx context.Context) error 
 func withDesiredManagedProfiles(gatewayClasses []gatewayapiv1.GatewayClass) []gatewayapiv1.GatewayClass {
 	gatewayClasses = slices.Clone(gatewayClasses)
 	for name := range managedProfiles {
-		if !slices.ContainsFunc(gatewayClasses, func(gatewayClass gatewayapiv1.GatewayClass) bool { return gatewayClass.Name == name }) {
+		if !hasGatewayClass(gatewayClasses, name) {
 			gatewayClasses = append(gatewayClasses, *desiredManagedProfile(name))
 		}
 	}

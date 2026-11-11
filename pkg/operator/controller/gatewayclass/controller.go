@@ -389,7 +389,7 @@ func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 				// install nor uninstall Sail.
 				//
 				// Every other event fans out to all OpenShift GatewayClasses because a
-				// reconcile renders the entire GatewayClass set — it lists every class
+				// reconcile renders the entire set of GatewayClasses — it lists every class
 				// and calls Apply once with all of them. On delete, the removed class
 				// can no longer reconcile itself, so a surviving class must rebuild
 				// the set without it.
@@ -689,6 +689,13 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// hasGatewayClass returns true if the given GatewayClasses contain one named name.
+func hasGatewayClass(gatewayClasses []gatewayapiv1.GatewayClass, name string) bool {
+	return slices.ContainsFunc(gatewayClasses, func(gatewayClass gatewayapiv1.GatewayClass) bool {
+		return gatewayClass.Name == name
+	})
 }
 
 // countActiveUserCreatedGatewayClasses counts active user-created GatewayClasses in an

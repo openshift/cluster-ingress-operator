@@ -78,7 +78,7 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 			changed := old.Spec.GatewayClassName != new.Spec.GatewayClassName ||
 				gatewayListenersHostnamesChanged(old.Spec.Listeners, new.Spec.Listeners)
 			if changed {
-				log.Info("Gateway listener hostname or gatewayClassName changed", "gateway", new.Name)
+				log.Info("Gateway listener hostnames or gatewayClassName changed", "gateway", new.Name)
 			}
 			return changed
 		},
