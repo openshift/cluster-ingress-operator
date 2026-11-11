@@ -157,6 +157,7 @@ func TestGatewayAPI(t *testing.T) {
 	}
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
+	t.Run("testTCPRouteObjects", testTCPRouteObjects)
 	if gatewayAPIManagementModeFGEnabled && ingressesAPIExists {
 		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
 		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
@@ -2017,4 +2018,252 @@ func assertMetricGone(t *testing.T, client prometheusv1.API, query string, msg s
 		}
 		return true
 	}, 2*time.Minute, 5*time.Second, msg)
+}
+
+// testTCPRouteObjects tests that TCPRoute objects can be created and function
+// correctly through an Istio-backed Gateway.  It covers three edge cases:
+// DNS management (no DNSRecord for TCP-only gateways), unique port routing
+// (same LB hostname, different ports), and port-conflict behaviour.
+func testTCPRouteObjects(t *testing.T) {
+	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-tcproute-"))
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("failed to get or create GatewayClass: %v", err)
+	}
+
+	t.Run("basicConnectivity", func(t *testing.T) {
+		ensureTCPRouteConnectivity(t, ns.Name, gatewayClass)
+	})
+	t.Run("dnsManagement", func(t *testing.T) {
+		ensureTCPRouteDNSManagement(t, ns.Name, gatewayClass)
+	})
+	t.Run("uniquePorts", func(t *testing.T) {
+		ensureTCPRouteUniquePorts(t, ns.Name, gatewayClass)
+	})
+	t.Run("portConflict", func(t *testing.T) {
+		ensureTCPRoutePortConflict(t, ns.Name, gatewayClass)
+	})
+}
+
+// ensureTCPRouteConnectivity creates a Gateway with a single TCP listener,
+// attaches a TCPRoute, and verifies the route is accepted and that raw TCP
+// traffic reaches the echo backend.
+func ensureTCPRouteConnectivity(t *testing.T, namespace string, gatewayClass *gatewayapiv1.GatewayClass) {
+	const tcpPort = gatewayapiv1.PortNumber(8900)
+
+	gwName := names.SimpleNameGenerator.GenerateName("test-tcproute-basic-")
+	gw := buildTCPGateway(gwName, operatorcontroller.DefaultOperandNamespace, gatewayClass.Name,
+		[]tcpListenerSpec{{name: "tcp", port: tcpPort}})
+	if err := createWithRetryOnError(t, t.Context(), gw, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create TCP Gateway %q: %v", gwName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gw); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete gateway %q: %v", gwName, err)
+		}
+	})
+
+	gw, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gwName)
+	if err != nil {
+		t.Fatalf("TCP Gateway %q did not become ready: %v", gwName, err)
+	}
+
+	routeName := "test-tcproute-basic"
+	if _, err := createTCPRoute(t, namespace, routeName, routeName+"-backend",
+		operatorcontroller.DefaultOperandNamespace, "tcp", 80, gw); err != nil {
+		t.Fatalf("failed to create TCPRoute: %v", err)
+	}
+
+	t.Log("Making sure the TCPRoute is created and accepted...")
+	require.Eventually(t, func() bool {
+		return tcpRouteIsAccepted(t, namespace, routeName)
+	}, 1*time.Minute, 1*time.Second, "TCPRoute %q not accepted", routeName)
+
+	if len(gw.Status.Addresses) == 0 {
+		t.Fatalf("Gateway %q has no addresses after becoming Programmed", gwName)
+	}
+	addr := gw.Status.Addresses[0].Value
+	t.Logf("Gateway LB address: %s", addr)
+
+	t.Log("Validating raw TCP connectivity to the backend application via the TCPRoute...")
+	assert.Eventually(t, func() bool {
+		return verifyTCPConnection(t, addr, int32(tcpPort))
+	}, 3*time.Minute, 5*time.Second, "TCP connection through gateway failed")
+}
+
+// ensureTCPRouteDNSManagement verifies that the gateway-service-dns controller
+// does not create a DNSRecord for a TCP-only Gateway.  TCP listeners carry no
+// hostname, so the controller should skip DNS record creation entirely.  This
+// mirrors the check in testGatewayAPIDNSListenerWithNoHostname but covers the
+// TCPRoute-specific case where the listener protocol itself precludes hostnames.
+func ensureTCPRouteDNSManagement(t *testing.T, namespace string, gatewayClass *gatewayapiv1.GatewayClass) {
+	const tcpPort = gatewayapiv1.PortNumber(8904)
+
+	gwName := names.SimpleNameGenerator.GenerateName("test-tcproute-dns-")
+	gw := buildTCPGateway(gwName, operatorcontroller.DefaultOperandNamespace, gatewayClass.Name,
+		[]tcpListenerSpec{{name: "tcp", port: tcpPort}})
+	if err := createWithRetryOnError(t, t.Context(), gw, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create TCP Gateway %q: %v", gwName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gw); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete gateway %q: %v", gwName, err)
+		}
+	})
+
+	gw, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gwName)
+	if err != nil {
+		t.Fatalf("TCP Gateway %q did not become ready: %v", gwName, err)
+	}
+
+	routeName := "test-tcproute-dns"
+	if _, err := createTCPRoute(t, namespace, routeName, routeName+"-backend",
+		operatorcontroller.DefaultOperandNamespace, "tcp", 80, gw); err != nil {
+		t.Fatalf("failed to create TCPRoute: %v", err)
+	}
+
+	t.Log("Making sure the TCPRoute is created and accepted...")
+	require.Eventually(t, func() bool {
+		return tcpRouteIsAccepted(t, namespace, routeName)
+	}, 1*time.Minute, 1*time.Second, "TCPRoute %q not accepted", routeName)
+
+	t.Logf("Created gateway %s with a TCP listener; verifying no DNSRecord is created...", gw.Name)
+	_ = wait.PollUntilContextTimeout(t.Context(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		dnsRecords := &iov1.DNSRecordList{}
+		if err := kclient.List(ctx, dnsRecords,
+			client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+			client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gw.Name},
+		); err != nil {
+			t.Logf("failed to list DNSRecords: %v; retrying...", err)
+			return false, nil
+		}
+		if len(dnsRecords.Items) > 0 {
+			t.Fatalf("unexpected DNSRecord %q found for TCP-only Gateway %q", dnsRecords.Items[0].Name, gw.Name)
+		}
+		return false, nil
+	})
+	t.Log("Confirmed: no DNSRecord created for TCP-only Gateway listener.")
+}
+
+// ensureTCPRouteUniquePorts creates a Gateway with two TCP listeners on
+// distinct ports, attaches one TCPRoute per listener to separate echo
+// backends, and verifies that traffic on each port routes independently.
+// This is the "same LB hostname, different port" edge case: since TCPRoute
+// has no hostname field, port number is the only discriminator on a shared
+// Gateway.
+func ensureTCPRouteUniquePorts(t *testing.T, namespace string, gatewayClass *gatewayapiv1.GatewayClass) {
+	const (
+		portA = gatewayapiv1.PortNumber(8901)
+		portB = gatewayapiv1.PortNumber(8902)
+	)
+
+	gwName := names.SimpleNameGenerator.GenerateName("test-tcproute-mp-")
+	gw := buildTCPGateway(gwName, operatorcontroller.DefaultOperandNamespace, gatewayClass.Name,
+		[]tcpListenerSpec{
+			{name: "tcp-a", port: portA},
+			{name: "tcp-b", port: portB},
+		})
+	if err := createWithRetryOnError(t, t.Context(), gw, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create multi-port TCP Gateway %q: %v", gwName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gw); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete gateway %q: %v", gwName, err)
+		}
+	})
+
+	gw, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gwName)
+	if err != nil {
+		t.Fatalf("multi-port TCP Gateway %q did not become ready: %v", gwName, err)
+	}
+
+	routeA := "test-tcproute-mp-a"
+	routeB := "test-tcproute-mp-b"
+	if _, err := createTCPRoute(t, namespace, routeA, routeA+"-backend",
+		operatorcontroller.DefaultOperandNamespace, "tcp-a", 80, gw); err != nil {
+		t.Fatalf("failed to create TCPRoute A: %v", err)
+	}
+	if _, err := createTCPRoute(t, namespace, routeB, routeB+"-backend",
+		operatorcontroller.DefaultOperandNamespace, "tcp-b", 80, gw); err != nil {
+		t.Fatalf("failed to create TCPRoute B: %v", err)
+	}
+
+	t.Log("Making sure both TCPRoutes are created and accepted...")
+	for _, name := range []string{routeA, routeB} {
+		assert.Eventually(t, func() bool {
+			return tcpRouteIsAccepted(t, namespace, name)
+		}, 1*time.Minute, 1*time.Second, "TCPRoute %q not accepted", name)
+	}
+
+	if len(gw.Status.Addresses) == 0 {
+		t.Fatalf("Gateway %q has no addresses after becoming Programmed", gwName)
+	}
+	addr := gw.Status.Addresses[0].Value
+
+	// Both ports share the same LB address; each must independently reach its
+	// own backend.
+	t.Log("Validating independent TCP connectivity on each port...")
+	for _, port := range []int32{int32(portA), int32(portB)} {
+		assert.Eventually(t, func() bool {
+			return verifyTCPConnection(t, addr, port)
+		}, 3*time.Minute, 5*time.Second, "TCP connection on port %d failed", port)
+	}
+}
+
+// ensureTCPRoutePortConflict attaches two TCPRoutes to the same Gateway
+// listener (same port).  Unlike HTTPRoute, TCPRoute has no hostname or path
+// field to disambiguate traffic, making this an unresolvable conflict.  The
+// test verifies that at least one route is accepted (the gateway remains
+// functional) and observes whether one is rejected — the expected behaviour
+// per the Gateway API spec.
+func ensureTCPRoutePortConflict(t *testing.T, namespace string, gatewayClass *gatewayapiv1.GatewayClass) {
+	const tcpPort = gatewayapiv1.PortNumber(8903)
+
+	gwName := names.SimpleNameGenerator.GenerateName("test-tcproute-conflict-")
+	gw := buildTCPGateway(gwName, operatorcontroller.DefaultOperandNamespace, gatewayClass.Name,
+		[]tcpListenerSpec{{name: "tcp", port: tcpPort}})
+	if err := createWithRetryOnError(t, t.Context(), gw, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create conflict Gateway %q: %v", gwName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gw); err != nil && !errors.IsNotFound(err) {
+			t.Errorf("failed to delete gateway %q: %v", gwName, err)
+		}
+	})
+
+	gw, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gwName)
+	if err != nil {
+		t.Fatalf("conflict Gateway %q did not become ready: %v", gwName, err)
+	}
+
+	routeX := "test-tcproute-conflict-x"
+	routeY := "test-tcproute-conflict-y"
+	if _, err := createTCPRoute(t, namespace, routeX, routeX+"-backend",
+		operatorcontroller.DefaultOperandNamespace, "tcp", 80, gw); err != nil {
+		t.Fatalf("failed to create TCPRoute X: %v", err)
+	}
+	if _, err := createTCPRoute(t, namespace, routeY, routeY+"-backend",
+		operatorcontroller.DefaultOperandNamespace, "tcp", 80, gw); err != nil {
+		t.Fatalf("failed to create TCPRoute Y: %v", err)
+	}
+
+	// Wait for route X to settle; if it is accepted this returns quickly.  If
+	// X is rejected it will time out after one minute, at which point Y should
+	// have its status populated and we snapshot both.
+	errX := waitForTCPRouteAccepted(t, namespace, routeX)
+	acceptedX := errX == nil
+	acceptedY := tcpRouteIsAccepted(t, namespace, routeY)
+
+	switch {
+	case !acceptedX && !acceptedY:
+		t.Errorf("both TCPRoutes report not-accepted; expected at least one to be accepted on the shared listener")
+	case acceptedX && acceptedY:
+		// Istio reports Accepted=True for both routes on the same listener; whether
+		// it programs both or only the first is implementation-defined and not
+		// verified by this connectivity check.
+		t.Logf("both TCPRoutes report Accepted=True on the same listener port; traffic behaviour is implementation-defined (acceptedX=%v, acceptedY=%v)", acceptedX, acceptedY)
+	default:
+		t.Logf("port conflict correctly resulted in one accepted and one not-accepted TCPRoute (acceptedX=%v, acceptedY=%v)", acceptedX, acceptedY)
+	}
 }
