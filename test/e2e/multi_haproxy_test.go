@@ -16,6 +16,8 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
+
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 )
 
 func TestMultiHAProxyUpgradeableCondition(t *testing.T) {
@@ -26,9 +28,38 @@ func TestMultiHAProxyUpgradeableCondition(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	getHAProxyImage := func(t *testing.T, ic *operatorv1.IngressController) string {
+		t.Helper()
+		deployment, err := getDeployment(t, kclient, controller.RouterDeploymentName(ic), time.Minute)
+		require.NoError(t, err)
+		for _, container := range deployment.Spec.Template.Spec.InitContainers {
+			if container.Name == "haproxy" {
+				require.NotEmpty(t, container.Image)
+				return container.Image
+			}
+		}
+		t.Fatal("HAProxy init container not found")
+		return ""
+	}
+	err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...)
+	require.NoError(t, err)
+	defaultIC, err := getIngressController(t, kclient, defaultName, time.Minute)
+	require.NoError(t, err)
+	defaultImage := getHAProxyImage(t, defaultIC)
+	operatorDeployment, err := getDeployment(t, kclient, types.NamespacedName{Namespace: controller.DefaultOperatorNamespace, Name: "ingress-operator"}, time.Minute)
+	require.NoError(t, err)
+	configuredImages := map[string]string{}
+	for _, container := range operatorDeployment.Spec.Template.Spec.Containers {
+		if container.Name == "ingress-operator" {
+			for _, env := range container.Env {
+				configuredImages[env.Name] = env.Value
+			}
+		}
+	}
 
 	testCases := map[string]struct {
 		haproxyVersion operatorv1.HAProxyVersion
+		imageEnv       string
 		expectedStatus bool
 		skip           string
 	}{
@@ -39,6 +70,12 @@ func TestMultiHAProxyUpgradeableCondition(t *testing.T) {
 		},
 		"should allow upgrade on supported version": {
 			haproxyVersion: operatorv1.HAProxyVersion32,
+			imageEnv:       "HAPROXY_32_IMAGE",
+			expectedStatus: true,
+		},
+		"should allow upgrade on supported version 3.4": {
+			haproxyVersion: operatorv1.HAProxyVersion34,
+			imageEnv:       "HAPROXY_34_IMAGE",
 			expectedStatus: true,
 		},
 		"should allow upgrade on default version": {
@@ -79,6 +116,20 @@ func TestMultiHAProxyUpgradeableCondition(t *testing.T) {
 			// wait for the ingress controller to be ready
 			err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...)
 			require.NoError(t, err)
+
+			if test.haproxyVersion != "" {
+				observed, err := getIngressController(t, kclient, name, time.Minute)
+				require.NoError(t, err)
+				assert.Equal(t, test.haproxyVersion, observed.Status.EffectiveHAProxyVersion)
+				require.NotEmpty(t, configuredImages[test.imageEnv], "operator must configure %s", test.imageEnv)
+				assert.Equal(t, configuredImages[test.imageEnv], getHAProxyImage(t, observed))
+			}
+			err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...)
+			require.NoError(t, err)
+			observedDefault, err := getIngressController(t, kclient, defaultName, time.Minute)
+			require.NoError(t, err)
+			assert.Equal(t, defaultIC.Status.EffectiveHAProxyVersion, observedDefault.Status.EffectiveHAProxyVersion)
+			assert.Equal(t, defaultImage, getHAProxyImage(t, observedDefault))
 
 			// wait for the ingress controller to report Upgradeable in the expected status
 			err = waitForIngressControllerCondition(t, kclient, time.Minute, name, operatorv1.OperatorCondition{
