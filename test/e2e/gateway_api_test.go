@@ -973,9 +973,23 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 				t.Logf("conditions are not yet the expected: %v, retrying...", gw.Status.Conditions)
 				return false
 			}, 30*time.Second, 2*time.Second, "error waiting for openshift conditions to be present on Gateway")
-			// We expect exactly 4 conditions. If we get more than it, Istio is adding
-			// more conditions and we need to be aware that Gateway API status.conditons has a maxItems of 8
-			assert.Len(t, gw.Status.Conditions, 4)
+			// We expect exactly 5 conditions: the standard Gateway conditions set by
+			// Istio (Accepted, Programmed, ResolvedRefs) plus the OpenShift-specific
+			// LoadBalancerReady and DNSReady. If we get more than that, Istio is adding
+			// more conditions and we need to be aware that Gateway API status.conditions
+			// has a maxItems of 8.
+			assert.Len(t, gw.Status.Conditions, 5)
+			conditionTypes := make([]string, 0, len(gw.Status.Conditions))
+			for _, condition := range gw.Status.Conditions {
+				conditionTypes = append(conditionTypes, condition.Type)
+			}
+			assert.ElementsMatch(t, conditionTypes, []string{
+				string(gatewayapiv1.GatewayConditionAccepted),
+				string(gatewayapiv1.GatewayConditionProgrammed),
+				string(gatewayapiv1.GatewayConditionResolvedRefs),
+				"LoadBalancerReady",
+				"DNSReady",
+			})
 		})
 
 		// This test will delete the Gateway service. This should kick a new reconciliation
