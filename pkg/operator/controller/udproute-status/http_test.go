@@ -39,7 +39,8 @@ func udpHTTPClient(t *testing.T, initial *unstructured.Unstructured) client.Clie
 			}
 			return true
 		}
-		expectedPath := "/apis/gateway.networking.k8s.io/v1/namespaces/" + current.GetNamespace() + "/udproutes/" + current.GetName()
+		gvk := current.GroupVersionKind()
+		expectedPath := "/apis/" + gvk.Group + "/" + gvk.Version + "/namespaces/" + current.GetNamespace() + "/udproutes/" + current.GetName()
 		if request.URL.Path != expectedPath && request.URL.Path != expectedPath+"/status" {
 			response.WriteHeader(http.StatusNotFound)
 			return

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	informercache "k8s.io/client-go/tools/cache"
 	"os"
 	"testing"
@@ -93,7 +92,7 @@ func TestReconcileManagedParentsAndPreservesForeignStatus(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), requestFor(route))
 	require.NoError(t, err)
 
-	updated := newUDPRoute("v1")
+	updated := newUDPRoute(udpRouteVersion)
 	require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 	require.Len(t, routeParents(t, updated), 4)
 	assert.Equal(t, gatewayapiv1.GatewayController("example.com/other-controller"), routeParents(t, updated)[0].ControllerName)
@@ -174,7 +173,7 @@ func TestReconcileConflictsWithConcurrentForeignStatusWriter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, writer.patchCalls)
 
-	updated := newUDPRoute("v1")
+	updated := newUDPRoute(udpRouteVersion)
 	require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 	require.Len(t, routeParents(t, updated), 2)
 	assert.Equal(t, foreignStatus, routeParents(t, updated)[0], "retry must preserve the concurrent writer's complete status entry")
@@ -240,7 +239,7 @@ func TestReconcileIgnoresUnmanagedMissingAndNonGatewayParents(t *testing.T) {
 
 			_, err := r.Reconcile(context.Background(), requestFor(route))
 			require.NoError(t, err)
-			updated := newUDPRoute("v1")
+			updated := newUDPRoute(udpRouteVersion)
 			require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 			require.Nil(t, routeParents(t, updated), "a route never owned by CIO must not receive a status patch")
 			assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
@@ -267,7 +266,7 @@ func TestReconcileCleansStaleStatusAndMetricAfterRetarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
 
-	updated := newUDPRoute("v1")
+	updated := newUDPRoute(udpRouteVersion)
 	require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 	require.Len(t, routeParents(t, updated), 2)
 	firstTransition := routeParents(t, updated)[1].Conditions[0].LastTransitionTime
@@ -324,7 +323,7 @@ func TestReconcileCleansLastOwnedStatusAfterRetarget(t *testing.T) {
 	udpRouteOnManagedGatewayMetric.Reset()
 	udpRouteOnManagedGatewayMetric.WithLabelValues(route.GetNamespace(), route.GetName()).Set(1)
 
-	updated := newUDPRoute("v1")
+	updated := newUDPRoute(udpRouteVersion)
 	require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 	require.Len(t, routeParents(t, updated), 1)
 	assert.Equal(t, gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName), routeParents(t, updated)[0].ControllerName)
@@ -379,7 +378,7 @@ func TestReconcileCleansStaleStatusAfterParentDisappears(t *testing.T) {
 			_, err = r.Reconcile(context.Background(), requestFor(route))
 			require.NoError(t, err)
 
-			updated := newUDPRoute("v1")
+			updated := newUDPRoute(udpRouteVersion)
 			require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 			assert.Empty(t, routeParents(t, updated))
 			assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
@@ -422,7 +421,7 @@ func TestReconcileCleansMetricWhileDependentsBlocked(t *testing.T) {
 		_, err := r.Reconcile(context.Background(), requestFor(route))
 		require.NoError(t, err)
 		assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
-		updated := newUDPRoute("v1")
+		updated := newUDPRoute(udpRouteVersion)
 		require.NoError(t, r.client.Get(context.Background(), client.ObjectKeyFromObject(route), updated))
 		assert.Equal(t, route.Object["status"], updated.Object["status"], "blocked reconciliation must not patch status")
 	})
@@ -523,13 +522,22 @@ func TestParentGatewayIndexKeys(t *testing.T) {
 func newTestReconciler(t *testing.T, objects ...client.Object) *reconciler {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, gatewayapiv1.Install(scheme))
-	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	// Register only the typed Gateway API resources used by the reconciler's
+	// typed caches (Gateway, GatewayClass). UDPRoute is handled as
+	// *unstructured.Unstructured via the dynamic informer and must not be
+	// registered here — if it is, the fake client converts unstructured objects
+	// through the typed struct and silently drops unknown fields that several
+	// tests assert are preserved.
+	scheme.AddKnownTypes(gatewayapiv1.SchemeGroupVersion,
+		&gatewayapiv1.Gateway{}, &gatewayapiv1.GatewayList{},
+		&gatewayapiv1.GatewayClass{}, &gatewayapiv1.GatewayClassList{},
+	)
+	metav1.AddToGroupVersion(scheme, gatewayapiv1.SchemeGroupVersion)
 	cl := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objects...).
-		WithStatusSubresource(newUDPRoute("v1"), newUDPRoute("v1alpha2")).
-		WithIndex(newUDPRoute("v1"), udpRouteParentGatewayIndex, func(obj client.Object) []string {
+		WithStatusSubresource(newUDPRoute(udpRouteVersion)).
+		WithIndex(newUDPRoute(udpRouteVersion), udpRouteParentGatewayIndex, func(obj client.Object) []string {
 			keys, err := parentGatewayIndexKeys(obj.(*unstructured.Unstructured))
 			if err != nil {
 				panic(err)
@@ -541,7 +549,7 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *reconciler {
 	fakeCache := ctrltestutil.FakeCache{Informers: &informer, Reader: cl}
 	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	modeAccessor.SetCRDsEstablished(true)
-	routeInformer := informercache.NewSharedIndexInformer(&informercache.ListWatch{}, newUDPRoute("v1"), 0, informercache.Indexers{udpRouteParentGatewayIndex: func(object interface{}) ([]string, error) {
+	routeInformer := informercache.NewSharedIndexInformer(&informercache.ListWatch{}, newUDPRoute(udpRouteVersion), 0, informercache.Indexers{udpRouteParentGatewayIndex: func(object interface{}) ([]string, error) {
 		return parentGatewayIndexKeys(object.(*unstructured.Unstructured))
 	}})
 	for _, object := range objects {
@@ -549,7 +557,7 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *reconciler {
 			require.NoError(t, routeInformer.GetIndexer().Add(route))
 		}
 	}
-	return &reconciler{client: cl, cache: fakeCache, gatewayCache: fakeCache, modeAccessor: modeAccessor, resource: schema.GroupVersionResource{Group: gatewayapiv1.GroupName, Version: "v1", Resource: "udproutes"}, informer: routeInformer}
+	return &reconciler{client: cl, cache: fakeCache, gatewayCache: fakeCache, modeAccessor: modeAccessor, informer: routeInformer}
 }
 
 func gatewayClass(name string, controller gatewayapiv1.GatewayController) *gatewayapiv1.GatewayClass {
@@ -570,7 +578,7 @@ func gateway(name, namespace, className string) *gatewayapiv1.Gateway {
 }
 
 func udpRoute(name, namespace string, parents []gatewayapiv1.ParentReference) *unstructured.Unstructured {
-	route := newUDPRoute("v1")
+	route := newUDPRoute(udpRouteVersion)
 	route.SetName(name)
 	route.SetNamespace(namespace)
 	values, err := parentRefFixtureValues(parents)
@@ -624,7 +632,7 @@ func (w *concurrentForeignStatusWriter) Patch(ctx context.Context, obj client.Ob
 	require.Equal(w.t, obj.GetResourceVersion(), metadata["resourceVersion"])
 	if !w.updated {
 		w.updated = true
-		route := newUDPRoute("v1")
+		route := newUDPRoute(udpRouteVersion)
 		if err := w.client.Get(ctx, client.ObjectKeyFromObject(obj), route); err != nil {
 			return err
 		}

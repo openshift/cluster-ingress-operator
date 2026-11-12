@@ -13,7 +13,6 @@ import (
 	udproutestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/udproute-status"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	condutils "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,24 +25,6 @@ import (
 )
 
 func testUDPRouteNotAccepted(t *testing.T) {
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	crdKey := client.ObjectKey{Name: udproutestatuscontroller.UDPRouteCRDName}
-	if err := kclient.Get(t.Context(), crdKey, crd); err != nil {
-		if errors.IsNotFound(err) {
-			t.Skipf("UDPRoute CRD %s is not installed on this cluster; skipping UDPRoute status and metric assertions", crdKey.Name)
-		}
-		t.Fatalf("failed to get UDPRoute CRD %s: %v", crdKey.Name, err)
-	}
-	udpVersion := ""
-	for _, wanted := range []string{"v1", "v1alpha2"} {
-		for _, version := range crd.Spec.Versions {
-			if udpVersion == "" && version.Name == wanted && version.Served {
-				udpVersion = wanted
-			}
-		}
-	}
-	require.NotEmpty(t, udpVersion, "UDPRoute CRD must serve a supported version")
-
 	managedGatewayName := names.SimpleNameGenerator.GenerateName("test-udp-gw-")
 	managedGateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: managedGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace},
@@ -84,7 +65,7 @@ func testUDPRouteNotAccepted(t *testing.T) {
 	})
 
 	createUDPRoute := func(name string) *unstructured.Unstructured {
-		route := udpRouteTestObject(udpVersion)
+		route := udpRouteTestObject("v1")
 		route.SetName(name)
 		route.SetNamespace(operatorcontroller.DefaultOperandNamespace)
 		route.Object["spec"] = map[string]interface{}{"parentRefs": []interface{}{map[string]interface{}{"name": managedGatewayName}}, "rules": []interface{}{map[string]interface{}{"backendRefs": []interface{}{map[string]interface{}{"name": "unused-backend", "port": int64(53)}}}}}
@@ -103,7 +84,7 @@ func testUDPRouteNotAccepted(t *testing.T) {
 	for _, route := range []*unstructured.Unstructured{route1, route2} {
 		routeKey := client.ObjectKeyFromObject(route)
 		assert.EventuallyWithT(t, func(collect *assert.CollectT) {
-			current := udpRouteTestObject(udpVersion)
+			current := udpRouteTestObject("v1")
 			if err := kclient.Get(t.Context(), routeKey, current); err != nil {
 				assert.NoError(collect, err, "failed to get UDPRoute %s", routeKey)
 				return
@@ -126,7 +107,7 @@ func testUDPRouteNotAccepted(t *testing.T) {
 	require.NoError(t, kclient.Delete(t.Context(), route1), "failed to delete UDPRoute %s/%s", route1.GetNamespace(), route1.GetName())
 	assertMetricGone(t, prometheusClient, metricQuery(route1), "Prometheus metric was not cleaned up after UDPRoute deletion")
 
-	current := udpRouteTestObject(udpVersion)
+	current := udpRouteTestObject("v1")
 	require.NoError(t, kclient.Get(t.Context(), client.ObjectKeyFromObject(route2), current), "failed to get UDPRoute %s/%s before retargeting", route2.GetNamespace(), route2.GetName())
 	require.NoError(t, unstructured.SetNestedSlice(current.Object, []interface{}{map[string]interface{}{"name": unmanagedGateway.Name}}, "spec", "parentRefs"), "failed to retarget UDPRoute %s/%s", route2.GetNamespace(), route2.GetName())
 	require.NoError(t, kclient.Update(t.Context(), current), "failed to update retargeted UDPRoute %s/%s", route2.GetNamespace(), route2.GetName())

@@ -12,7 +12,6 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/prometheus/client_golang/prometheus"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -39,7 +38,7 @@ const (
 	controllerName                = "udproute_status_controller"
 	ReasonUnsupportedByController = "UnsupportedByController"
 	udpRouteParentGatewayIndex    = "spec.parentRefs.gateway"
-	UDPRouteCRDName               = "udproutes.gateway.networking.k8s.io"
+	udpRouteVersion               = "v1"
 	unsupportedMessage            = "UDPRoutes are not supported by the OpenShift Gateway API implementation. This UDPRoute will not be reconciled. On a future upgrade, this UDPRoute may become active and could cause unexpected traffic routing."
 )
 
@@ -97,9 +96,6 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 	if err := guard.Watch(source.Channel(r.events, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
-	if err := guard.Watch(source.Kind[client.Object](r.cache, &apiextensionsv1.CustomResourceDefinition{}, &handler.EnqueueRequestForObject{}, predicate.NewPredicateFuncs(func(object client.Object) bool { return object.GetName() == UDPRouteCRDName }))); err != nil {
-		return nil, err
-	}
 	// Gateway events enqueue parent-indexed routes without class I/O. Ownership is
 	// checked with the reconciliation context, not an uncancellable cache callback.
 	gatewayPredicate := predicate.Funcs{
@@ -129,6 +125,13 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 			return nil, err
 		}
 	}
+	// Start the UDPRoute informer at manager startup so existing routes are
+	// discovered before the first reconcile request arrives.
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		return r.ensureUDPInformer(ctx)
+	})); err != nil {
+		return nil, fmt.Errorf("failed to start UDPRoute informer: %w", err)
+	}
 	return guard, nil
 }
 
@@ -148,43 +151,12 @@ type reconciler struct {
 	informer     informercache.SharedIndexInformer
 	cancel       context.CancelFunc
 	done         chan struct{}
-	crdUID       types.UID
-	resource     schema.GroupVersionResource
-}
-
-func servedUDPResource(crd *apiextensionsv1.CustomResourceDefinition) schema.GroupVersionResource {
-	if crd.DeletionTimestamp != nil || crd.Spec.Group != gatewayapiv1.GroupName || crd.Spec.Names.Kind != "UDPRoute" || crd.Spec.Names.Plural != "udproutes" || crd.Spec.Scope != apiextensionsv1.NamespaceScoped {
-		return schema.GroupVersionResource{}
-	}
-	established := false
-	for _, condition := range crd.Status.Conditions {
-		if condition.Type == apiextensionsv1.Established && condition.Status == apiextensionsv1.ConditionTrue {
-			established = true
-		}
-	}
-	if !established {
-		return schema.GroupVersionResource{}
-	}
-	for _, wanted := range []string{"v1", "v1alpha2"} {
-		for _, version := range crd.Spec.Versions {
-			if version.Name == wanted && version.Served {
-				return schema.GroupVersionResource{Group: gatewayapiv1.GroupName, Version: wanted, Resource: "udproutes"}
-			}
-		}
-	}
-	return schema.GroupVersionResource{}
 }
 
 func (r *reconciler) ensureUDPInformer(ctx context.Context) error {
-	crd := &apiextensionsv1.CustomResourceDefinition{}
-	err := r.cache.Get(ctx, types.NamespacedName{Name: UDPRouteCRDName}, crd)
-	if client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("failed to discover UDPRoute CRD: %w", err)
-	}
-	resource := servedUDPResource(crd)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.informer != nil && resource == r.resource && crd.UID == r.crdUID {
+	if r.informer != nil {
 		select {
 		case <-r.done:
 		default:
@@ -197,12 +169,8 @@ func (r *reconciler) ensureUDPInformer(ctx context.Context) error {
 		r.cancel = nil
 		r.informer = nil
 	}
-	r.resource = schema.GroupVersionResource{}
-	r.crdUID = ""
 	udpRouteOnManagedGatewayMetric.Reset()
-	if resource.Empty() {
-		return nil
-	}
+	resource := schema.GroupVersionResource{Group: gatewayapiv1.GroupName, Version: udpRouteVersion, Resource: "udproutes"}
 	informer := r.newInformer(resource)
 	if err := informer.AddIndexers(informercache.Indexers{udpRouteParentGatewayIndex: func(object interface{}) ([]string, error) {
 		route, ok := object.(*unstructured.Unstructured)
@@ -213,10 +181,8 @@ func (r *reconciler) ensureUDPInformer(ctx context.Context) error {
 	}}); err != nil {
 		return fmt.Errorf("failed to add UDPRoute field indexer: %w", err)
 	}
-	// NewUnmanaged leaves ReconciliationTimeout unset, so this context follows
-	// controller lifetime. A future timeout requires explicit informer ownership;
-	// the stopped-instance check only restarts after another discovery request.
 	watchCtx, cancel := context.WithCancel(ctx)
+	pred := udpRouteEventPredicate()
 	enqueue := func(object interface{}) {
 		if tombstone, ok := object.(informercache.DeletedFinalStateUnknown); ok {
 			object = tombstone.Obj
@@ -235,7 +201,7 @@ func (r *reconciler) ensureUDPInformer(ctx context.Context) error {
 		UpdateFunc: func(oldObject, newObject interface{}) {
 			oldRoute, oldOK := oldObject.(*unstructured.Unstructured)
 			newRoute, newOK := newObject.(*unstructured.Unstructured)
-			if oldOK && newOK && udpRouteEventPredicate().Update(event.UpdateEvent{ObjectOld: oldRoute, ObjectNew: newRoute}) {
+			if oldOK && newOK && pred.Update(event.UpdateEvent{ObjectOld: oldRoute, ObjectNew: newRoute}) {
 				enqueue(newObject)
 			}
 		},
@@ -244,7 +210,7 @@ func (r *reconciler) ensureUDPInformer(ctx context.Context) error {
 		cancel()
 		return fmt.Errorf("failed to watch UDPRoutes: %w", err)
 	}
-	r.informer, r.cancel, r.crdUID, r.resource = informer, cancel, crd.UID, resource
+	r.informer, r.cancel = informer, cancel
 	r.done = make(chan struct{})
 	done := r.done
 	go func() { defer close(done); informer.Run(watchCtx.Done()) }()
@@ -291,21 +257,14 @@ func newUDPRoute(version string) *unstructured.Unstructured {
 }
 
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	if request.Namespace == "" && request.Name == UDPRouteCRDName {
-		return reconcile.Result{}, r.ensureUDPInformer(ctx)
-	}
-	r.mu.RLock()
-	version := r.resource.Version
-	r.mu.RUnlock()
-	if version == "" {
-		udpRouteOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
-		return reconcile.Result{}, nil
+	if err := r.ensureUDPInformer(ctx); err != nil {
+		return reconcile.Result{}, err
 	}
 	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
 		udpRouteOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)
 		return reconcile.Result{}, nil
 	}
-	route := newUDPRoute(version)
+	route := newUDPRoute(udpRouteVersion)
 	if err := r.client.Get(ctx, request.NamespacedName, route); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			udpRouteOnManagedGatewayMetric.DeleteLabelValues(request.Namespace, request.Name)

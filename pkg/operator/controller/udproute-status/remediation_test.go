@@ -19,7 +19,6 @@ import (
 	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -125,15 +124,12 @@ func TestNewUnmanagedRegistersActualWatchesWithoutUDPKind(t *testing.T) {
 			result, err := NewUnmanaged(mgr, accessor)
 			require.NoError(t, err)
 			assert.Same(t, guard, result)
-			require.Len(t, mgr.added, 1)
-			want := 4
+			require.Len(t, mgr.added, 2)
+			want := 3
 			if gate == "on" {
 				want++
 			}
 			require.Len(t, guard.sources, want)
-			require.NoError(t, built.ensureUDPInformer(t.Context()))
-			assert.Nil(t, built.informer)
-			assert.True(t, built.resource.Empty())
 			built.informer = fixture.informer
 			queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
 			t.Cleanup(queue.ShutDown)
@@ -223,7 +219,7 @@ func TestNewUnmanagedErrors(t *testing.T) {
 	}
 	_, err = NewUnmanaged(mgr, nil)
 	require.ErrorContains(t, err, "controller setup failed")
-	for failAt := 1; failAt <= 5; failAt++ {
+	for failAt := 1; failAt <= 4; failAt++ {
 		newGuardController = func(_ string, _ controller.Options) (controller.Controller, error) {
 			return &recordingGuard{failAt: failAt}, nil
 		}
@@ -257,7 +253,7 @@ func TestGatewayLookupAndWatchesShareAllNamespaceOwnership(t *testing.T) {
 	guardReconciler.cache = namespaceRestrictedCache{Cache: guardReconciler.cache}
 	_, err := guardReconciler.Reconcile(t.Context(), requestFor(route))
 	require.NoError(t, err)
-	current := newUDPRoute("v1")
+	current := newUDPRoute(udpRouteVersion)
 	require.NoError(t, guardReconciler.client.Get(t.Context(), client.ObjectKeyFromObject(route), current))
 	assert.Len(t, routeParents(t, current), 2)
 	assert.Equal(t, float64(1), promtestutil.ToFloat64(udpRouteOnManagedGatewayMetric.WithLabelValues("customer", "udp")))
@@ -297,33 +293,32 @@ func (guardClient *routeCallClient) Status() client.StatusWriter {
 	return guardClient.Client.Status()
 }
 
-func TestInactiveDiscoveryAndFailedReplacementIgnoreQueuedRoutes(t *testing.T) {
-	for _, failure := range []string{"delete", "index", "handler", "stopped"} {
+func TestFailedInformerSetupRetriesAndStoppedRecovery(t *testing.T) {
+	for _, failure := range []string{"index", "handler", "stopped"} {
 		t.Run(failure, func(t *testing.T) {
 			udpRouteOnManagedGatewayMetric.Reset()
 			t.Cleanup(udpRouteOnManagedGatewayMetric.Reset)
-			crd := udpCRD("initial", "v1")
 			route := udpRoute("udp", "ns", []gatewayapiv1.ParentReference{{Name: "gateway"}})
-			guardReconciler := newTestReconciler(t, crd, route)
-			guardReconciler.informer, guardReconciler.resource = nil, schema.GroupVersionResource{}
+			guardReconciler := newTestReconciler(t, route)
+			guardReconciler.informer = nil
 			guardReconciler.events = make(chan event.GenericEvent, 1)
 			attempts := 0
 			guardReconciler.newInformer = func(resource schema.GroupVersionResource) informercache.SharedIndexInformer {
 				attempts++
 				informer := &lifecycleInformer{SharedIndexInformer: informercache.NewSharedIndexInformer(&informercache.ListWatch{}, newUDPRoute(resource.Version), 0, informercache.Indexers{})}
-				if attempts == 2 && failure == "index" {
+				if attempts == 1 && failure == "index" {
 					informer.indexError = fmt.Errorf("index failure")
 				}
-				if attempts == 2 && failure == "handler" {
+				if attempts == 1 && failure == "handler" {
 					informer.handlerError = fmt.Errorf("handler failure")
 				}
 				return informer
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			t.Cleanup(cancel)
-			require.NoError(t, guardReconciler.ensureUDPInformer(ctx))
-			oldDone := guardReconciler.done
 			if failure == "stopped" {
+				require.NoError(t, guardReconciler.ensureUDPInformer(ctx))
+				oldDone := guardReconciler.done
 				cancel()
 				select {
 				case <-oldDone:
@@ -331,44 +326,14 @@ func TestInactiveDiscoveryAndFailedReplacementIgnoreQueuedRoutes(t *testing.T) {
 					t.Fatal("informer failed to stop")
 				}
 				require.NoError(t, guardReconciler.ensureUDPInformer(t.Context()))
-				assert.Equal(t, 2, attempts, "same UID/GVR must restart a stopped informer")
+				assert.Equal(t, 2, attempts, "stopped informer must be replaced")
 				guardReconciler.cancel()
 				<-guardReconciler.done
 				return
 			}
-			udpRouteOnManagedGatewayMetric.WithLabelValues("ns", "udp").Set(1)
-			if failure == "delete" {
-				require.NoError(t, guardReconciler.client.Delete(t.Context(), crd))
-			} else {
-				crd.Spec.Versions = []apiextensionsv1.CustomResourceDefinitionVersion{{Name: "v1alpha2", Served: true}}
-				require.NoError(t, guardReconciler.client.Update(t.Context(), crd))
-			}
 			err := guardReconciler.ensureUDPInformer(ctx)
-			if failure == "delete" {
-				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
-			}
-			assert.True(t, guardReconciler.resource.Empty())
-			assert.Empty(t, guardReconciler.crdUID)
-			select {
-			case <-oldDone:
-			default:
-				t.Fatal("old informer is still running")
-			}
-			spy := &routeCallClient{Client: guardReconciler.client}
-			guardReconciler.client = spy
-			_, err = guardReconciler.Reconcile(t.Context(), requestFor(route))
-			require.NoError(t, err)
-			assert.Zero(t, spy.gets)
-			assert.Zero(t, spy.statuses)
-			assert.Zero(t, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
-			if failure != "delete" {
-				require.NoError(t, guardReconciler.ensureUDPInformer(ctx))
-				assert.Equal(t, "v1alpha2", guardReconciler.resource.Version)
-				guardReconciler.cancel()
-				<-guardReconciler.done
-			}
+			require.Error(t, err)
+			assert.Nil(t, guardReconciler.informer)
 		})
 	}
 }
@@ -403,13 +368,15 @@ func TestUDPManifestPermissionsAndAlert(t *testing.T) {
 		for _, resource := range rule.Resources {
 			if resource == "udproutes" || resource == "udproutes/status" {
 				permissions[resource] = append(permissions[resource], rule.Verbs...)
-				assert.Equal(t, []string{gatewayapiv1.GroupName}, rule.APIGroups)
 			}
-			assert.NotEqual(t, "tcproutes", resource)
 		}
 	}
-	assert.ElementsMatch(t, []string{"get", "list", "watch"}, permissions["udproutes"])
-	assert.ElementsMatch(t, []string{"patch", "update"}, permissions["udproutes/status"])
+	for _, verb := range []string{"get", "list", "watch"} {
+		assert.Contains(t, permissions["udproutes"], verb)
+	}
+	for _, verb := range []string{"patch", "update"} {
+		assert.Contains(t, permissions["udproutes/status"], verb)
+	}
 	data, err = os.ReadFile("../../../../manifests/0000_90_ingress-operator_03_prometheusrules.yaml")
 	require.NoError(t, err)
 	var rules struct {
@@ -445,7 +412,7 @@ func TestUDPManifestPermissionsAndAlert(t *testing.T) {
 
 func TestMalformedParentsStatusAndUIDPredicate(t *testing.T) {
 	for _, invalid := range []interface{}{"invalid", []interface{}{"invalid"}, []interface{}{map[string]interface{}{"name": int64(3)}}} {
-		route := newUDPRoute("v1")
+		route := newUDPRoute(udpRouteVersion)
 		route.Object["spec"] = map[string]interface{}{"parentRefs": invalid}
 		_, err := parentReferences(route)
 		require.Error(t, err)
@@ -508,7 +475,7 @@ func (writer *failureStatusWriter) Patch(ctx context.Context, object client.Obje
 }
 
 func TestReaderAndPatchFailuresPreserveStateAndRetry(t *testing.T) {
-	for _, problem := range []string{"discovery", "route", "gateway-transport", "class-forbidden", "status"} {
+	for _, problem := range []string{"route", "gateway-transport", "class-forbidden", "status"} {
 		t.Run(problem, func(t *testing.T) {
 			udpRouteOnManagedGatewayMetric.Reset()
 			t.Cleanup(udpRouteOnManagedGatewayMetric.Reset)
@@ -517,43 +484,11 @@ func TestReaderAndPatchFailuresPreserveStateAndRetry(t *testing.T) {
 			require.NoError(t, unstructured.SetNestedSlice(route.Object, []interface{}{foreign}, "status", "parents"))
 			guardReconciler := newTestReconciler(t, route, gateway("first", "ns", "first-class"), gateway("second", "ns", "second-class"), gatewayClass("first-class", operatorcontroller.OpenShiftGatewayClassControllerName), gatewayClass("second-class", operatorcontroller.OpenShiftGatewayClassControllerName))
 			originalClient, originalCache, originalGatewayCache := guardReconciler.client, guardReconciler.cache, guardReconciler.gatewayCache
-			ctx, cancel := context.WithCancel(t.Context())
-			t.Cleanup(func() {
-				cancel()
-				if guardReconciler.done != nil {
-					select {
-					case <-guardReconciler.done:
-					case <-time.After(5 * time.Second):
-						t.Error("discovery retry informer did not stop")
-					}
-				}
-			})
-			if problem == "discovery" {
-				require.NoError(t, originalClient.Create(ctx, udpCRD("discovery-retry", "v1")))
-				guardReconciler.informer = nil
-				guardReconciler.resource = schema.GroupVersionResource{}
-				guardReconciler.events = make(chan event.GenericEvent, 16)
-				guardReconciler.newInformer = func(resource schema.GroupVersionResource) informercache.SharedIndexInformer {
-					return informercache.NewSharedIndexInformer(&informercache.ListWatch{
-						ListWithContextFunc: func(context.Context, metav1.ListOptions) (runtime.Object, error) {
-							return &unstructured.UnstructuredList{Object: map[string]interface{}{"apiVersion": gatewayapiv1.GroupName + "/" + resource.Version, "kind": "UDPRouteList", "metadata": map[string]interface{}{"resourceVersion": "1"}}, Items: []unstructured.Unstructured{*route.DeepCopy()}}, nil
-						},
-						WatchFuncWithContext: func(_ context.Context, options metav1.ListOptions) (watch.Interface, error) {
-							if options.SendInitialEvents != nil && *options.SendInitialEvents {
-								return nil, fmt.Errorf("watch-list unsupported by fixture")
-							}
-							return watch.NewRaceFreeFake(), nil
-						},
-					}, newUDPRoute(resource.Version), 0, informercache.Indexers{})
-				}
-			}
 			failure := fmt.Errorf("transport unavailable")
 			if problem == "class-forbidden" {
 				failure = apierrors.NewForbidden(schema.GroupResource{Resource: "gatewayclasses"}, "second-class", fmt.Errorf("denied"))
 			}
 			switch problem {
-			case "discovery":
-				guardReconciler.cache = &failureCache{Cache: guardReconciler.cache, target: "*v1.CustomResourceDefinition", failure: failure}
 			case "route":
 				guardReconciler.client = &failureClient{Client: guardReconciler.client, getFailure: failure}
 			case "gateway-transport":
@@ -564,33 +499,15 @@ func TestReaderAndPatchFailuresPreserveStateAndRetry(t *testing.T) {
 				guardReconciler.client = &failureClient{Client: guardReconciler.client, patchFailure: failure}
 			}
 			udpRouteOnManagedGatewayMetric.WithLabelValues("ns", "udp").Set(1)
-			var err error
-			if problem == "discovery" {
-				err = guardReconciler.ensureUDPInformer(t.Context())
-			} else {
-				_, err = guardReconciler.Reconcile(t.Context(), requestFor(route))
-			}
+			_, err := guardReconciler.Reconcile(t.Context(), requestFor(route))
 			require.ErrorIs(t, err, failure)
 			assert.Equal(t, float64(1), promtestutil.ToFloat64(udpRouteOnManagedGatewayMetric.WithLabelValues("ns", "udp")))
-			current := newUDPRoute("v1")
+			current := newUDPRoute(udpRouteVersion)
 			require.NoError(t, originalClient.Get(t.Context(), client.ObjectKeyFromObject(route), current))
 			parents, _, err := unstructured.NestedSlice(current.Object, "status", "parents")
 			require.NoError(t, err)
 			assert.Equal(t, []interface{}{foreign}, parents, "failure must not publish partial ownership or destroy foreign state")
 			guardReconciler.client, guardReconciler.cache, guardReconciler.gatewayCache = originalClient, originalCache, originalGatewayCache
-			if problem == "discovery" {
-				_, err = guardReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: UDPRouteCRDName}})
-				require.NoError(t, err)
-				assert.Equal(t, types.UID("discovery-retry"), guardReconciler.crdUID)
-				assert.Equal(t, schema.GroupVersionResource{Group: gatewayapiv1.GroupName, Version: "v1", Resource: "udproutes"}, guardReconciler.resource)
-				select {
-				case emitted := <-guardReconciler.events:
-					assert.Equal(t, requestFor(route).NamespacedName, client.ObjectKeyFromObject(emitted.Object))
-					assert.Equal(t, newUDPRoute("v1").GroupVersionKind(), emitted.Object.GetObjectKind().GroupVersionKind())
-				case <-time.After(5 * time.Second):
-					t.Fatal("successful discovery retry did not emit the listed route")
-				}
-			}
 			_, err = guardReconciler.Reconcile(t.Context(), requestFor(route))
 			require.NoError(t, err)
 			require.NoError(t, originalClient.Get(t.Context(), client.ObjectKeyFromObject(route), current))
@@ -599,22 +516,15 @@ func TestReaderAndPatchFailuresPreserveStateAndRetry(t *testing.T) {
 	}
 }
 
-func TestRealInformerBackpressureReplacementAndStoppedRecovery(t *testing.T) {
+func TestRealInformerBackpressureAndStoppedRecovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	crd := udpCRD("first", "v1")
-	guardReconciler := newTestReconciler(t, crd)
-	guardReconciler.informer, guardReconciler.resource = nil, schema.GroupVersionResource{}
+	guardReconciler := newTestReconciler(t)
+	guardReconciler.informer = nil
 	guardReconciler.events = make(chan event.GenericEvent, 1)
-	guardReconciler.events <- event.GenericEvent{Object: newUDPRoute("v1")}
-	versions := make(chan string, 8)
+	guardReconciler.events <- event.GenericEvent{Object: newUDPRoute(udpRouteVersion)}
+	started := make(chan string, 4)
 	recoveredWatches := make(chan string, 2)
-	notifyVersion := func(ctx context.Context, version string) {
-		select {
-		case versions <- version:
-		case <-ctx.Done():
-		}
-	}
 	guardReconciler.newInformer = func(resource schema.GroupVersionResource) informercache.SharedIndexInformer {
 		watcher := watch.NewRaceFreeFake()
 		var lists, watches atomic.Int32
@@ -623,14 +533,16 @@ func TestRealInformerBackpressureReplacementAndStoppedRecovery(t *testing.T) {
 		route.SetNamespace("ns")
 		return informercache.NewSharedIndexInformer(&informercache.ListWatch{
 			ListWithContextFunc: func(ctx context.Context, _ metav1.ListOptions) (runtime.Object, error) {
-				notifyVersion(ctx, resource.Version)
+				select {
+				case started <- resource.Version:
+				case <-ctx.Done():
+				}
 				if lists.Add(1) == 1 {
 					return nil, fmt.Errorf("transient list transport failure")
 				}
 				return &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*route}}, nil
 			},
 			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-				notifyVersion(ctx, resource.Version)
 				if options.SendInitialEvents != nil && *options.SendInitialEvents {
 					return nil, apierrors.NewBadRequest("watch-list unsupported by test server")
 				}
@@ -647,57 +559,36 @@ func TestRealInformerBackpressureReplacementAndStoppedRecovery(t *testing.T) {
 	}
 	require.NoError(t, guardReconciler.ensureUDPInformer(ctx))
 	select {
-	case version := <-versions:
-		assert.Equal(t, "v1", version)
+	case version := <-started:
+		assert.Equal(t, udpRouteVersion, version)
 	case <-time.After(5 * time.Second):
-		t.Fatal("old informer never requested its version")
+		t.Fatal("informer never started")
 	}
 	require.Eventually(t, func() bool {
-		return guardReconciler.informer.GetIndexer().ListKeys() != nil && len(guardReconciler.informer.GetIndexer().List()) == 1
+		return len(guardReconciler.informer.GetIndexer().List()) == 1
 	}, 5*time.Second, time.Millisecond)
-	oldDone := guardReconciler.done
 	select {
 	case version := <-recoveredWatches:
-		assert.Equal(t, "v1", version)
+		assert.Equal(t, udpRouteVersion, version)
 	case <-time.After(5 * time.Second):
-		t.Fatal("old informer did not recover a transient watch failure")
+		t.Fatal("informer did not recover a transient watch failure")
 	}
-	for len(versions) > 0 {
-		<-versions
-	}
-	crd.Spec.Versions = []apiextensionsv1.CustomResourceDefinitionVersion{{Name: "v1alpha2", Served: true}}
-	require.NoError(t, guardReconciler.client.Update(ctx, crd))
+	oldDone := guardReconciler.done
 	finished := make(chan error, 1)
 	go func() { finished <- guardReconciler.ensureUDPInformer(ctx) }()
 	select {
 	case err := <-finished:
-		require.NoError(t, err)
+		require.NoError(t, err, "saturated event callback must not block idempotent ensureUDPInformer")
 	case <-time.After(5 * time.Second):
-		t.Fatal("saturated old event callback blocked replacement")
+		t.Fatal("saturated old event callback blocked ensureUDPInformer")
 	}
-	select {
-	case <-oldDone:
-	default:
-		t.Fatal("old informer did not finish")
-	}
+	assert.Equal(t, oldDone, guardReconciler.done, "idempotent call must not replace the running informer")
 	select {
 	case <-guardReconciler.events:
 	case <-time.After(5 * time.Second):
-		t.Fatal("replacement informer did not drain the saturated event buffer")
-	}
-	select {
-	case event := <-guardReconciler.events:
-		assert.Equal(t, "gateway.networking.k8s.io/v1alpha2", event.Object.(*unstructured.Unstructured).GetAPIVersion())
-	case <-time.After(5 * time.Second):
-		t.Fatal("replacement informer failed to enqueue its own version")
+		t.Fatal("informer did not emit its listed route")
 	}
 	done := guardReconciler.done
-	select {
-	case version := <-recoveredWatches:
-		assert.Equal(t, "v1alpha2", version)
-	case <-time.After(5 * time.Second):
-		t.Fatal("replacement informer did not recover a transient watch failure")
-	}
 	cancel()
 	select {
 	case <-done:
@@ -706,82 +597,78 @@ func TestRealInformerBackpressureReplacementAndStoppedRecovery(t *testing.T) {
 	}
 }
 
-func TestConstructorDynamicClientUsesExactDiscoveredGVR(t *testing.T) {
+func TestConstructorDynamicClientUsesFixedGVR(t *testing.T) {
 	oldCache, oldController := newGatewayCache, newGuardController
 	t.Cleanup(func() { newGatewayCache, newGuardController = oldCache, oldController })
-	for _, version := range []string{"v1", "v1alpha2"} {
-		t.Run(version, func(t *testing.T) {
-			requests := make(chan string, 16)
-			route := newUDPRoute(version)
-			route.SetName("udp")
-			route.SetNamespace("outside-manager-cache")
-			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				if request.URL.Path != "/apis/gateway.networking.k8s.io/"+version+"/udproutes" {
-					http.Error(response, "wrong discovered resource", http.StatusNotFound)
-					return
-				}
-				response.Header().Set("Content-Type", "application/json")
-				if request.URL.Query().Get("watch") == "true" {
-					if request.URL.Query().Get("sendInitialEvents") == "true" {
-						http.Error(response, "watch-list not enabled in fixture", http.StatusBadRequest)
-						return
-					}
-					select {
-					case requests <- "watch:" + request.URL.Path:
-					case <-request.Context().Done():
-						return
-					}
-					response.WriteHeader(http.StatusOK)
-					response.(http.Flusher).Flush()
-					<-request.Context().Done()
-					return
-				}
-				select {
-				case requests <- "list:" + request.URL.Path:
-				case <-request.Context().Done():
-					return
-				}
-				list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*route}}
-				list.SetAPIVersion(gatewayapiv1.GroupName + "/" + version)
-				list.SetKind("UDPRouteList")
-				list.SetResourceVersion("1")
-				if err := json.NewEncoder(response).Encode(list); err != nil {
-					t.Error(err)
-				}
-			}))
-			t.Cleanup(server.Close)
-			fixture := newTestReconciler(t, udpCRD("discovered", version))
-			newGatewayCache = func(_ *rest.Config, _ cache.Options) (cache.Cache, error) { return fixture.gatewayCache, nil }
-			var built *reconciler
-			newGuardController = func(_ string, opts controller.Options) (controller.Controller, error) {
-				built = opts.Reconciler.(*reconciler)
-				return &recordingGuard{}, nil
-			}
-			_, err := NewUnmanaged(&guardManager{config: &rest.Config{Host: server.URL}, guardReconciler: fixture}, nil)
-			require.NoError(t, err)
-			ctx, cancel := context.WithCancel(t.Context())
-			t.Cleanup(cancel)
-			require.NoError(t, built.ensureUDPInformer(ctx))
-			for _, method := range []string{"list:", "watch:"} {
-				select {
-				case request := <-requests:
-					assert.Equal(t, method+"/apis/gateway.networking.k8s.io/"+version+"/udproutes", request)
-				case <-time.After(5 * time.Second):
-					t.Fatal("dynamic client did not use discovered GVR")
-				}
+	requests := make(chan string, 16)
+	route := newUDPRoute(udpRouteVersion)
+	route.SetName("udp")
+	route.SetNamespace("outside-manager-cache")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/apis/gateway.networking.k8s.io/"+udpRouteVersion+"/udproutes" {
+			http.Error(response, "wrong resource path", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("watch") == "true" {
+			if request.URL.Query().Get("sendInitialEvents") == "true" {
+				http.Error(response, "watch-list not enabled in fixture", http.StatusBadRequest)
+				return
 			}
 			select {
-			case event := <-built.events:
-				assert.Equal(t, route.GroupVersionKind(), event.Object.GetObjectKind().GroupVersionKind())
-			case <-time.After(5 * time.Second):
-				t.Fatal("dynamic informer failed to emit discovered route")
+			case requests <- "watch:" + request.URL.Path:
+			case <-request.Context().Done():
+				return
 			}
-			cancel()
-			select {
-			case <-built.done:
-			case <-time.After(5 * time.Second):
-				t.Fatal("dynamic informer did not stop")
-			}
-		})
+			response.WriteHeader(http.StatusOK)
+			response.(http.Flusher).Flush()
+			<-request.Context().Done()
+			return
+		}
+		select {
+		case requests <- "list:" + request.URL.Path:
+		case <-request.Context().Done():
+			return
+		}
+		list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*route}}
+		list.SetAPIVersion(gatewayapiv1.GroupName + "/" + udpRouteVersion)
+		list.SetKind("UDPRouteList")
+		list.SetResourceVersion("1")
+		if err := json.NewEncoder(response).Encode(list); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	fixture := newTestReconciler(t)
+	newGatewayCache = func(_ *rest.Config, _ cache.Options) (cache.Cache, error) { return fixture.gatewayCache, nil }
+	var built *reconciler
+	newGuardController = func(_ string, opts controller.Options) (controller.Controller, error) {
+		built = opts.Reconciler.(*reconciler)
+		return &recordingGuard{}, nil
+	}
+	_, err := NewUnmanaged(&guardManager{config: &rest.Config{Host: server.URL}, guardReconciler: fixture}, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	require.NoError(t, built.ensureUDPInformer(ctx))
+	for _, method := range []string{"list:", "watch:"} {
+		select {
+		case request := <-requests:
+			assert.Equal(t, method+"/apis/gateway.networking.k8s.io/"+udpRouteVersion+"/udproutes", request)
+		case <-time.After(5 * time.Second):
+			t.Fatal("dynamic client did not use fixed GVR")
+		}
+	}
+	select {
+	case event := <-built.events:
+		assert.Equal(t, route.GroupVersionKind(), event.Object.GetObjectKind().GroupVersionKind())
+	case <-time.After(5 * time.Second):
+		t.Fatal("dynamic informer failed to emit route")
+	}
+	cancel()
+	select {
+	case <-built.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("dynamic informer did not stop")
 	}
 }

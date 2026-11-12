@@ -116,7 +116,6 @@ func TestConstructorRealGatewayCacheLifecycle(t *testing.T) {
 			t.Cleanup(server.Close)
 			route := udpRoute("udp", "customer", []gatewayapiv1.ParentReference{{Name: "gateway", Namespace: namespacePtr("outside-main-cache")}})
 			fixture := newTestReconciler(t, route)
-			fixture.client.Scheme().AddKnownTypeWithName(route.GroupVersionKind(), newUDPRoute("v1"))
 			fixture.cache = &namespaceRestrictedCache{Cache: fixture.cache}
 			mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gatewayapiv1.SchemeGroupVersion})
 			mapper.AddSpecific(gatewayapiv1.SchemeGroupVersion.WithKind("Gateway"), gatewayapiv1.SchemeGroupVersion.WithResource("gateways"), gatewayapiv1.SchemeGroupVersion.WithResource("gateway"), meta.RESTScopeNamespace)
@@ -138,13 +137,12 @@ func TestConstructorRealGatewayCacheLifecycle(t *testing.T) {
 			}
 			_, err := NewUnmanaged(mgr, nil)
 			require.NoError(t, err)
-			require.Len(t, mgr.added, 1)
+			require.Len(t, mgr.added, 2)
 			assert.Same(t, wider, mgr.added[0])
 			assert.Same(t, wider, built.gatewayCache)
 			assert.Same(t, fixture.cache, built.cache)
 			assert.NotSame(t, fixture.cache, built.gatewayCache)
 			built.informer = fixture.informer
-			built.resource = fixture.resource
 			built.modeAccessor = fixture.modeAccessor
 			ctx, cancel := context.WithCancel(t.Context())
 			t.Cleanup(cancel)
@@ -152,7 +150,7 @@ func TestConstructorRealGatewayCacheLifecycle(t *testing.T) {
 			go func() { cacheDone <- mgr.added[0].Start(ctx) }()
 			queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]())
 			t.Cleanup(queue.ShutDown)
-			for _, src := range guard.sources[2:4] {
+			for _, src := range guard.sources[1:3] {
 				require.NoError(t, src.Start(ctx, queue))
 			}
 			select {
@@ -170,13 +168,13 @@ func TestConstructorRealGatewayCacheLifecycle(t *testing.T) {
 				classesAvailable.Store(true)
 				syncCtx, stopSync := context.WithTimeout(ctx, 5*time.Second)
 				defer stopSync()
-				for _, src := range guard.sources[2:4] {
+				for _, src := range guard.sources[1:3] {
 					require.NoError(t, src.(source.SyncingSource).WaitForSync(syncCtx))
 				}
 				_, err := built.Reconcile(ctx, requestFor(route))
 				require.NoError(t, err)
 				assert.Equal(t, int32(2), wider.reads.Load(), "Gateway and class reads must use the added wider cache")
-				current := newUDPRoute("v1")
+				current := newUDPRoute(udpRouteVersion)
 				require.NoError(t, fixture.client.Get(ctx, client.ObjectKeyFromObject(route), current))
 				require.Len(t, routeParents(t, current), 1)
 				assert.Equal(t, gatewayapiv1.GatewayController(operatorcontroller.OpenShiftGatewayClassControllerName), routeParents(t, current)[0].ControllerName)
@@ -191,7 +189,7 @@ func TestConstructorRealGatewayCacheLifecycle(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("actual cache must stop after cancellation without manually releasing a Get")
 			}
-			for _, src := range guard.sources[2:4] {
+			for _, src := range guard.sources[1:3] {
 				finished := make(chan struct{})
 				go func(src source.Source) {
 					src.(source.SyncingSource).WaitForSync(ctx)

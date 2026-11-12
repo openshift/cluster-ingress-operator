@@ -7,16 +7,13 @@ import (
 	"time"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	informercache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,14 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
-
-func udpCRD(uid, version string) *apiextensionsv1.CustomResourceDefinition {
-	return &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: UDPRouteCRDName, UID: types.UID(uid)},
-		Spec:       apiextensionsv1.CustomResourceDefinitionSpec{Group: gatewayapiv1.GroupName, Names: apiextensionsv1.CustomResourceDefinitionNames{Kind: "UDPRoute", Plural: "udproutes"}, Scope: apiextensionsv1.NamespaceScoped, Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{Name: version, Served: true, Storage: true}}},
-		Status:     apiextensionsv1.CustomResourceDefinitionStatus{Conditions: []apiextensionsv1.CustomResourceDefinitionCondition{{Type: apiextensionsv1.Established, Status: apiextensionsv1.ConditionTrue}}},
-	}
-}
 
 type lifecycleInformer struct {
 	informercache.SharedIndexInformer
@@ -55,55 +44,27 @@ func (informer *lifecycleInformer) AddEventHandler(handler informercache.Resourc
 
 func (informer *lifecycleInformer) Run(stop <-chan struct{}) { <-stop }
 
-func TestOptionalUDPInformerAbsentLateAdditionRetryDeletionRecreation(t *testing.T) {
+func TestUDPInformerIdempotencyAndStoppedRecovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	r := newTestReconciler(t)
 	r.informer = nil
-	r.resource = schema.GroupVersionResource{}
 	r.events = make(chan event.GenericEvent, 16)
 	attempts := 0
 	r.newInformer = func(resource schema.GroupVersionResource) informercache.SharedIndexInformer {
 		attempts++
-		informer := &lifecycleInformer{SharedIndexInformer: informercache.NewSharedIndexInformer(&informercache.ListWatch{}, newUDPRoute(resource.Version), 0, informercache.Indexers{})}
-		if attempts == 1 {
-			informer.indexError = fmt.Errorf("index registration failed")
-		}
-		return informer
+		assert.Equal(t, udpRouteVersion, resource.Version, "informer must always use the fixed version")
+		return &lifecycleInformer{SharedIndexInformer: informercache.NewSharedIndexInformer(&informercache.ListWatch{}, newUDPRoute(resource.Version), 0, informercache.Indexers{})}
 	}
 	require.NoError(t, r.ensureUDPInformer(ctx))
-	assert.Equal(t, 0, attempts, "absent UDP kind must not register any informer or index")
-	assert.Nil(t, r.informer)
-	crd := udpCRD("first", "v1")
-	require.NoError(t, r.client.Create(ctx, crd))
-	require.ErrorContains(t, r.ensureUDPInformer(ctx), "failed to add UDPRoute field indexer")
-	assert.Nil(t, r.informer)
-	require.NoError(t, r.ensureUDPInformer(ctx))
 	require.NotNil(t, r.informer)
-	assert.Equal(t, "v1", r.resource.Version)
 	first := r.informer
 	require.NoError(t, r.ensureUDPInformer(ctx))
 	assert.Same(t, first, r.informer)
-	assert.Equal(t, 2, attempts, "success must be idempotent and failed registration retriable")
+	assert.Equal(t, 1, attempts, "repeated calls must be idempotent")
 	route := udpRoute("route", "ns", []gatewayapiv1.ParentReference{{Name: "gateway"}})
 	require.NoError(t, r.informer.GetIndexer().Add(route))
 	assert.Equal(t, []client.ObjectKey{client.ObjectKeyFromObject(route)}, requestKeys(r.gatewayToUDPRoutes(ctx, gateway("gateway", "ns", "managed"))))
-	udpRouteOnManagedGatewayMetric.WithLabelValues("ns", "route").Set(1)
-	require.NoError(t, r.client.Delete(ctx, crd))
-	require.NoError(t, r.ensureUDPInformer(ctx))
-	assert.Nil(t, r.informer)
-	assert.Empty(t, r.allUDPRoutes(ctx, nil))
-	assert.Equal(t, 0, promtestutil.CollectAndCount(udpRouteOnManagedGatewayMetric))
-	crd = udpCRD("second", "v1alpha2")
-	require.NoError(t, r.client.Create(ctx, crd))
-	require.NoError(t, r.ensureUDPInformer(ctx))
-	assert.Equal(t, "v1alpha2", r.resource.Version)
-	assert.NotSame(t, first, r.informer)
-	assert.Equal(t, 3, attempts)
-	crd.UID = "third"
-	require.NoError(t, r.client.Update(ctx, crd))
-	require.NoError(t, r.ensureUDPInformer(ctx))
-	assert.Equal(t, 4, attempts, "same-version CRD recreation must replace the old informer")
 	done := r.done
 	cancel()
 	select {
@@ -111,6 +72,10 @@ func TestOptionalUDPInformerAbsentLateAdditionRetryDeletionRecreation(t *testing
 	case <-time.After(5 * time.Second):
 		t.Fatal("UDP informer did not stop with its controller")
 	}
+	require.NoError(t, r.ensureUDPInformer(t.Context()))
+	assert.Equal(t, 2, attempts, "stopped informer must be replaced")
+	r.cancel()
+	<-r.done
 }
 
 func requestKeys(requests []reconcile.Request) []client.ObjectKey {
@@ -122,7 +87,7 @@ func requestKeys(requests []reconcile.Request) []client.ObjectKey {
 }
 
 func TestUDPInformerHandlerFailureRetries(t *testing.T) {
-	r := newTestReconciler(t, udpCRD("test", "v1"))
+	r := newTestReconciler(t)
 	r.informer = nil
 	r.events = make(chan event.GenericEvent, 16)
 	attempts := 0
@@ -138,41 +103,22 @@ func TestUDPInformerHandlerFailureRetries(t *testing.T) {
 	assert.Nil(t, r.informer)
 	require.NoError(t, r.ensureUDPInformer(t.Context()))
 	assert.Equal(t, 2, attempts)
+	r.cancel()
+	<-r.done
 }
 
-func TestServedUDPResource(t *testing.T) {
-	for _, version := range []string{"v1", "v1alpha2"} {
-		assert.Equal(t, version, servedUDPResource(udpCRD("test", version)).Version)
-	}
-	crd := udpCRD("test", "v1alpha2")
-	crd.Spec.Versions = append(crd.Spec.Versions, apiextensionsv1.CustomResourceDefinitionVersion{Name: "v1", Served: true})
-	assert.Equal(t, "v1", servedUDPResource(crd).Version)
-	for _, modify := range []func(*apiextensionsv1.CustomResourceDefinition){
-		func(crd *apiextensionsv1.CustomResourceDefinition) { crd.Status.Conditions = nil },
-		func(crd *apiextensionsv1.CustomResourceDefinition) { crd.Spec.Versions[0].Served = false },
-		func(crd *apiextensionsv1.CustomResourceDefinition) { crd.Spec.Scope = apiextensionsv1.ClusterScoped },
-		func(crd *apiextensionsv1.CustomResourceDefinition) { crd.Spec.Group = "other.example" },
-		func(crd *apiextensionsv1.CustomResourceDefinition) { crd.Spec.Names.Kind = "Other" },
-		func(crd *apiextensionsv1.CustomResourceDefinition) { now := metav1.Now(); crd.DeletionTimestamp = &now },
-	} {
-		crd := udpCRD("test", "v1")
-		modify(crd)
-		assert.True(t, servedUDPResource(crd).Empty())
-	}
-}
-
-func TestUDPInformerUsesServedGVKAndEvents(t *testing.T) {
+func TestUDPInformerUsesFixedGVKAndEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	r := newTestReconciler(t, udpCRD("test", "v1alpha2"))
+	r := newTestReconciler(t)
 	r.informer = nil
 	r.events = make(chan event.GenericEvent, 16)
 	watcher := watch.NewRaceFreeFake()
 	route := udpRoute("route", "ns", []gatewayapiv1.ParentReference{{Name: "gateway"}})
-	route.SetAPIVersion("gateway.networking.k8s.io/v1alpha2")
+	route.SetAPIVersion("gateway.networking.k8s.io/" + udpRouteVersion)
 	route.SetGeneration(1)
 	r.newInformer = func(resource schema.GroupVersionResource) informercache.SharedIndexInformer {
-		require.Equal(t, "v1alpha2", resource.Version)
+		require.Equal(t, udpRouteVersion, resource.Version)
 		return informercache.NewSharedIndexInformer(&informercache.ListWatch{
 			ListWithContextFunc: func(context.Context, metav1.ListOptions) (runtime.Object, error) {
 				return &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*route.DeepCopy()}}, nil
@@ -230,7 +176,7 @@ func TestReconcilePreservesUnknownForeignStatusFields(t *testing.T) {
 	r := newTestReconciler(t, class, managedGateway, route)
 	_, err := r.Reconcile(t.Context(), requestFor(route))
 	require.NoError(t, err)
-	updated := newUDPRoute("v1")
+	updated := newUDPRoute(udpRouteVersion)
 	require.NoError(t, r.client.Get(t.Context(), client.ObjectKeyFromObject(route), updated))
 	parents, _, err := unstructured.NestedSlice(updated.Object, "status", "parents")
 	require.NoError(t, err)
@@ -246,27 +192,22 @@ func TestReconcilePreservesUnknownForeignStatusFields(t *testing.T) {
 	assert.Equal(t, before.Object, updated.Object, "repeat reconciliation must not churn status or resourceVersion")
 }
 
-func TestReconcileUsingServedUDPVersion(t *testing.T) {
-	for _, version := range []string{"v1", "v1alpha2"} {
-		t.Run(version, func(t *testing.T) {
-			class := gatewayClass("managed", operatorcontroller.OpenShiftGatewayClassControllerName)
-			managedGateway := gateway("managed", "ns", class.Name)
-			route := udpRoute("route", "ns", []gatewayapiv1.ParentReference{{Name: "managed"}})
-			route.SetAPIVersion("gateway.networking.k8s.io/" + version)
-			route.SetGeneration(3)
-			r := newTestReconciler(t, class, managedGateway, route)
-			r.resource.Version = version
-			_, err := r.Reconcile(t.Context(), requestFor(route))
-			require.NoError(t, err)
-			updated := newUDPRoute(version)
-			require.NoError(t, r.client.Get(t.Context(), client.ObjectKeyFromObject(route), updated))
-			parents := routeParents(t, updated)
-			require.Len(t, parents, 1)
-			condition := meta.FindStatusCondition(parents[0].Conditions, string(gatewayapiv1.RouteConditionAccepted))
-			require.NotNil(t, condition)
-			assert.Equal(t, metav1.ConditionFalse, condition.Status)
-			assert.Equal(t, int64(3), condition.ObservedGeneration)
-			assert.Equal(t, ReasonUnsupportedByController, condition.Reason)
-		})
-	}
+func TestReconcileUsingFixedUDPVersion(t *testing.T) {
+	class := gatewayClass("managed", operatorcontroller.OpenShiftGatewayClassControllerName)
+	managedGateway := gateway("managed", "ns", class.Name)
+	route := udpRoute("route", "ns", []gatewayapiv1.ParentReference{{Name: "managed"}})
+	route.SetAPIVersion("gateway.networking.k8s.io/" + udpRouteVersion)
+	route.SetGeneration(3)
+	r := newTestReconciler(t, class, managedGateway, route)
+	_, err := r.Reconcile(t.Context(), requestFor(route))
+	require.NoError(t, err)
+	updated := newUDPRoute(udpRouteVersion)
+	require.NoError(t, r.client.Get(t.Context(), client.ObjectKeyFromObject(route), updated))
+	parents := routeParents(t, updated)
+	require.Len(t, parents, 1)
+	condition := meta.FindStatusCondition(parents[0].Conditions, string(gatewayapiv1.RouteConditionAccepted))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, int64(3), condition.ObservedGeneration)
+	assert.Equal(t, ReasonUnsupportedByController, condition.Reason)
 }
