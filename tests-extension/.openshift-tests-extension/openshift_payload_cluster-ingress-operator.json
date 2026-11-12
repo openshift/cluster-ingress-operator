@@ -8,9 +8,9 @@
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
       "test/gatewayapi.go:18",
-      "test/gatewayapi.go:34",
-      "test/gatewayapi.go:41",
-      "test/gatewayapi.go:42"
+      "test/gatewayapi.go:36",
+      "test/gatewayapi.go:43",
+      "test/gatewayapi.go:44"
     ],
     "lifecycle": "blocking",
     "environmentSelector": {}
@@ -24,9 +24,9 @@
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
       "test/gatewayapi.go:18",
-      "test/gatewayapi.go:34",
-      "test/gatewayapi.go:41",
-      "test/gatewayapi.go:52"
+      "test/gatewayapi.go:36",
+      "test/gatewayapi.go:43",
+      "test/gatewayapi.go:54"
     ],
     "lifecycle": "blocking",
     "environmentSelector": {}
@@ -40,9 +40,9 @@
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
       "test/gatewayapi.go:18",
-      "test/gatewayapi.go:34",
-      "test/gatewayapi.go:41",
-      "test/gatewayapi.go:62"
+      "test/gatewayapi.go:36",
+      "test/gatewayapi.go:43",
+      "test/gatewayapi.go:64"
     ],
     "lifecycle": "blocking",
     "environmentSelector": {}
@@ -56,9 +56,9 @@
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
       "test/gatewayapi.go:18",
-      "test/gatewayapi.go:34",
-      "test/gatewayapi.go:41",
-      "test/gatewayapi.go:77"
+      "test/gatewayapi.go:36",
+      "test/gatewayapi.go:43",
+      "test/gatewayapi.go:79"
     ],
     "lifecycle": "blocking",
     "environmentSelector": {}
@@ -72,9 +72,9 @@
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
       "test/gatewayapi.go:18",
-      "test/gatewayapi.go:34",
-      "test/gatewayapi.go:41",
-      "test/gatewayapi.go:87"
+      "test/gatewayapi.go:36",
+      "test/gatewayapi.go:43",
+      "test/gatewayapi.go:89"
     ],
     "lifecycle": "blocking",
     "environmentSelector": {}

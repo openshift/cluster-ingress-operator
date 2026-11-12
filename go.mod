@@ -58,7 +58,7 @@ require (
 	k8s.io/klog/v2 v2.140.0
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 	sigs.k8s.io/controller-runtime v0.25.2
-	sigs.k8s.io/gateway-api v1.5.1
+	sigs.k8s.io/gateway-api v1.6.3
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -258,4 +258,4 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 // Use OSSM release-3.5.0 branch (downstream fork of sail-operator).
 // Replace needed because the fork keeps upstream module name for compatibility.
-replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20261030133317-9d8aa8ff0499
+replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20261112172018-c336e87e51d0

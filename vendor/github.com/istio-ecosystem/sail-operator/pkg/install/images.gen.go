@@ -76,7 +76,7 @@ func init() {
 		},
 		"v1.31.1": {
 			IstiodImage:  "registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:7c7f5a7c09bf90e32ed246db3925441657d7dd89ad52e087696a9b08f14ee3f3",
-			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:a7556f3c898f59f6bff392afb1debc5081f59044b679e80957ed3b24d26e0eaa",
+			ProxyImage:   "registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:aecacb9ee9bcc0d174f7647157a62b3f4f86897292d47e9a3ca51bd7bbd40578",
 			CNIImage:     "registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:4a600bc7bd3d6eb00db3924cbc78d7896cce70146950857d934ace0f62ce297d",
 			ZTunnelImage: "registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:432a1070feec34efea46560dfd48b97234f740eef07fa6c24ab216f48f1a4ae8",
 		},
