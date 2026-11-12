@@ -654,7 +654,7 @@ github.com/imdario/mergo
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
-# github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b => github.com/openshift-service-mesh/sail-operator v0.0.0-20261030133317-9d8aa8ff0499
+# github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b => github.com/openshift-service-mesh/sail-operator v0.0.0-20261112172018-c336e87e51d0
 ## explicit; go 1.26.0
 github.com/istio-ecosystem/sail-operator/api/v1
 github.com/istio-ecosystem/sail-operator/api/v1alpha1
@@ -2153,8 +2153,8 @@ sigs.k8s.io/controller-runtime/pkg/webhook/admission/metrics
 sigs.k8s.io/controller-runtime/pkg/webhook/conversion
 sigs.k8s.io/controller-runtime/pkg/webhook/conversion/metrics
 sigs.k8s.io/controller-runtime/pkg/webhook/internal/metrics
-# sigs.k8s.io/gateway-api v1.5.1
-## explicit; go 1.25.0
+# sigs.k8s.io/gateway-api v1.6.3
+## explicit; go 1.26.0
 sigs.k8s.io/gateway-api/apis/v1
 # sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730
 ## explicit; go 1.23
@@ -2261,4 +2261,4 @@ sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v3
 sigs.k8s.io/yaml/kyaml
 # github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
-# github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20261030133317-9d8aa8ff0499
+# github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20261112172018-c336e87e51d0
