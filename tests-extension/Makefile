@@ -23,8 +23,30 @@ build: ## Build the extended tests binary
 list-test-names: build ## List all registered test names
 	@$(BINARY) list -o names
 
+# update-metadata regenerates
+# .openshift-tests-extension/openshift_payload_cluster-ingress-operator.json,
+# which records the name and lifecycle of every test the binary ships. The
+# underlying OTE command refuses to regenerate the file when a test has been
+# renamed or removed without being declared, so run this after any change to a
+# test name; see "Renaming or removing a test" in test/qe/README.md.
+.PHONY: update-metadata
+update-metadata: build ## Regenerate the registered-test metadata
+	$(BINARY) update
+
+# verify-metadata fails if the committed metadata is stale with respect to the
+# tests in the binary. It checks for untracked files as well as modifications,
+# so a newly generated metadata file is not mistaken for an up-to-date one.
+.PHONY: verify-metadata
+verify-metadata: update-metadata ## Fail if the committed metadata is stale
+	@if [ -n "$$(git status --porcelain -- .openshift-tests-extension)" ]; then \
+		echo "ERROR: .openshift-tests-extension is out of date." >&2; \
+		echo "Run 'make update-metadata' and commit the result." >&2; \
+		git --no-pager diff -- .openshift-tests-extension; \
+		exit 1; \
+	fi
+
 .PHONY: verify
-verify: tidy fmt vet ## Run all verification checks
+verify: tidy fmt vet verify-metadata ## Run all verification checks
 
 .PHONY: tidy
 tidy: ## Run go mod tidy
