@@ -181,9 +181,13 @@ func Test_syncManagedProfile(t *testing.T) {
 			}
 
 			// Sync the profile; this function must never install or uninstall Sail.
-			result, err := r.syncManagedProfile(ctx, name)
-			require.NoError(t, err)
-			require.Equal(t, tc.expectedRequeue, result.RequeueAfter > 0)
+			err := r.syncManagedProfile(ctx, name)
+			if tc.expectedRequeue {
+				var retry retryable.Error
+				require.ErrorAs(t, err, &retry)
+			} else {
+				require.NoError(t, err)
+			}
 			require.Nil(t, r.sailInstaller.(*fakeSailInstaller).internalOpts.Values)
 			require.False(t, r.sailInstaller.(*fakeSailInstaller).uninstallCalled)
 
@@ -249,9 +253,12 @@ func TestAdoptedProfileRemovesSailFinalizer(t *testing.T) {
 				require.NoError(t, r.client.Delete(ctx, profile))
 			}
 
-			// Profile sync must never install or uninstall Sail.
-			_, err := r.syncManagedProfile(ctx, name)
-			require.NoError(t, err)
+			// Profile sync must never install or uninstall Sail. A profile deleted
+			// during the sync requeues instead of failing.
+			err := r.syncManagedProfile(ctx, name)
+			if _, ok := err.(retryable.Error); !ok {
+				require.NoError(t, err)
+			}
 			require.False(t, r.sailInstaller.(*fakeSailInstaller).uninstallCalled)
 
 			var current gatewayapiv1.GatewayClass
@@ -351,9 +358,13 @@ func Test_ensureManagedProfile(t *testing.T) {
 			r := managedProfileTestReconciler(t, objects...)
 
 			// Sync toward tc.want and check whether a requeue is expected.
-			result, err := r.ensureManagedProfile(ctx, name, tc.want)
-			require.NoError(t, err)
-			require.Equal(t, tc.expectedRequeue, result.RequeueAfter > 0)
+			err := r.ensureManagedProfile(ctx, name, tc.want)
+			if tc.expectedRequeue {
+				var retry retryable.Error
+				require.ErrorAs(t, err, &retry)
+			} else {
+				require.NoError(t, err)
+			}
 
 			// Absent is a valid outcome when the profile is not wanted.
 			have, profile, err := r.currentManagedProfile(ctx, name)

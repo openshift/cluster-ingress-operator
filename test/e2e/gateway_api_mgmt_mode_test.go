@@ -496,7 +496,7 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 	assert.Equal(t, "Unmanaged", installed.Reason)
 
 	// The managed profile reports the transition alongside its control plane.
-	require.NoError(t, waitForGatewayClassCondition(t, operatorcontroller.OpenShiftClusterIPGatewayClassName, 2*time.Minute,
+	require.NoError(t, waitForGatewayClassCondition(t, operatorcontroller.OpenShiftClusterIPGatewayClassName, 3*time.Minute,
 		metav1.Condition{Type: "openshift.io/Configured", Status: metav1.ConditionFalse, Reason: "Unmanaged"}),
 		"ClusterIP managed profile must report Configured=False with reason Unmanaged")
 

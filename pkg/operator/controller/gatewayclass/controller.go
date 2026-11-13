@@ -614,7 +614,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	// GatewayClass exists. They do not trigger Sail installation or
 	// uninstallation.
 	if isManagedProfileName(request.Name) {
-		return r.syncManagedProfile(ctx, request.Name)
+		return reconcile.Result{}, r.syncManagedProfile(ctx, request.Name)
 	}
 
 	var infraConfig configv1.Infrastructure
@@ -797,9 +797,6 @@ func (r *reconciler) markControllerUninstalled(ctx context.Context) error {
 		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 			current := &gatewayapiv1.GatewayClass{}
 			if err := r.client.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
-				if errors.IsNotFound(err) {
-					return nil
-				}
 				return err
 			}
 
