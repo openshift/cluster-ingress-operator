@@ -32,6 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
@@ -838,6 +840,7 @@ func TestRegisterIngressWatch(t *testing.T) {
 // CRDs or ClusterRoles.
 func TestReconcile_Unmanaged_SkipsCRDAndRBAC(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1458,6 +1461,7 @@ func TestReconcile_ModeSnapshot_PreventsStaleUnmanaged(t *testing.T) {
 // snapshot, without a second read that could have flipped to Managed.
 func TestReconcile_ModeSnapshot_UnmanagedDeletesVAPBeforeStatus(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1666,6 +1670,7 @@ func TestReconcile_SteadyState_NoSpuriousInProgress(t *testing.T) {
 // transition reconcile but cleared after completion.
 func TestReconcile_ModeChange_SetsInProgress(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
@@ -1823,6 +1828,7 @@ func TestReconcile_SnapshotFailure_ClearsStaleState(t *testing.T) {
 // therefore do NOT call UninstallSail or deleteAdmissionPolicy).
 func TestReconcile_SteadyStateUnmanaged_SkipsTransitionOps(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayapiv1.Install(scheme))
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
