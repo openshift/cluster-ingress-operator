@@ -370,13 +370,15 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)
 	}
 
-	// Set up the Service DNS controller.  This controller is unmanaged by
-	// the manager; the gatewayapi controller starts it after it creates the
-	// Gateway API CRDs.
+	// Cache listenerSets so we can reference them from the gateway service dns controller.
 	listenerSetCache, err := newListenerSetCache(mgr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ListenerSet cache: %w", err)
 	}
+
+	// Set up the Service DNS controller.  This controller is unmanaged by
+	// the manager; the gatewayapi controller starts it after it creates the
+	// Gateway API CRDs.
 	gatewayServiceDNSController, err := gatewayservicednscontroller.NewUnmanaged(mgr, gatewayservicednscontroller.Config{
 		OperandNamespace: operatorcontroller.DefaultOperandNamespace,
 	}, modeAccessor, listenerSetCache)

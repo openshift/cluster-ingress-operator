@@ -7,6 +7,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -170,12 +171,6 @@ func (r *reconciler) requestsForListenerSet(ctx context.Context, object client.O
 	return []reconcile.Request{{NamespacedName: parent}}
 }
 
-// normalizeHostname removes the trailing root dot from a hostname for consistent matching.
-// This ensures that "example.com" and "example.com." are treated as equivalent.
-func normalizeHostname(hostname string) string {
-	return operatorcontroller.NormalizeDNSHostname(hostname)
-}
-
 // Reconcile expects request to refer to a gateway and adds Openshift DNS and LoadBalancer
 // conditions to it
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
@@ -221,7 +216,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// Because we will have multiple DNS records per Gateway (one per listener)
-	// we need all of the records that belong to a Gateway
+	// we need to look at all the records that belong to a Gateway.
 	hostnameToDNSRecord, err := dnsRecordsForGateway(ctx, r.cache, request.NamespacedName)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -234,7 +229,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	listenerToHostname := make(map[gatewayapiv1.SectionName]gatewayapiv1.Hostname)
 	for _, listener := range gateway.Spec.Listeners {
 		if listener.Hostname != nil {
-			hostname := normalizeHostname(string(*listener.Hostname))
+			hostname := dns.NormalizeHostname(string(*listener.Hostname))
 			listenerToHostname[listener.Name] = gatewayapiv1.Hostname(hostname)
 		}
 	}

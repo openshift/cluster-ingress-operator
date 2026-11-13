@@ -2,12 +2,12 @@ package gatewaystatus
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
 	"k8s.io/apimachinery/pkg/types"
@@ -92,12 +92,17 @@ func (r *listenerSetReconciler) Reconcile(ctx context.Context, request reconcile
 	if err := r.cache.Get(ctx, request.NamespacedName, &listenerSet); err != nil {
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
-	updated := listenerSet.DeepCopy()
+	updatedListenerSet := listenerSet.DeepCopy()
 	hostnames := map[gatewayapiv1.SectionName]gatewayapiv1.Hostname{}
 	records := map[string]*iov1.DNSRecord{}
 	var dnsConfig configv1.DNS
 	parent := operatorcontroller.ListenerSetParent(&listenerSet)
-	managed := r.modeAccessor != nil && r.modeAccessor.AllowDependents() && parent.Namespace == operatorcontroller.DefaultOperandNamespace && listenerSet.DeletionTimestamp.IsZero() && len(operatorcontroller.IndexListenerSetParent(&listenerSet)) > 0
+
+	// TODO - investigate why the managed variable isn't global, and why listenerSet has anything to do with managed status
+	// and why managed status can change here.
+	managed := r.modeAccessor != nil && r.modeAccessor.AllowDependents() &&
+		parent.Namespace == operatorcontroller.DefaultOperandNamespace &&
+		listenerSet.DeletionTimestamp.IsZero() && len(operatorcontroller.IndexListenerSetParent(&listenerSet)) > 0
 	if managed {
 		var gateway gatewayapiv1.Gateway
 		if err := r.client.Get(ctx, parent, &gateway); err != nil {
@@ -120,28 +125,35 @@ func (r *listenerSetReconciler) Reconcile(ctx context.Context, request reconcile
 			return reconcile.Result{}, err
 		}
 	}
-	status.ComputeListenerSetDNSStatus(&dnsConfig, updated, hostnames, records)
-	if !reflect.DeepEqual(listenerSet.Status, updated.Status) {
+
+	// TODO if it is not managed, we don't have any dnsConfig, hostnames, or records
+	status.ComputeListenerSetDNSStatus(&dnsConfig, updatedListenerSet, hostnames, records)
+	if !reflect.DeepEqual(listenerSet.Status, updatedListenerSet.Status) {
 		// Optimistic locking prevents replacing a concurrent Istio status update.
-		if err := r.client.Status().Patch(ctx, updated, client.MergeFromWithOptions(&listenerSet, client.MergeFromWithOptimisticLock{})); err != nil {
+		// TODO investigate whether optimistic logging can cause problems or latency.
+		if err := r.client.Status().Patch(ctx, updatedListenerSet, client.MergeFromWithOptions(&listenerSet, client.MergeFromWithOptimisticLock{})); err != nil {
 			return reconcile.Result{}, err
 		}
 	}
 	return reconcile.Result{}, nil
 }
 
-func dnsRecordsForGateway(ctx context.Context, reader client.Reader, parent types.NamespacedName) (map[string]*iov1.DNSRecord, error) {
-	var records iov1.DNSRecordList
-	if err := reader.List(ctx, &records, client.InNamespace(parent.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: parent.Name}); err != nil {
+// Collect all the dnsRecords affiliated with the given Gateway.
+func dnsRecordsForGateway(ctx context.Context, reader client.Reader, parentGateway types.NamespacedName) (map[string]*iov1.DNSRecord, error) {
+	var dnsRecords iov1.DNSRecordList
+	if err := reader.List(ctx, &dnsRecords, client.InNamespace(parentGateway.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: parentGateway.Name}); err != nil {
 		return nil, err
 	}
-	byHostname := map[string]*iov1.DNSRecord{}
-	for _, record := range records.Items {
-		hostname := operatorcontroller.NormalizeDNSHostname(record.Spec.DNSName)
-		if previous := byHostname[hostname]; previous != nil {
-			return nil, fmt.Errorf("duplicate DNSRecords for Gateway %s", parent)
+	hostnameToDNSRecord := map[string]*iov1.DNSRecord{}
+	for _, record := range dnsRecords.Items {
+		hostname := dns.NormalizeHostname(record.Spec.DNSName)
+		if _, exists := hostnameToDNSRecord[hostname]; exists {
+			// Ambiguous claim: report DNS as not ready. gateway-service-dns reports the duplicate itself.
+			logger.Info("duplicate DNSRecords on Gateway; treating DNS as not ready", "gateway", parentGateway.String())
+			hostnameToDNSRecord[hostname] = nil
+			continue
 		}
-		byHostname[hostname] = record.DeepCopy()
+		hostnameToDNSRecord[hostname] = record.DeepCopy()
 	}
-	return byHostname, nil
+	return hostnameToDNSRecord, nil
 }

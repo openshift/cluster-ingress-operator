@@ -1,8 +1,7 @@
 package controller
 
 import (
-	"strings"
-
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,22 +27,21 @@ func IndexListenerSetParent(object client.Object) []string {
 	return []string{ListenerSetParent(listenerSet).String()}
 }
 
+// A listenerSet must target a Gateway for us to process it.  Gateway API doesn't
+// enforce this.  For the time being, we defensively ignore a listenerSet that
+// targets an explicit Kind that is not Gateway.
 func listenerSetTargetsGateway(ls *gatewayapiv1.ListenerSet) bool {
 	parent := ls.Spec.ParentRef
-	return (parent.Group == nil || *parent.Group == gatewayapiv1.Group(gatewayapiv1.GroupName)) && (parent.Kind == nil || *parent.Kind == "Gateway")
+	return (parent.Group == nil || *parent.Group == gatewayapiv1.Group(gatewayapiv1.GroupName)) &&
+		(parent.Kind == nil || *parent.Kind == "Gateway")
 }
 
-// NormalizeDNSHostname keeps wildcard and apex names distinct.
-func NormalizeDNSHostname(hostname string) string {
-	return strings.ToLower(strings.TrimSuffix(hostname, "."))
-}
-
-// ListenerSetDNSHostnames trusts only current Istio status, never CIO's DNSReady.
-// In particular, a spec edit must not expose DNS using acceptance of the old spec.
+// ListenerSetDNSHostnames trusts only current Istio status, not CIO's DNSReady.
 func ListenerSetDNSHostnames(ls *gatewayapiv1.ListenerSet) map[gatewayapiv1.SectionName]gatewayapiv1.Hostname {
 	hostnames := map[gatewayapiv1.SectionName]gatewayapiv1.Hostname{}
 	accepted := meta.FindStatusCondition(ls.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-	if !listenerSetTargetsGateway(ls) || !ls.DeletionTimestamp.IsZero() || accepted == nil || accepted.Status != metav1.ConditionTrue || accepted.ObservedGeneration != ls.Generation {
+	if !listenerSetTargetsGateway(ls) || !ls.DeletionTimestamp.IsZero() ||
+		accepted == nil || accepted.Status != metav1.ConditionTrue || accepted.ObservedGeneration != ls.Generation {
 		return hostnames
 	}
 	for _, listener := range ls.Spec.Listeners {
@@ -54,9 +52,14 @@ func ListenerSetDNSHostnames(ls *gatewayapiv1.ListenerSet) map[gatewayapiv1.Sect
 			if listenerStatus.Name != listener.Name {
 				continue
 			}
+			conflicted := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionConflicted))
+			// If this listener's status shows as Conflicted, skip it.
+			if conflicted != nil && conflicted.ObservedGeneration == ls.Generation && conflicted.Status == metav1.ConditionTrue {
+				continue
+			}
 			accepted := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionAccepted))
-			if accepted != nil && accepted.ObservedGeneration == ls.Generation && accepted.Status != metav1.ConditionFalse {
-				hostnames[listener.Name] = gatewayapiv1.Hostname(NormalizeDNSHostname(string(*listener.Hostname)))
+			if accepted != nil && accepted.ObservedGeneration == ls.Generation && accepted.Status == metav1.ConditionTrue {
+				hostnames[listener.Name] = gatewayapiv1.Hostname(dns.NormalizeHostname(string(*listener.Hostname)))
 			}
 		}
 	}

@@ -6,10 +6,10 @@ import (
 	"reflect"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"k8s.io/client-go/tools/record"
@@ -18,6 +18,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -252,7 +253,7 @@ func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 		if listener.Hostname == nil || len(*listener.Hostname) == 0 {
 			continue
 		}
-		domain := operatorcontroller.NormalizeDNSHostname(string(*listener.Hostname)) + "."
+		domain := dns.NormalizeHostname(string(*listener.Hostname)) + "."
 		domains.Insert(domain)
 	}
 	return domains
@@ -269,7 +270,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	recordsByDomain := map[string][]*iov1.DNSRecord{}
 	for index := range existing.Items {
 		record := &existing.Items[index]
-		domain := operatorcontroller.NormalizeDNSHostname(record.Spec.DNSName) + "."
+		domain := dns.NormalizeHostname(record.Spec.DNSName) + "."
 		recordsByDomain[domain] = append(recordsByDomain[domain], record)
 	}
 	labels := map[string]string{
@@ -350,7 +351,7 @@ func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gatewa
 	}
 	var errs []error
 	for i := range dnsrecords.Items {
-		if domains.Has(operatorcontroller.NormalizeDNSHostname(dnsrecords.Items[i].Spec.DNSName) + ".") {
+		if domains.Has(dns.NormalizeHostname(dnsrecords.Items[i].Spec.DNSName) + ".") {
 			continue
 		}
 		if !dnsRecordOwnedByService(&dnsrecords.Items[i], service) {
