@@ -2,8 +2,12 @@ package azure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
@@ -24,6 +28,11 @@ const (
 	// OCPClusterIDTagValue is the value of the cluster identifying tag that is added to
 	// the Azure resources created by OCP.
 	OCPClusterIDTagValue = "owned"
+
+	// metadataLookupTimeout bounds the ARM metadata endpoint lookup performed for
+	// sovereign/edge clouds so that NewProvider cannot block indefinitely when the
+	// ARM endpoint is slow or unreachable.
+	metadataLookupTimeout = 30 * time.Second
 )
 
 var (
@@ -59,17 +68,117 @@ type provider struct {
 	client client.DNSClient
 }
 
+// resolveEnvironment maps the configured Azure cloud to an autorest Environment.
+// Sovereign/edge clouds (Azure Stack, US Government Secret/IL6) have no built-in
+// endpoint table, so their endpoints are resolved from the ARM metadata endpoint
+// URL rather than by name. That resolution performs a network call, so it is
+// bounded by metadataLookupTimeout.
+func resolveEnvironment(config Config) (azure.Environment, error) {
+	switch config.Environment {
+	case string(configv1.AzureUSSecCloud):
+		if err := requireHTTPS(config.ARMEndpoint); err != nil {
+			return azure.Environment{}, err
+		}
+		// autorest's EnvironmentFromURL indexes authentication.audiences[0]
+		// without a length check, so a metadata response with no audiences
+		// panics inside the SDK rather than returning an error. That panic
+		// occurs in the goroutine environmentFromURL spawns, which would crash
+		// the process and bypass NewProvider's error handling. Validate the
+		// metadata ourselves first and reject the empty-audiences response.
+		if err := validateMetadataAudiences(config.ARMEndpoint); err != nil {
+			return azure.Environment{}, err
+		}
+		return environmentFromURL(config.ARMEndpoint)
+	case string(configv1.AzureStackCloud):
+		return environmentFromURL(config.ARMEndpoint)
+	default:
+		return azure.EnvironmentFromName(config.Environment)
+	}
+}
+
+func requireHTTPS(armEndpoint string) error {
+	u, err := url.Parse(armEndpoint)
+	if err != nil {
+		return fmt.Errorf("invalid ARM endpoint %q: %w", armEndpoint, err)
+	}
+	if !strings.EqualFold(u.Scheme, "https") {
+		return fmt.Errorf("ARM endpoint %q must use https", armEndpoint)
+	}
+	return nil
+}
+
+// metadataEndpoints is the subset of the ARM metadata response
+// (<ARMEndpoint>/metadata/endpoints?api-version=1.0) that we validate before
+// calling autorest's EnvironmentFromURL.
+type metadataEndpoints struct {
+	Authentication struct {
+		Audiences []string `json:"audiences"`
+	} `json:"authentication"`
+}
+
+// validateMetadataAudiences fetches the ARM metadata endpoint and returns an
+// error if it reports no authentication audiences. autorest's EnvironmentFromURL
+// would otherwise panic indexing audiences[0]. The lookup is bounded by
+// metadataLookupTimeout and uses a context-aware request so it cannot block
+// provider creation indefinitely.
+func validateMetadataAudiences(armEndpoint string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), metadataLookupTimeout)
+	defer cancel()
+
+	metadataURL := fmt.Sprintf("%s/metadata/endpoints?api-version=1.0", strings.TrimSuffix(armEndpoint, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
+	if err != nil {
+		return fmt.Errorf("building ARM metadata request for %q: %w", armEndpoint, err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching ARM metadata from %q: %w", armEndpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetching ARM metadata from %q: unexpected status %s", armEndpoint, resp.Status)
+	}
+	var meta metadataEndpoints
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return fmt.Errorf("decoding ARM metadata from %q: %w", armEndpoint, err)
+	}
+	if len(meta.Authentication.Audiences) == 0 {
+		return fmt.Errorf("ARM metadata from %q has no authentication audiences", armEndpoint)
+	}
+	return nil
+}
+
+// environmentFromURL resolves an autorest Environment from the ARM metadata
+// endpoint, bounding the lookup with metadataLookupTimeout. autorest's
+// EnvironmentFromURL is not context-aware and uses an unbounded HTTP client, so
+// it is run in a goroutine and abandoned if the deadline elapses. The result
+// channel is buffered so the abandoned goroutine does not leak.
+func environmentFromURL(armEndpoint string) (azure.Environment, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), metadataLookupTimeout)
+	defer cancel()
+
+	type result struct {
+		env azure.Environment
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		env, err := azure.EnvironmentFromURL(armEndpoint)
+		ch <- result{env: env, err: err}
+	}()
+
+	select {
+	case r := <-ch:
+		return r.env, r.err
+	case <-ctx.Done():
+		return azure.Environment{}, fmt.Errorf("timed out after %s resolving cloud environment from ARM endpoint %q: %w", metadataLookupTimeout, armEndpoint, ctx.Err())
+	}
+}
+
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
 // type A.
 func NewProvider(config Config) (dns.Provider, error) {
-	var env azure.Environment
-	var err error
-	switch config.Environment {
-	case string(configv1.AzureStackCloud):
-		env, err = azure.EnvironmentFromURL(config.ARMEndpoint)
-	default:
-		env, err = azure.EnvironmentFromName(config.Environment)
-	}
+	env, err := resolveEnvironment(config)
 	if err != nil {
 		return nil, fmt.Errorf("could not determine cloud environment: %w", err)
 	}
