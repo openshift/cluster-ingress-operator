@@ -881,6 +881,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			ARMEndpoint:    platformStatus.Azure.ARMEndpoint,
 			InfraID:        infraStatus.InfrastructureName,
 			Tags:           azuredns.GetTagList(infraStatus),
+			IPFamily:       platformStatus.Azure.IPFamily,
 		})
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to create Azure DNS manager: %v", err)

@@ -1373,7 +1373,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		dnsRecordLabels := map[string]string{
 			manifests.OwningIngressControllerLabel: ci.Name,
 		}
-		if _, record, err := dnsrecord.EnsureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
+		if _, record, err := dnsrecord.EnsureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB, platformStatus); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

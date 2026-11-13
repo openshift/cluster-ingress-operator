@@ -23,8 +23,8 @@ func telemetryOptions() policy.TelemetryOptions {
 }
 
 type DNSClient interface {
-	Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error
-	Delete(ctx context.Context, zone Zone, arec ARecord) error
+	Put(ctx context.Context, zone Zone, rs RecordSet, metadata map[string]*string) error
+	Delete(ctx context.Context, zone Zone, rs RecordSet) error
 }
 
 type Config struct {
@@ -47,19 +47,35 @@ type Config struct {
 	TenantID string
 }
 
-// ARecord is a DNS A record.
-type ARecord struct {
-	// Name is the record name.
+// RecordType is the type of an Azure DNS record set.
+type RecordType string
+
+const (
+	// RecordTypeA is an address record set holding IPv4 addresses.
+	RecordTypeA RecordType = "A"
+
+	// RecordTypeAAAA is an address record set holding IPv6 addresses.
+	RecordTypeAAAA RecordType = "AAAA"
+)
+
+// RecordSet is a DNS address record set. A name may carry both an A and an
+// AAAA record set; they are independent resources in Azure and are addressed
+// by separate RecordSet values.
+type RecordSet struct {
+	// Name is the record set name, relative to the zone.
 	Name string
 
-	// Address is the IPv4 address of the A record.
-	Address string
+	// Type selects the record set to write: A or AAAA. It is set
+	// deliberately by the caller rather than inferred from Addresses, so
+	// that Put and Delete always address the same resource.
+	Type RecordType
 
-	//TTL is the Time To Live property of the A record
+	// Addresses are the literal IP addresses of the record set. Every
+	// address must belong to the address family implied by Type.
+	Addresses []string
+
+	// TTL is the Time To Live property of the record set.
 	TTL int64
-
-	//Label is the metadata label that needs to be added with the A record.
-	Label string
 }
 
 type dnsClient struct {
@@ -85,23 +101,23 @@ func New(config Config) (DNSClient, error) {
 	return &dnsClient{recordSetClient: rsc, privateRecordSetClient: prsc}, nil
 }
 
-func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
+func (c *dnsClient) Put(ctx context.Context, zone Zone, rs RecordSet, metadata map[string]*string) error {
 	switch zone.Provider {
 	case "Microsoft.Network/privateDnsZones":
-		return c.privateRecordSetClient.Put(ctx, zone, arec, metadata)
+		return c.privateRecordSetClient.Put(ctx, zone, rs, metadata)
 	case "Microsoft.Network/dnszones":
-		return c.recordSetClient.Put(ctx, zone, arec, metadata)
+		return c.recordSetClient.Put(ctx, zone, rs, metadata)
 	default:
 		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
 	}
 }
 
-func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
+func (c *dnsClient) Delete(ctx context.Context, zone Zone, rs RecordSet) error {
 	switch zone.Provider {
 	case "Microsoft.Network/privateDnsZones":
-		return c.privateRecordSetClient.Delete(ctx, zone, arec)
+		return c.privateRecordSetClient.Delete(ctx, zone, rs)
 	case "Microsoft.Network/dnszones":
-		return c.recordSetClient.Delete(ctx, zone, arec)
+		return c.recordSetClient.Delete(ctx, zone, rs)
 	default:
 		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
 	}
@@ -127,29 +143,53 @@ func newRecordSetClient(config Config, credential azcore.TokenCredential) (*reco
 	return &recordSetClient{client: rc}, nil
 }
 
-func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
-	rs := armdns.RecordSet{
-		Properties: &armdns.RecordSetProperties{
-			TTL: &arec.TTL,
-			ARecords: []*armdns.ARecord{
-				{IPv4Address: &arec.Address},
-			},
-			Metadata: metadata,
-		},
-	}
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, rs, nil)
+func (c *recordSetClient) Put(ctx context.Context, zone Zone, rs RecordSet, metadata map[string]*string) error {
+	recordType, err := publicRecordType(rs.Type)
 	if err != nil {
-		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+		return err
+	}
+	properties := &armdns.RecordSetProperties{
+		TTL:      &rs.TTL,
+		Metadata: metadata,
+	}
+	for i := range rs.Addresses {
+		switch rs.Type {
+		case RecordTypeA:
+			properties.ARecords = append(properties.ARecords, &armdns.ARecord{IPv4Address: &rs.Addresses[i]})
+		case RecordTypeAAAA:
+			properties.AaaaRecords = append(properties.AaaaRecords, &armdns.AaaaRecord{IPv6Address: &rs.Addresses[i]})
+		}
+	}
+	_, err = c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, rs.Name, recordType, armdns.RecordSet{Properties: properties}, nil)
+	if err != nil {
+		return errors.Wrapf(err, "failed to update dns %s record: %s.%s", rs.Type, rs.Name, zone.Name)
 	}
 	return nil
 }
 
-func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, nil)
+func (c *recordSetClient) Delete(ctx context.Context, zone Zone, rs RecordSet) error {
+	recordType, err := publicRecordType(rs.Type)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+		return err
+	}
+	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, rs.Name, recordType, nil)
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete dns %s record: %s.%s", rs.Type, rs.Name, zone.Name)
 	}
 	return nil
+}
+
+// publicRecordType maps a RecordSet type onto the public DNS zone SDK's
+// record type.
+func publicRecordType(t RecordType) (armdns.RecordType, error) {
+	switch t {
+	case RecordTypeA:
+		return armdns.RecordTypeA, nil
+	case RecordTypeAAAA:
+		return armdns.RecordTypeAAAA, nil
+	default:
+		return "", errors.Errorf("unsupported record type %q", t)
+	}
 }
 
 type privateRecordSetClient struct {
@@ -172,28 +212,52 @@ func newPrivateRecordSetClient(config Config, credential azcore.TokenCredential)
 	return &privateRecordSetClient{client: prc}, nil
 }
 
-func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
-	rs := armprivatedns.RecordSet{
-		Properties: &armprivatedns.RecordSetProperties{
-			TTL: &arec.TTL,
-			ARecords: []*armprivatedns.ARecord{
-				{IPv4Address: &arec.Address},
-			},
-			Metadata: metadata,
-		},
+func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, rs RecordSet, metadata map[string]*string) error {
+	recordType, err := privateRecordType(rs.Type)
+	if err != nil {
+		return err
+	}
+	properties := &armprivatedns.RecordSetProperties{
+		TTL:      &rs.TTL,
+		Metadata: metadata,
+	}
+	for i := range rs.Addresses {
+		switch rs.Type {
+		case RecordTypeA:
+			properties.ARecords = append(properties.ARecords, &armprivatedns.ARecord{IPv4Address: &rs.Addresses[i]})
+		case RecordTypeAAAA:
+			properties.AaaaRecords = append(properties.AaaaRecords, &armprivatedns.AaaaRecord{IPv6Address: &rs.Addresses[i]})
+		}
 	}
 
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, rs, nil)
+	_, err = c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, recordType, rs.Name, armprivatedns.RecordSet{Properties: properties}, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+		return errors.Wrapf(err, "failed to update dns %s record: %s.%s", rs.Type, rs.Name, zone.Name)
 	}
 	return nil
 }
 
-func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, nil)
+func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, rs RecordSet) error {
+	recordType, err := privateRecordType(rs.Type)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+		return err
+	}
+	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, recordType, rs.Name, nil)
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete dns %s record: %s.%s", rs.Type, rs.Name, zone.Name)
 	}
 	return nil
+}
+
+// privateRecordType maps a RecordSet type onto the private DNS zone SDK's
+// record type.
+func privateRecordType(t RecordType) (armprivatedns.RecordType, error) {
+	switch t {
+	case RecordTypeA:
+		return armprivatedns.RecordTypeA, nil
+	case RecordTypeAAAA:
+		return armprivatedns.RecordTypeAAAA, nil
+	default:
+		return "", errors.Errorf("unsupported record type %q", t)
+	}
 }
