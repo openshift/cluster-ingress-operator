@@ -247,6 +247,7 @@ func Test_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	iov1.AddToScheme(scheme)
 	corev1.AddToScheme(scheme)
+	configv1.AddToScheme(scheme)
 	gatewayapiv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
