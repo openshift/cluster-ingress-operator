@@ -35,6 +35,12 @@ if [[ "${TEMP_COMMIT}" == "true" ]]; then
 fi
 
 cp -R manifests/* $MANIFESTS
+# The ingresscontrollers CRD is delivered in the release payload by
+# openshift/api, so it is no longer in manifests/.  Add the vendored Default
+# CRD so that applying $MANIFESTS (e.g. after "WHAT=all make uninstall", which
+# deletes the CRD) still restores it.
+shopt -s extglob
+cp vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers?(-Default).crd.yaml "$MANIFESTS/00-custom-resource-definition.yaml"
 cat manifests/02-deployment.yaml | sed "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$TAG~" > "$MANIFESTS/02-deployment.yaml"
 # To simulate CVO, ClusterOperator resource need to be created by the operator.
 rm $MANIFESTS/03-cluster-operator.yaml
