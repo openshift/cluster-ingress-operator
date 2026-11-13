@@ -67,6 +67,7 @@ func Test_Reconcile(t *testing.T) {
 				Labels:    labels,
 				Namespace: "openshift-ingress",
 				Name:      name,
+				UID:       "service-uid",
 			},
 			Status: corev1.ServiceStatus{
 				LoadBalancer: corev1.LoadBalancerStatus{
@@ -87,9 +88,10 @@ func Test_Reconcile(t *testing.T) {
 	dnsrecord := func(name, dnsName string, policy iov1.DNSManagementPolicy, labels map[string]string, targets ...string) *iov1.DNSRecord {
 		return &iov1.DNSRecord{
 			ObjectMeta: metav1.ObjectMeta{
-				Labels:    labels,
-				Namespace: "openshift-ingress",
-				Name:      name,
+				Labels:          labels,
+				Namespace:       "openshift-ingress",
+				Name:            name,
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: "v1", Kind: "Service", Name: "example-gateway", UID: "service-uid"}},
 			},
 			Spec: iov1.DNSRecordSpec{
 				DNSName:             dnsName,
@@ -253,6 +255,7 @@ func Test_Reconcile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
+				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
 			cl := &testutil.FakeClientRecorder{
@@ -270,9 +273,10 @@ func Test_Reconcile(t *testing.T) {
 				config: Config{
 					OperandNamespace: "openshift-ingress",
 				},
-				cache:        cache,
-				client:       cl,
-				modeAccessor: testModeAccessor,
+				cache:            cache,
+				listenerSetCache: cache,
+				client:           cl,
+				modeAccessor:     testModeAccessor,
 			}
 			res, err := reconciler.Reconcile(context.Background(), tc.reconcileRequest)
 			if tc.expectError == "" {
