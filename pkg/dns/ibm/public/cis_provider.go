@@ -3,7 +3,6 @@ package public
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -105,7 +104,7 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	// DNS records may have an ending "." character in the DNS name.  For
 	// example, the ingress operator's ingress controller adds a trailing
 	// "." when it creates a wildcard DNS record.
-	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	dnsName := dns.NormalizeHostname(record.Spec.DNSName)
 	opt.SetName(dnsName)
 	// While creating DNS records with multiple targets is unsupported, we still
 	// iterate through all targets during deletion to be extra cautious.
@@ -163,7 +162,7 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 	// DNS records may have an ending "." character in the DNS name.  For
 	// example, the ingress operator's ingress controller adds a trailing
 	// "." when it creates a wildcard DNS record.
-	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	dnsName := dns.NormalizeHostname(record.Spec.DNSName)
 	listOpt.SetName(dnsName)
 
 	result, response, err := dnsService.ListAllDnsRecords(listOpt)

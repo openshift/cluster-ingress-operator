@@ -1,10 +1,18 @@
 package dns
 
 import (
+	"strings"
+
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
+
+// NormalizeHostname returns the canonical form used to compare DNS names.
+// DNS names are case-insensitive and the root label's trailing dot is optional.
+func NormalizeHostname(name string) string {
+	return strings.ToLower(strings.TrimSuffix(name, "."))
+}
 
 // Provider knows how to manage DNS zones only as pertains to routing.
 type Provider interface {

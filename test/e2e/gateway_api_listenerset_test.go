@@ -161,11 +161,21 @@ func testGatewayAPIListenerSets(t *testing.T) {
 		if err := kclient.Get(ctx, client.ObjectKeyFromObject(conflict), conflict); err != nil {
 			return false
 		}
-		accepted := meta.FindStatusCondition(conflict.Status.Conditions, "Accepted")
-		return accepted != nil && accepted.ObservedGeneration == conflict.Generation && (accepted.Status == metav1.ConditionTrue || accepted.Status == metav1.ConditionFalse)
+		if len(conflict.Status.Listeners) != len(conflict.Spec.Listeners) {
+			return false
+		}
+		for _, listener := range conflict.Status.Listeners {
+			condition := meta.FindStatusCondition(listener.Conditions, "Conflicted")
+			if condition == nil || condition.ObservedGeneration != conflict.Generation || condition.Status != metav1.ConditionTrue {
+				return false
+			}
+		}
+		return true
 	}, 3*time.Minute, time.Second)
 	require.NoError(t, waitForClusterOperatorConditions(t, kclient, configv1.ClusterOperatorStatusCondition{Type: configv1.OperatorDegraded, Status: configv1.ConditionFalse}))
 	require.NoError(t, waitForIngressControllerCondition(t, kclient, 2*time.Minute, client.ObjectKey{Namespace: operatorcontroller.DefaultOperatorNamespace, Name: "default"}, operatorv1.OperatorCondition{Type: "Degraded", Status: operatorv1.ConditionFalse}))
+	require.Nil(t, meta.FindStatusCondition(conflict.Status.Listeners[0].Conditions, operatorv1.DNSReadyIngressConditionType), "conflicted listener must not report DNSReady")
+	require.Nil(t, meta.FindStatusCondition(conflict.Status.Conditions, operatorv1.DNSReadyIngressConditionType), "conflicted ListenerSet must not report DNSReady")
 	waitDNS(gateways[0], secondHostname, true)
 	traffic(first, gateways[0], firstHostname)
 	traffic(second, gateways[0], secondHostname)

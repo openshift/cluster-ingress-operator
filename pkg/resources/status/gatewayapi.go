@@ -68,10 +68,10 @@ func gatewayAPIDNSConditions(dnsConfig *configv1.DNS, dnsRecord *iov1.DNSRecord,
 	return conditions
 }
 
-// ComputeListenerSetDNSStatus changes only DNSReady, leaving Istio's status intact.
+// ComputeListenerSetDNSStatus aggregates the listener's DNSReady condition and updates the ListenerSet DNSReady condition.
 func ComputeListenerSetDNSStatus(dnsConfig *configv1.DNS, ls *gatewayapiv1.ListenerSet, hostnames map[gatewayapiv1.SectionName]gatewayapiv1.Hostname, records map[string]*iov1.DNSRecord) {
 	var listenerConditions [][]metav1.Condition
-	for index := range ls.Status.Listeners {
+	for index := range ls.Status.Listeners { // TODO find out why this doesn't iterate the spec instead of the status
 		listener := &ls.Status.Listeners[index]
 		if hostname, found := hostnames[listener.Name]; found {
 			for _, condition := range gatewayAPIDNSConditions(dnsConfig, records[string(hostname)], ls.Generation) {

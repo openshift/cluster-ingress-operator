@@ -82,6 +82,20 @@ func TestListenerSetStatus(t *testing.T) {
 		require.Equal(t, listener.Conditions, listenerSet.Status.Listeners[index].Conditions[:len(listener.Conditions)])
 	}
 	checkGatewayDNS(metav1.ConditionTrue)
+	listenerSet.Status.Listeners[0].Conditions[1].ObservedGeneration = listenerSet.Generation
+	require.NoError(t, cl.Status().Update(ctx, listenerSet))
+	reconcileStatus()
+	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Listeners[0].Conditions, "DNSReady"), "current conflicts must remove listener DNS status")
+	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady"), "current conflicts must remove aggregate DNS status")
+	_, err := gatewayReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(parent)})
+	require.NoError(t, err)
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(parent), parent))
+	require.Nil(t, meta.FindStatusCondition(parent.Status.Conditions, "DNSReady"), "current conflicts must remove Gateway DNS status")
+	listenerSet.Status.Listeners[0].Conditions[1].ObservedGeneration = 2
+	require.NoError(t, cl.Status().Update(ctx, listenerSet))
+	reconcileStatus()
+	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Listeners[0].Conditions, "DNSReady"), "stale conflicts must not block DNS")
+	require.True(t, meta.IsStatusConditionTrue(listenerSet.Status.Conditions, "DNSReady"), "stale conflicts must not block aggregate DNS status")
 	listenerSet.Spec.ParentRef.Kind = ptr.To(gatewayapiv1.Kind("Service"))
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	reconcileStatus()
@@ -107,7 +121,7 @@ func TestListenerSetStatus(t *testing.T) {
 	reconcileStatus()
 	require.Nil(t, meta.FindStatusCondition(listenerSet.Status.Conditions, "DNSReady"))
 	require.NoError(t, cl.Delete(ctx, listenerSet))
-	_, err := r.Reconcile(ctx, request)
+	_, err = r.Reconcile(ctx, request)
 	require.NoError(t, err)
 }
 

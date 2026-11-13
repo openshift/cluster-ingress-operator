@@ -5,6 +5,7 @@ import (
 
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/networking-go-sdk/dnssvcsv1"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 )
 
 type FakeDnsClient struct {
@@ -102,11 +103,11 @@ func (FakeDnsClient) NewResourceRecordInputRdataRdataARecord(ip string) (_model 
 func (fdc FakeDnsClient) CreateResourceRecord(createResourceRecordOptions *dnssvcsv1.CreateResourceRecordOptions) (result *dnssvcsv1.ResourceRecord, response *core.DetailedResponse, err error) {
 	// Check InputID against the incoming createResourceRecordOptions to ensure the
 	// createOrUpdateDNSRecord method is using the correct record name in createResourceRecordOptions.
-	if fdc.CreateDnsRecordInputOutput.InputId != *createResourceRecordOptions.Name {
+	if dns.NormalizeHostname(fdc.CreateDnsRecordInputOutput.InputId) != dns.NormalizeHostname(*createResourceRecordOptions.Name) {
 		return nil, nil, errors.New("createResourceRecord: inputs don't match")
 	}
 
-	fdc.CallHistory[*createResourceRecordOptions.Name] = "CREATE"
+	fdc.CallHistory[fdc.CreateDnsRecordInputOutput.InputId] = "CREATE"
 	return nil, fdc.CreateDnsRecordInputOutput.OutputResponse, fdc.CreateDnsRecordInputOutput.OutputError
 }
 func (FakeDnsClient) NewGetDnszoneOptions(instanceID string, dnszoneID string) *dnssvcsv1.GetDnszoneOptions {

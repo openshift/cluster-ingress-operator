@@ -3,7 +3,6 @@ package private
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -89,7 +88,7 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	// DNS records may have an ending "." character in the DNS name.  For
 	// example, the ingress operator's ingress controller adds a trailing
 	// "." when it creates a wildcard DNS record.
-	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	dnsName := dns.NormalizeHostname(record.Spec.DNSName)
 
 	result, response, err := p.dnsService.ListResourceRecords(listOpt)
 	if err != nil {
@@ -132,7 +131,7 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		// While creating DNS records with multiple targets is unsupported, we still
 		// iterate through all targets during deletion to be extra cautious.
 		for _, target := range record.Spec.Targets {
-			if *resourceRecord.Name == dnsName {
+			if dns.NormalizeHostname(*resourceRecord.Name) == dnsName {
 				if resourceRecordTarget != target {
 					log.Info("delete: ignoring record with matching name but unexpected target", "record", record, "target", resourceRecordTarget)
 					continue
@@ -188,7 +187,7 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 	// DNS records may have an ending "." character in the DNS name.  For
 	// example, the ingress operator's ingress controller adds a trailing
 	// "." when it creates a wildcard DNS record.
-	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	dnsName := dns.NormalizeHostname(record.Spec.DNSName)
 
 	if !validTTLs.Has(record.Spec.RecordTTL) {
 		log.Info("Warning: TTL must be one of [1 60 120 300 600 900 1800 3600 7200 18000 43200]. RecordTTL set to default", "default DSNSVCS record TTL", defaultDNSSVCSRecordTTL)
@@ -213,7 +212,7 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 	target := record.Spec.Targets[0]
 	updated := false
 	for _, resourceRecord := range listResult.ResourceRecords {
-		if *resourceRecord.Name == dnsName {
+		if dns.NormalizeHostname(*resourceRecord.Name) == dnsName {
 			if resourceRecord.ID == nil {
 				return fmt.Errorf("createOrUpdateDNSRecord: record id is nil")
 			}

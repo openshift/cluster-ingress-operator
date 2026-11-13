@@ -69,9 +69,12 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	listenerSet.Status.Listeners[0].Conditions = append(listenerSet.Status.Listeners[0].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(4)
+	// The shared hostname remains desired by the Gateway's inline listener, but
+	// a current conflict on a ListenerSet-only hostname must remove its record.
 	listenerSet.Status.Listeners[1].Conditions = append(listenerSet.Status.Listeners[1].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
-	check(4)
+	check(3)
+	// A Conflicted condition from an earlier generation must not block DNS.
 	listenerSet.Status.Listeners[1].Conditions[1].ObservedGeneration = 1
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(4)
