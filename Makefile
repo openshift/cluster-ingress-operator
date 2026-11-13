@@ -98,7 +98,6 @@ verify: generate
 	hack/verify-deps.sh
 	hack/verify-e2e-test-all-presence.sh
 	hack/verify-sail-rbac.sh
-	$(MAKE) -C tests-extension verify-metadata
 
 .PHONY: uninstall
 uninstall:

@@ -2,11 +2,10 @@ package flags
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 )
 
@@ -91,6 +90,6 @@ func (o *OutputFlags) Marshal(v interface{}) ([]byte, error) {
 		}
 		return nil, errors.New("names format requires an array of structs")
 	default:
-		return nil, fmt.Errorf("invalid output format: %s", o.Output)
+		return nil, errors.Errorf("invalid output format: %s", o.Output)
 	}
 }
