@@ -1910,3 +1910,182 @@ func createReferenceGrant(t *testing.T, ns *corev1.Namespace) {
 	require.NoError(t, kclient.Get(ctx, types.NamespacedName{Namespace: ns.Name, Name: "test-referencegrant"}, retrieved), "failed to get created ReferenceGrant")
 	t.Logf("successfully created and retrieved ReferenceGrant %s/%s", retrieved.GetNamespace(), retrieved.GetName())
 }
+
+// tcpListenerSpec describes a single TCP listener for buildTCPGateway.
+type tcpListenerSpec struct {
+	name string
+	port gatewayapiv1.PortNumber
+}
+
+// buildTCPGateway initializes a Gateway whose listeners all use the TCP
+// protocol.  Unlike HTTP listeners, TCP listeners carry no hostname; routes
+// attached to this Gateway are differentiated solely by port number.
+func buildTCPGateway(name, namespace, gcname string, listeners []tcpListenerSpec) *gatewayapiv1.Gateway {
+	fromNamespace := gatewayapiv1.FromNamespaces(allNamespaces)
+	allowedRoutes := gatewayapiv1.AllowedRoutes{
+		Namespaces: &gatewayapiv1.RouteNamespaces{From: &fromNamespace},
+	}
+	var gwListeners []gatewayapiv1.Listener
+	for _, l := range listeners {
+		gwListeners = append(gwListeners, gatewayapiv1.Listener{
+			Name:          gatewayapiv1.SectionName(l.name),
+			Port:          l.port,
+			Protocol:      "TCP",
+			AllowedRoutes: &allowedRoutes,
+		})
+	}
+	return &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gcname),
+			Listeners:        gwListeners,
+		},
+	}
+}
+
+// buildTCPRoute returns a TCPRoute pointing at the given backend.
+// listenerName, when non-empty, pins the parentRef to a specific Gateway
+// listener via sectionName (required when a Gateway has multiple TCP listeners).
+func buildTCPRoute(name, namespace, parentName, parentNamespace, backendName, listenerName string, backendPort int32) *gatewayapiv1.TCPRoute {
+	parentNamespacePtr := gatewayapiv1.Namespace(parentNamespace)
+	backendPortPtr := gatewayapiv1.PortNumber(backendPort)
+	parentRef := gatewayapiv1.ParentReference{
+		Name:      gatewayapiv1.ObjectName(parentName),
+		Namespace: &parentNamespacePtr,
+	}
+	if listenerName != "" {
+		sectionName := gatewayapiv1.SectionName(listenerName)
+		parentRef.SectionName = &sectionName
+	}
+	return &gatewayapiv1.TCPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gatewayapiv1.TCPRouteSpec{
+			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{
+				ParentRefs: []gatewayapiv1.ParentReference{parentRef},
+			},
+			Rules: []gatewayapiv1.TCPRouteRule{
+				{
+					BackendRefs: []gatewayapiv1.BackendRef{
+						{
+							BackendObjectReference: gatewayapiv1.BackendObjectReference{
+								Name: gatewayapiv1.ObjectName(backendName),
+								Port: &backendPortPtr,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// createTCPRoute creates an echo replicaset and service (the backend) together
+// with a TCPRoute that routes from the given Gateway listener to that backend.
+// If gateway is nil an error is returned.
+func createTCPRoute(t *testing.T, namespace, routeName, backendName, parentNamespace, listenerName string, backendPort int32, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.TCPRoute, error) {
+	t.Helper()
+	if gateway == nil {
+		return nil, errors.New("unable to create TCPRoute, no gateway available")
+	}
+	echoRs := buildEchoReplicaSet(backendName, namespace)
+	if err := createWithRetryOnError(t, context.TODO(), echoRs, DefaultRetryTimeout); err != nil {
+		return nil, fmt.Errorf("failed to create replicaset %s/%s: %v", namespace, echoRs.Name, err)
+	}
+	echoSvc := buildEchoService(echoRs.Name, namespace, echoRs.Spec.Template.ObjectMeta.Labels)
+	if err := createWithRetryOnError(t, context.TODO(), echoSvc, DefaultRetryTimeout); err != nil {
+		return nil, fmt.Errorf("failed to create service %s/%s: %v", echoSvc.Namespace, echoSvc.Name, err)
+	}
+	route := buildTCPRoute(routeName, namespace, gateway.Name, parentNamespace, backendName, listenerName, backendPort)
+	if err := createOrGetWithRetry(t, context.Background(), route, DefaultRetryTimeout); err != nil {
+		return nil, fmt.Errorf("failed to create TCPRoute %s/%s: %v", namespace, routeName, err)
+	}
+	return route, nil
+}
+
+// waitForTCPRouteAccepted polls until the TCPRoute has Accepted=True for at
+// least one parent, or one minute elapses.
+func waitForTCPRouteAccepted(t *testing.T, namespace, name string) error {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: namespace, Name: name}
+
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		route := &gatewayapiv1.TCPRoute{}
+		if err := kclient.Get(ctx, nsName, route); err != nil {
+			t.Logf("failed to get TCPRoute %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		if len(route.Status.Parents) == 0 {
+			t.Logf("TCPRoute %v: no parents in status yet; retrying...", nsName)
+			return false, nil
+		}
+		for _, parent := range route.Status.Parents {
+			for _, cond := range parent.Conditions {
+				if cond.Type == string(gatewayapiv1.RouteConditionAccepted) && cond.Status == metav1.ConditionTrue {
+					t.Logf("TCPRoute %v: Accepted=True", nsName)
+					return true, nil
+				}
+			}
+		}
+		t.Logf("TCPRoute %v: waiting for Accepted=True; retrying...", nsName)
+		return false, nil
+	})
+}
+
+// tcpRouteIsAccepted returns true if the TCPRoute currently has Accepted=True
+// for at least one parent.  Unlike waitForTCPRouteAccepted it does not poll;
+// it is used for observational checks in conflict tests after the
+// reconciliation window has passed.
+func tcpRouteIsAccepted(t *testing.T, namespace, name string) bool {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: namespace, Name: name}
+	route := &gatewayapiv1.TCPRoute{}
+	if err := kclient.Get(context.Background(), nsName, route); err != nil {
+		t.Logf("tcpRouteIsAccepted: failed to get TCPRoute %v: %v", nsName, err)
+		return false
+	}
+	for _, parent := range route.Status.Parents {
+		for _, cond := range parent.Conditions {
+			if cond.Type == string(gatewayapiv1.RouteConditionAccepted) && cond.Status == metav1.ConditionTrue {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// verifyTCPConnection dials addr:port over raw TCP, sends a short payload, and
+// returns true if the same bytes are echoed back.
+func verifyTCPConnection(t *testing.T, addr string, port int32) bool {
+	t.Helper()
+	target := fmt.Sprintf("%s:%d", addr, port)
+	const payload = "hello-tcproute\n"
+
+	conn, err := net.DialTimeout("tcp", target, 5*time.Second)
+	if err != nil {
+		t.Logf("TCP dial to %s failed: %v", target, err)
+		return false
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Logf("SetDeadline failed for %s: %v", target, err)
+		return false
+	}
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		t.Logf("TCP write to %s failed: %v", target, err)
+		return false
+	}
+	buf := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Logf("TCP read from %s failed: %v", target, err)
+		return false
+	}
+	if string(buf) != payload {
+		t.Logf("TCP echo mismatch at %s: got %q, want %q", target, string(buf), payload)
+		return false
+	}
+	t.Logf("TCP connection to %s succeeded", target)
+	return true
+}
