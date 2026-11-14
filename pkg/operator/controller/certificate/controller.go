@@ -63,7 +63,7 @@ type reconciler struct {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling", "request", request)
 
-	ca, err := r.ensureRouterCASecret()
+	ca, err := r.ensureRouterCASecret(ctx)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure router CA: %v", err)
 	}
@@ -102,7 +102,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				UID:        deployment.UID,
 				Controller: &trueVar,
 			}
-			if _, err := r.ensureDefaultCertificateForIngress(ca, deployment.Namespace, deploymentRef, ingress); err != nil {
+			if _, err := r.ensureDefaultCertificateForIngress(ctx, ca, deployment.Namespace, deploymentRef, ingress); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure default cert for %s: %v", ingress.Name, err))
 			}
 		}
