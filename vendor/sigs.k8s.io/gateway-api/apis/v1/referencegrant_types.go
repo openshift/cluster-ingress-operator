@@ -45,8 +45,8 @@ type ReferenceGrant struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// Spec defines the desired state of ReferenceGrant.
-	// +required
-	Spec ReferenceGrantSpec `json:"spec"`
+	// +optional
+	Spec ReferenceGrantSpec `json:"spec,omitempty"`
 
 	// Note that `Status` sub-resource has been excluded at the
 	// moment as it was difficult to work out the design.

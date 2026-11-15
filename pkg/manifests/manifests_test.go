@@ -59,9 +59,7 @@ func TestManifests(t *testing.T) {
 	ReferenceGrantCRD()
 	BackendTLSPolicyCRD()
 	ListenerSetCRD()
-	TCPRouteCRD()
 	TLSRouteCRD()
-	UDPRouteCRD()
 	GatewayAPIAllowNetworkPolicy()
 	IstiodAllowNetworkPolicy()
 
