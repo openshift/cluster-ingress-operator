@@ -917,6 +917,11 @@ func TestReconcile_TakeoverBlocked_SkipsCRDAndRBAC(t *testing.T) {
 				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
 			},
 		},
+		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+			Type:   conditionTypeGatewayAPICRDsManaged,
+			Status: metav1.ConditionFalse,
+			Reason: reasonUnmanaged,
+		}}},
 	}
 
 	// Pre-populate CRDs with wrong bundle-version annotation to
@@ -1031,6 +1036,11 @@ func TestReconcile_PartialPresenceNonCompliant_TakeoverBlocked(t *testing.T) {
 				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
 			},
 		},
+		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+			Type:   conditionTypeGatewayAPICRDsManaged,
+			Status: metav1.ConditionFalse,
+			Reason: reasonUnmanaged,
+		}}},
 	}
 
 	// Include only the first managed CRD with a wrong bundle-version;

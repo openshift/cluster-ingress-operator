@@ -224,11 +224,27 @@ func TestReconcileIngressStatus(t *testing.T) {
 		}
 	}
 
+	crdsWithBundleVersion := func(version string) []runtime.Object {
+		objs := allManagedCRDObjects()
+		for _, obj := range objs {
+			crd := obj.(*apiextensionsv1.CustomResourceDefinition)
+			if crd.Annotations == nil {
+				crd.Annotations = map[string]string{}
+			}
+			crd.Annotations[bundleVersionAnnotation] = version
+		}
+		return objs
+	}
+
+	// A version that cannot match the bundle this operator ships.
+	driftVersion := managedCRDs[0].Annotations[bundleVersionAnnotation] + "-drift"
+
 	tests := []struct {
 		name              string
 		ingressCR         *operatorv1alpha1.Ingress
 		existingCRDs      []runtime.Object
 		wantManaged       bool
+		wantManageCRDs    bool
 		wantPresent       bool
 		wantCompliant     bool
 		wantAllowDeps     bool
@@ -240,6 +256,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeManaged),
 			existingCRDs:      allManagedCRDObjects(),
 			wantManaged:       true,
+			wantManageCRDs:    true,
 			wantPresent:       true,
 			wantCompliant:     true,
 			wantAllowDeps:     true,
@@ -251,7 +268,20 @@ func TestReconcileIngressStatus(t *testing.T) {
 			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeManaged),
 			existingCRDs:      nil,
 			wantManaged:       true,
+			wantManageCRDs:    true,
 			wantPresent:       false,
+			wantCompliant:     false,
+			wantAllowDeps:     false,
+			wantManagedReason: reasonManagedByIngressOperator,
+			wantStatusUpdate:  true,
+		},
+		{
+			name:              "managed mode, bundle drift, no managed condition (upgrade)",
+			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeManaged),
+			existingCRDs:      crdsWithBundleVersion(driftVersion),
+			wantManaged:       true,
+			wantManageCRDs:    true,
+			wantPresent:       true,
 			wantCompliant:     false,
 			wantAllowDeps:     false,
 			wantManagedReason: reasonManagedByIngressOperator,
@@ -262,6 +292,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			ingressCR:         ingressCR(operatorv1alpha1.GatewayAPIManagementModeUnmanaged),
 			existingCRDs:      allManagedCRDObjects(),
 			wantManaged:       false,
+			wantManageCRDs:    false,
 			wantPresent:       true,
 			wantCompliant:     true,
 			wantAllowDeps:     false,
@@ -273,6 +304,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			ingressCR:         nil,
 			existingCRDs:      allManagedCRDObjects(),
 			wantManaged:       true,
+			wantManageCRDs:    true,
 			wantPresent:       true,
 			wantCompliant:     true,
 			wantAllowDeps:     true,
@@ -346,6 +378,7 @@ func TestReconcileIngressStatus(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.wantAllowDeps, modeAccessor.AllowDependents(), "AllowDependents mismatch")
+			assert.Equal(t, tc.wantManageCRDs, modeAccessor.ShouldManageCRDs(), "ShouldManageCRDs mismatch")
 
 			if tc.wantStatusUpdate {
 				assert.NotEmpty(t, cl.StatusWriter.Patched, "expected status patch")
@@ -402,6 +435,11 @@ func TestReconcileIngressStatus_UnknownGatewayAPICRD(t *testing.T) {
 				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
 			},
 		},
+		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+			Type:   conditionTypeGatewayAPICRDsManaged,
+			Status: metav1.ConditionFalse,
+			Reason: reasonUnmanaged,
+		}}},
 	}
 
 	var objs []runtime.Object
@@ -484,6 +522,11 @@ func TestReconcileIngressStatus_AnnotationMismatch(t *testing.T) {
 				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
 			},
 		},
+		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+			Type:   conditionTypeGatewayAPICRDsManaged,
+			Status: metav1.ConditionFalse,
+			Reason: reasonUnmanaged,
+		}}},
 	}
 
 	var objs []runtime.Object
@@ -629,6 +672,11 @@ func TestReconcileIngressStatus_PartialPresenceNonCompliant(t *testing.T) {
 				ManagementMode: operatorv1alpha1.GatewayAPIManagementModeManaged,
 			},
 		},
+		Status: operatorv1alpha1.IngressStatus{Conditions: []metav1.Condition{{
+			Type:   conditionTypeGatewayAPICRDsManaged,
+			Status: metav1.ConditionFalse,
+			Reason: reasonUnmanaged,
+		}}},
 	}
 
 	var objs []runtime.Object

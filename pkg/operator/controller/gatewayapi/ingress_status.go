@@ -66,7 +66,11 @@ func (r *reconciler) reconcileIngressStatus(ctx context.Context, snapshot ingres
 	//
 	// We read the CURRENT Managed condition from the Ingress status (not
 	// in-memory state) so this works correctly across pod restarts.
-	wasAlreadyManaged := false
+	//
+	// No GatewayAPICRDsManaged condition means the status came from an
+	// operator without management mode, which always managed the CRDs.
+	// Assume the CRDs were already managed (true), not unmanaged.
+	wasAlreadyManaged := true
 	if snapshot.found && snapshot.ingress != nil {
 		if currentManagedCond := apimeta.FindStatusCondition(snapshot.ingress.Status.Conditions, conditionTypeGatewayAPICRDsManaged); currentManagedCond != nil {
 			wasAlreadyManaged = currentManagedCond.Status == metav1.ConditionTrue
