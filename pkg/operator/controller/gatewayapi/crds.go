@@ -27,9 +27,7 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.ReferenceGrantCRD(),
 	manifests.BackendTLSPolicyCRD(),
 	manifests.ListenerSetCRD(),
-	manifests.TCPRouteCRD(),
 	manifests.TLSRouteCRD(),
-	manifests.UDPRouteCRD(),
 }
 
 // managedCRDMap is a map of CRDs that this controller manages.
@@ -41,9 +39,7 @@ var managedCRDMap = map[string]*apiextensionsv1.CustomResourceDefinition{
 	manifests.ReferenceGrantCRD().Name:   manifests.ReferenceGrantCRD(),
 	manifests.BackendTLSPolicyCRD().Name: manifests.BackendTLSPolicyCRD(),
 	manifests.ListenerSetCRD().Name:      manifests.ListenerSetCRD(),
-	manifests.TCPRouteCRD().Name:         manifests.TCPRouteCRD(),
 	manifests.TLSRouteCRD().Name:         manifests.TLSRouteCRD(),
-	manifests.UDPRouteCRD().Name:         manifests.UDPRouteCRD(),
 }
 
 // crdSpecCmpOpts defines go-cmp options for comparing CRD specs.

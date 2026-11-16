@@ -249,9 +249,7 @@ rules:
   - backendtlspolicies
   - listenersets
   - listenersets/status
-  - tcproutes
   - tlsroutes
-  - udproutes
   verbs:
   - create
   - delete

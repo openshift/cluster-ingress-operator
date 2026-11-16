@@ -21,9 +21,7 @@ rules:
       - referencegrants
       - backendtlspolicies
       - listenersets
-      - tcproutes
       - tlsroutes
-      - udproutes
     verbs:
       - get
       - list
