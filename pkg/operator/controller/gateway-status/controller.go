@@ -9,6 +9,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -256,12 +257,18 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		gateway.Status.Conditions = make([]metav1.Condition, 0)
 	}
 
-	// Compute status conditions for LoadBalancer and DNS.
+	// A ClusterIP Gateway has no load balancer and no DNS records, so
+	// LoadBalancerReady and DNSReady do not apply to it.
+	if gateway.Spec.GatewayClassName == operatorcontroller.OpenShiftClusterIPGatewayClassName {
+		removeLoadBalancerAndDNSReadyConditions(&gateway.Status)
+	} else {
+		// Compute status conditions for LoadBalancer and DNS.
+		status.ComputeGatewayAPILoadBalancerStatus(childSvc, operandEvents.Items, gateway.GetGeneration(), &gateway.Status.Conditions)
+		status.ComputeGatewayAPIDNSStatus(dnsConfig, gateway.GetGeneration(), &gateway.Status, listenerToHostname, hostnameToDNSRecord)
+	}
+
 	// The Gateway API specification limits Gateway status conditions to maxGatewayConditions (8).
 	// If other controllers (e.g., Istio) are adding conditions, we need to ensure we don't exceed this limit.
-	status.ComputeGatewayAPILoadBalancerStatus(childSvc, operandEvents.Items, gateway.GetGeneration(), &gateway.Status.Conditions)
-	status.ComputeGatewayAPIDNSStatus(dnsConfig, gateway.GetGeneration(), &gateway.Status, listenerToHostname, hostnameToDNSRecord)
-
 	// Validate that we haven't exceeded the Gateway API condition limit
 	if len(gateway.Status.Conditions) > maxGatewayConditions {
 		log.Error(fmt.Errorf("gateway condition count exceeds maximum"),
@@ -282,6 +289,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// removeLoadBalancerAndDNSReadyConditions removes the LoadBalancerReady and
+// DNSReady conditions from the given Gateway status, including any
+// listener-level DNSReady conditions.
+func removeLoadBalancerAndDNSReadyConditions(gatewayStatus *gatewayapiv1.GatewayStatus) {
+	meta.RemoveStatusCondition(&gatewayStatus.Conditions, operatorv1.LoadBalancerReadyIngressConditionType)
+	meta.RemoveStatusCondition(&gatewayStatus.Conditions, operatorv1.DNSReadyIngressConditionType)
+	for i := range gatewayStatus.Listeners {
+		meta.RemoveStatusCondition(&gatewayStatus.Listeners[i].Conditions, operatorv1.DNSReadyIngressConditionType)
+	}
 }
 
 // The Service and DNSRecord are created with labels that indicate they are Gateway API
