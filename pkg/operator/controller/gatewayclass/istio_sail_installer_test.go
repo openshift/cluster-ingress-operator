@@ -2,6 +2,7 @@ package gatewayclass
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1002,4 +1004,101 @@ func expectedTLSConfig(t *testing.T, profile configv1.TLSProfileType, adherence 
 	}, adherence)
 	require.NoError(t, err, "getting the TLSOptions should never return error on unit tests")
 	return config
+}
+
+func Test_buildGatewayClassesConfig(t *testing.T) {
+	defaultClass := gatewayapiv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.OpenShiftDefaultGatewayClassName},
+	}
+	clusterIPClass := *desiredManagedProfile(operatorcontroller.OpenShiftClusterIPGatewayClassName)
+
+	// expectedGatewayClassConfig returns the gatewayclass configuration shared by
+	// all GatewayClasses.
+	expectedGatewayClassConfig := func(minReplicas int) map[string]any {
+		return map[string]any{
+			"horizontalPodAutoscaler": map[string]any{
+				"spec": map[string]any{
+					"minReplicas": minReplicas,
+					"maxReplicas": 10,
+				},
+			},
+			"deployment": map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []map[string]any{
+								{
+									"name":                     gatewayProxyContainerName,
+									"terminationMessagePolicy": corev1.TerminationMessageFallbackToLogsOnError,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	// expectedClusterIPGatewayClassConfig returns the shared configuration with the
+	// ClusterIP profile's Service override.
+	expectedClusterIPGatewayClassConfig := func(minReplicas int) map[string]any {
+		config := expectedGatewayClassConfig(minReplicas)
+		config["service"] = map[string]any{
+			"spec": map[string]any{
+				"type": string(corev1.ServiceTypeClusterIP),
+			},
+		}
+		return config
+	}
+
+	tests := []struct {
+		name           string
+		infraConfig    *configv1.Infrastructure
+		gatewayclasses []gatewayapiv1.GatewayClass
+		expected       map[string]any
+	}{
+		{
+			name:           "default replicas",
+			gatewayclasses: []gatewayapiv1.GatewayClass{defaultClass},
+			expected: map[string]any{
+				operatorcontroller.OpenShiftDefaultGatewayClassName: expectedGatewayClassConfig(2),
+			},
+		},
+		{
+			name: "single replica topology",
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{InfrastructureTopology: configv1.SingleReplicaTopologyMode},
+			},
+			gatewayclasses: []gatewayapiv1.GatewayClass{defaultClass},
+			expected: map[string]any{
+				operatorcontroller.OpenShiftDefaultGatewayClassName: expectedGatewayClassConfig(1),
+			},
+		},
+		{
+			name:           "managed profile overrides without leaking into other classes",
+			gatewayclasses: []gatewayapiv1.GatewayClass{defaultClass, clusterIPClass},
+			expected: map[string]any{
+				operatorcontroller.OpenShiftDefaultGatewayClassName:   expectedGatewayClassConfig(2),
+				operatorcontroller.OpenShiftClusterIPGatewayClassName: expectedClusterIPGatewayClassConfig(2),
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			actualJSON, err := buildGatewayClassesConfig(tc.infraConfig, tc.gatewayclasses)
+			require.NoError(t, err)
+
+			// Compare through JSON so int and slice types match after decoding.
+			expectedJSON, err := json.Marshal(tc.expected)
+			require.NoError(t, err)
+			var expected, actual any
+			require.NoError(t, json.Unmarshal(expectedJSON, &expected))
+			require.NoError(t, json.Unmarshal(actualJSON, &actual))
+
+			if diff := cmp.Diff(expected, actual); diff != "" {
+				t.Errorf("unexpected gatewayclasses config (-want +got):\n%s", diff)
+			}
+		})
+	}
 }

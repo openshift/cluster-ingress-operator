@@ -11,6 +11,7 @@ import (
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
 	openshifttls "github.com/openshift/controller-runtime-common/pkg/tls"
 	v1 "k8s.io/api/core/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -388,17 +389,12 @@ func buildProxyMetadata(proxyConfig *configv1.Proxy) map[string]string {
 	return proxyMetadata
 }
 
-// buildGatewayClassesConfig returns Istio per-gatewayclass configuration
-// overlays given an infrastructure config and a slice of gatewayclasses.
-func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (json.RawMessage, error) {
+// defaultGatewayClassConfig returns the gatewayclass configuration shared by
+// all GatewayClasses.
+func defaultGatewayClassConfig(minReplicas int) map[string]any {
 	const maxReplicas = 10
 
-	var minReplicas = 2
-	if infraConfig != nil && infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
-		minReplicas = 1
-	}
-
-	gatewayclassConfig := map[string]any{
+	return map[string]any{
 		"horizontalPodAutoscaler": map[string]any{
 			"spec": map[string]any{
 				"minReplicas": minReplicas,
@@ -420,9 +416,24 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 			},
 		},
 	}
+}
+
+// buildGatewayClassesConfig returns Istio per-gatewayclass configuration
+// overlays given an infrastructure config and a slice of gatewayclasses.
+func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (json.RawMessage, error) {
+	var minReplicas = 2
+	if infraConfig != nil && infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		minReplicas = 1
+	}
+
 	gatewayclassesConfig := map[string]any{}
 	for _, gatewayclass := range gatewayclasses {
-		gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+		// Start from a fresh map so profile overrides cannot leak between classes.
+		config := defaultGatewayClassConfig(minReplicas)
+		if profile, ok := managedProfiles[gatewayclass.Name]; ok {
+			istiovalues.MergeOverwrite(config, profile.overrides)
+		}
+		gatewayclassesConfig[gatewayclass.Name] = config
 	}
 
 	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
