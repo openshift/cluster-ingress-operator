@@ -42,6 +42,21 @@ var managedCRDMap = map[string]*apiextensionsv1.CustomResourceDefinition{
 	manifests.TLSRouteCRD().Name:         manifests.TLSRouteCRD(),
 }
 
+// crdSpecCmpOpts defines go-cmp options for comparing CRD specs.
+// Used by both the ensure path (crdChanged) and compliance check
+// (crdSpecCompliant) to guarantee consistent drift detection.
+var crdSpecCmpOpts = []cmp.Option{
+	cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinitionSpec{}, "Conversion"),
+	cmpopts.EquateEmpty(),
+}
+
+// crdSpecCompliant compares the spec of an installed CRD against the
+// desired spec, reusing the same comparison options as crdChanged to
+// ensure the ensure and compliance paths agree.
+func crdSpecCompliant(current, desired *apiextensionsv1.CustomResourceDefinition) bool {
+	return cmp.Equal(current.Spec, desired.Spec, crdSpecCmpOpts...)
+}
+
 // ensureCRD attempts to ensure that the specified CRD exists and returns a
 // Boolean indicating whether it exists, the CRD if it does exist, and an error
 // value.
@@ -153,15 +168,7 @@ func (r *reconciler) updateCRD(ctx context.Context, current, desired *apiextensi
 // crdChanged checks if the current CRD spec and annotations match
 // the expected spec and annotations, and if not returns an updated one.
 func crdChanged(current, expected *apiextensionsv1.CustomResourceDefinition) (bool, *apiextensionsv1.CustomResourceDefinition) {
-	crdCmpOpts := []cmp.Option{
-		// Ignore fields that the API may have modified.  Note: This
-		// list must be kept consistent with the updated.Spec.Foo =
-		// current.Spec.Foo assignments below!
-		cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinitionSpec{}, "Conversion"),
-		cmpopts.EquateEmpty(),
-	}
-
-	specChanged := !cmp.Equal(current.Spec, expected.Spec, crdCmpOpts...)
+	specChanged := !cmp.Equal(current.Spec, expected.Spec, crdSpecCmpOpts...)
 	annotationsChanged := false
 
 	// Check if any expected annotations are missing or different
@@ -188,8 +195,8 @@ func crdChanged(current, expected *apiextensionsv1.CustomResourceDefinition) (bo
 	}
 
 	// Preserve fields that the API, other controllers, or user may have
-	// modified.  Note: This list must be kept consistent with crdCmpOpts
-	// above!
+	// modified.  Note: This list must be kept consistent with
+	// crdSpecCmpOpts!
 	updated.Spec.Conversion = current.Spec.Conversion
 
 	return true, updated
