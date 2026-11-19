@@ -1,19 +1,27 @@
 # cluster-ingress-operator OTE Test Extension — Ingress QE Tests
 
-The QE package carries 14 IngressController lifecycle, router deployment,
-routing, and certificate cases migrated from openshift-tests-private.
+The QE package carries 25 test cases migrated from openshift-tests-private:
 
-All cases live in `ingress_operator.go` and share a single
-`Network_Edge Component_Router` describe block, one `g.It` per case, numbered
-`g.By` steps, a test-owned namespace and fixtures, and cleanup through `defer`.
-They are registered through the `ingress-operator/*` suites; there is no
-separate router suite family.
+* 14 IngressController lifecycle, router deployment, routing, and certificate
+  cases in `ingress_operator.go`.
+* 11 Ingress-to-Route conversion, sharding, service recovery, capability, and
+  label cases in `ingress.go`, migrated from
+  `openshift-tests-private/test/extended/router/ingress.go`. TC41117 is
+  intentionally omitted because equivalent IngressClass lifecycle coverage
+  already exists in the operator e2e suite.
+
+Both files follow the same structure: a single `Network_Edge Component_Router`
+describe block, one `g.It` per case, numbered `g.By` steps, a test-owned
+namespace and fixtures, and cleanup through `defer`. They are registered
+together through the `ingress-operator/*` suites; there is no separate router
+suite family.
 
 ## Test Files
 
 | File | Tests | Description |
 |------|-------|-------------|
 | `ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
+| `ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
 
 ## Test naming and registration
 
@@ -24,32 +32,36 @@ Every test name has the shape:
 ```
 
 Each `g.It` carries its canonical case label, for example
-`g.Label("OCP-26150")`. Authors appear only in `//Author:` source comments.
+`g.Label("OCP-33960")`. Authors appear only in `//Author:` source comments.
 Priorities and platform tokens are omitted from titles. `[Serial]` and
 `[Disruptive]` remain execution tags, and `appendSuiteNames` in
 `../../cmd/main.go` appends the conformance suite suffix.
 
-The cases are **informing**: `cmd/main.go` marks every `[OTP]` spec informing
-while it builds a reliability record. `[Level0]` gates entry to the conformance
-suites. Confirm the classification against the QE-approved Level0 plan before
-promotion.
+The 11 cases in `ingress.go` are registered for the first time under these
+names, so they do not set `OriginalName`. They are **informing**:
+`cmd/main.go` marks every `[OTP]` spec informing while it builds a reliability
+record. The existing 14 cases keep their current names and lifecycle.
+
+`[Level0]` gates entry to the conformance suites. Confirm the classification
+against the QE-approved Level0 plan before promotion.
 
 ## Test Suites
 
-All 14 `[OTP]` cases are selected by the existing `ingress-operator/*` suites:
+All 25 `[OTP]` cases are selected by the existing `ingress-operator/*` suites:
 
 | Suite | Cases before environment filtering | Conformance parent |
 |-------|------------------------------------|--------------------|
-| `ingress-operator/conformance/parallel` | 9 | `openshift/conformance/parallel` |
-| `ingress-operator/conformance/serial` | 2: OCP-56772, OCP-62530 | `openshift/conformance/serial` |
-| `ingress-operator/disruptive` | 3: OCP-75907, OCP-75908, OCP-75909 | None |
-| `ingress-operator/non-disruptive` | 11 | None |
-| `ingress-operator/all` | 14 (`--max-concurrency=1`) | None |
+| `ingress-operator/conformance/parallel` | 17 | `openshift/conformance/parallel` |
+| `ingress-operator/conformance/serial` | 4: OCP-56772, OCP-62530, OCP-57370, OCP-85280 | `openshift/conformance/serial` |
+| `ingress-operator/disruptive` | 4: OCP-75907, OCP-75908, OCP-75909, OCP-56228 | None |
+| `ingress-operator/non-disruptive` | 21 | None |
+| `ingress-operator/all` | 25 (`--max-concurrency=1`) | None |
 
 The disruptive cases have no conformance parent and require explicit
-selection. 75907, 75908, and 75909 patch cluster ingress configuration or
-restart the ingress operator. Run `ingress-operator/disruptive` only on a
-cluster that can tolerate that disruption.
+selection. 56228 deletes the default router service, and 75907, 75908, and
+75909 patch cluster ingress configuration or restart the ingress operator.
+Run `ingress-operator/disruptive` only on a cluster that can tolerate that
+disruption.
 
 The combined `ingress/*` suites cover Gateway API, LB security group, and QE
 tests. `ingress/serial` excludes disruptive cases; select
@@ -65,10 +77,11 @@ selector there when a new case is platform-limited.
 
 | Restriction | Applied cases |
 |-------------|---------------|
-| Require `config.openshift.io` API group, excluding MicroShift | All 14 |
-| Exclude hosted-cluster topology `External` | OCP-22633, OCP-63832, OCP-64611, OCP-75907, OCP-75908, OCP-75909 |
+| Require `config.openshift.io` API group, excluding MicroShift | All 25 |
+| Exclude hosted-cluster topology `External` | OCP-22633, OCP-51429, OCP-51437, OCP-57370, OCP-63832, OCP-64611, OCP-75907, OCP-75908, OCP-75909 |
 | Exclude `externalConnectivity == "Disconnected"` | OCP-63832 |
-| Require the `ImageRegistry` capability | OCP-22636, OCP-22637, OCP-60012, OCP-60013 |
+| Require the `ImageRegistry` capability | OCP-22636, OCP-22637, OCP-33960, OCP-41109, OCP-51148, OCP-51429, OCP-51437, OCP-57089, OCP-60012, OCP-60013, OCP-85280, OCP-85950 |
+| Require platform `azure` | OCP-57089 |
 | Exclude bare metal and vSphere | OCP-75909 |
 
 The web server fixtures pull
@@ -87,9 +100,12 @@ disable these specs on supported platforms. `openshift-tests` passes
 `--api-group` only when it can discover cluster state, which it cannot do on
 MicroShift.
 
-Several cases also carry narrow runtime guards: OCP-63832 and OCP-64611 skip on
-non-AWS platforms, OCP-64611 also skips when the cluster is not a shared-VPC
-install, and OCP-75908 skips when HTTP/2 is not enabled.
+Several cases also carry narrow runtime guards: OCP-57089 skips on a
+non-Azure platform, OCP-56228 skips when `openshift-ingress/router-default` is
+absent (for example on a hosted control plane), OCP-57370 skips when the
+console namespace is absent, OCP-63832 and OCP-64611 skip on non-AWS
+platforms, OCP-64611 also skips when the cluster is not a shared-VPC install,
+and OCP-75908 skips when HTTP/2 is not enabled.
 
 ### Web server fixture reliability
 
@@ -118,13 +134,13 @@ filtered by name.
 
 | Lane | `ingress-operator/all` |
 |------|------------------------|
-| Azure | 14 |
-| AWS | 14 |
-| bare metal IPI (`platform=baremetal`) | 13 |
-| assisted bare metal (`platform=none`) | 14 |
-| vSphere | 13 |
-| disconnected | 13 |
-| HyperShift guest (`topology=External`) | 8 |
+| Azure | 25 |
+| AWS | 24 |
+| bare metal IPI (`platform=baremetal`) | 23 |
+| assisted bare metal (`platform=none`) | 24 |
+| vSphere | 23 |
+| disconnected | 24 |
+| HyperShift guest (`topology=External`) | 16 |
 | MicroShift (no `--api-group`) | 0 |
 
 ## Build, list, and run
@@ -156,7 +172,7 @@ export KUBECONFIG=/path/to/kubeconfig
 
 # Resolve a case ID to its current title, then run that exact name.
 test_name=$(./bin/cluster-ingress-operator-tests-ext list tests --suite ingress-operator/all | \
-  jq -r '.[] | select(.labels | has("OCP-26150")) | .name')
+  jq -r '.[] | select(.labels | has("OCP-33960")) | .name')
 ./bin/cluster-ingress-operator-tests-ext run-test "$test_name"
 ```
 
@@ -184,6 +200,30 @@ applies the cluster selectors. Case IDs appear in labels rather than names.
   -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Router should support SHA1 CA certificates in the default certificate chain [Suite:openshift/conformance/parallel]" \
   --max-concurrency=1
 ```
+
+### Run only `ingress.go` cases
+
+```bash
+# Run the 11 Ingress-to-Route cases by name.
+./bin/cluster-ingress-operator-tests-ext run-test \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router use IngressClass controller for ingress-to-route [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router host name of the route depends on the subdomain if provided [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router different router deployment with same route using subdomain [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Router deployment using different shard with same subdomain [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Deletion of default router service is recovered [Disruptive]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Azure external and internal load balancer services receive IPs [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router component route hostname is RFC compliant [Serial] [Suite:openshift/conformance/serial]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress operator is enabled as an optional component [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router router rejects invalid certificate content on ingress [Serial] [Suite:openshift/conformance/serial]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Propagate ingress labels to generated routes [Suite:openshift/conformance/parallel]" \
+  --max-concurrency=1
+```
+
+Named `run-test` selection bypasses the environment selectors. On HyperShift
+(`topology=External`) or clusters without the `ImageRegistry` capability, omit
+OCP-51429 and OCP-51437 from this command; both read router pods and both
+create the web server.
 
 ## Registration metadata and validation
 
@@ -215,7 +255,7 @@ comment immediately above each `g.It`:
 
 ```go
 //Author:shudili
-g.It("misc tests for ingress operator", g.Label("OCP-26150"), func() {
+g.It("Propagate ingress labels to generated routes", g.Label("OCP-85950"), func() {
 ```
 
 ## Renaming or removing a test
@@ -245,7 +285,7 @@ Either way, run `make update-metadata` afterwards and commit the result.
 
 ## Lifecycle
 
-All 14 cases are **informing**: they report results but do not fail a payload.
+All 25 cases are **informing**: they report results but do not fail a payload.
 The integration guide sets a 99% pass bar for the conformance suites and allows
 a ported test to inform while it earns that. Before promoting any case to
 blocking, confirm clean runs on MicroShift, metal IPv6 disconnected,
@@ -254,9 +294,10 @@ IDs into Sippy.
 
 ## Test execution time
 
-* A single case normally takes 2-5 minutes. OCP-63832 provisions load
-  balancers and can run longer.
-* The full `ingress-operator/all` suite takes roughly 20-40 minutes at
+* A single case normally takes 2-5 minutes. OCP-57089 and OCP-63832 provision
+  load balancers and can run longer, and OCP-51437 creates two routers and can
+  approach the parallel-suite budget.
+* The full `ingress-operator/all` suite takes roughly 30-50 minutes at
   `--max-concurrency=1`.
 * The `ingress-operator/conformance/parallel` subset is the right default for
   presubmit coverage; run serial and disruptive cases separately.
@@ -269,13 +310,14 @@ tests-extension/
 │   ├── main.go                             # OTE entry point, suite definitions
 │   └── environment_selectors.go            # Platform, topology, and capability gates
 ├── test/
-│   ├── util.go                             # Shared fixtures, cleanup, and certificate helpers
+│   ├── util.go                             # Shared helper functions (package test)
 │   ├── aws_util.go                         # AWS EC2 helper functions
 │   ├── lb_security_groups.go               # LB security groups tests
 │   ├── gatewayapi.go                       # Gateway API tests
 │   ├── README.md                           # Gateway API & LB security groups documentation
 │   └── qe/
 │       ├── ingress_operator.go             # 14 ingress operator test implementations
+│       ├── ingress.go                      # 11 Ingress-to-Route test implementations
 │       └── README.md                       # This file
 ├── Makefile                                # Build targets
 ├── go.mod                                  # Dependencies

@@ -160,6 +160,236 @@
     "environmentSelector": {}
   },
   {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-33960": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:96"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router use IngressClass controller for ingress-to-route [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-41109": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:161"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router host name of the route depends on the subdomain if provided [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51148": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:191"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router different router deployment with same route using subdomain [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51429": {},
+      "[Skipped:HyperShift]": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:252"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(topology==\"External\") || (!optionalCapabilities.exists(oc, oc==\"ImageRegistry\"))"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Router deployment using different shard with same subdomain [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51437": {},
+      "[Skipped:HyperShift]": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:292"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(topology==\"External\") || (!optionalCapabilities.exists(oc, oc==\"ImageRegistry\"))"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Deletion of default router service is recovered [Disruptive]",
+    "labels": {
+      "OCP-56228": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:351"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Azure external and internal load balancer services receive IPs [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-57089": {},
+      "[Skipped:NoImageRegistry]": {},
+      "[Skipped:NonAzurePlatform]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:380"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")) || (!(platform==\"azure\"))"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router component route hostname is RFC compliant [Serial] [Suite:openshift/conformance/serial]",
+    "labels": {
+      "OCP-57370": {},
+      "[Skipped:HyperShift]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:434"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "topology==\"External\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress operator is enabled as an optional component [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-73619": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:509"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router router rejects invalid certificate content on ingress [Serial] [Suite:openshift/conformance/serial]",
+    "labels": {
+      "OCP-85280": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:528"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Propagate ingress labels to generated routes [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-85950": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:48",
+      "test/qe/ingress.go:56",
+      "test/qe/ingress.go:555"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")"
+    }
+  },
+  {
     "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router misc tests for ingress operator [Suite:openshift/conformance/parallel]",
     "labels": {
       "OCP-26150": {}

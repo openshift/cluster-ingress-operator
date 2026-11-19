@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 
@@ -1495,4 +1496,102 @@ func MakeTestCAAndCertificate(commonName string, hosts ...string) ([]byte, []byt
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)})
 	return caPEM, certPEM, keyPEM, nil
+}
+
+// ComponentRouteEntry returns the spec.componentRoutes entry for the given
+// route name and namespace, or nil when there is none.
+func ComponentRouteEntry(componentRoutes []interface{}, namespace, name string) interface{} {
+	for _, entry := range componentRoutes {
+		route, ok := entry.(map[string]interface{})
+		if ok && route["name"] == name && route["namespace"] == namespace {
+			return entry
+		}
+	}
+	return nil
+}
+
+// WithComponentRoute returns componentRoutes with testEntry in place of any
+// entry for the same route name and namespace.
+func WithComponentRoute(componentRoutes []interface{}, namespace, name string, testEntry interface{}) []interface{} {
+	updated := make([]interface{}, 0, len(componentRoutes)+1)
+	for _, entry := range componentRoutes {
+		route, ok := entry.(map[string]interface{})
+		if ok && route["name"] == name && route["namespace"] == namespace {
+			continue
+		}
+		updated = append(updated, entry)
+	}
+	return append(updated, testEntry)
+}
+
+// componentRouteMatchesTestEntry reports whether entry still matches the
+// componentRoutes entry a test added. Fields the API server defaults to an
+// empty value are ignored; any other field added or changed by another writer
+// makes the entry no longer match.
+func componentRouteMatchesTestEntry(entry, testEntry interface{}) bool {
+	entryMap, ok := entry.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	testMap, ok := testEntry.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	for key, want := range testMap {
+		if !reflect.DeepEqual(entryMap[key], want) {
+			return false
+		}
+	}
+	for key, got := range entryMap {
+		if _, ok := testMap[key]; ok {
+			continue
+		}
+		if !isEmptyComponentRouteValue(got) {
+			return false
+		}
+	}
+	return true
+}
+
+// isEmptyComponentRouteValue reports whether value is a zero value that the
+// API server can add to a componentRoutes entry.
+func isEmptyComponentRouteValue(value interface{}) bool {
+	switch v := value.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case map[string]interface{}:
+		for _, nested := range v {
+			if !isEmptyComponentRouteValue(nested) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
+}
+
+// WithoutComponentRoute returns componentRoutes without the test-owned entry
+// for the given route name and namespace. An entry that another writer changed
+// is preserved instead. The entry that existed before the test replaced it is
+// appended only when the test-owned entry was removed.
+func WithoutComponentRoute(componentRoutes []interface{}, namespace, name string, testEntry, original interface{}) []interface{} {
+	restored := make([]interface{}, 0, len(componentRoutes))
+	removed := false
+	for _, entry := range componentRoutes {
+		route, ok := entry.(map[string]interface{})
+		if ok && route["name"] == name && route["namespace"] == namespace && componentRouteMatchesTestEntry(entry, testEntry) {
+			removed = true
+			continue
+		}
+		restored = append(restored, entry)
+	}
+	if removed && original != nil {
+		restored = append(restored, original)
+	}
+	return restored
 }

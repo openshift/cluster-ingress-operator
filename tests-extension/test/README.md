@@ -1,6 +1,6 @@
 # cluster-ingress-operator OTE Test Extension — Gateway API, LB Security Groups & Ingress QE Tests
 
-All 24 test cases cover Gateway API CRD lifecycle, AWS NLB security group management, and ported Ingress operator QE coverage, split across three test files.
+All 35 test cases cover Gateway API CRD lifecycle, AWS NLB security group management, and ported Ingress QE coverage, split across four test files.
 
 ## Test Files
 
@@ -9,6 +9,7 @@ All 24 test cases cover Gateway API CRD lifecycle, AWS NLB security group manage
 | `gatewayapi.go` | 5 | Gateway API CRD lifecycle tests (installation, deletion protection, update protection) |
 | `lb_security_groups.go` | 5 | AWS NLB security group management tests (managed, unmanaged, reconciliation) |
 | `qe/ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
+| `qe/ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
 
 ## Test Suites
 
@@ -19,8 +20,8 @@ feature-gate tag. The families are disjoint, and together they cover every test:
 |--------|-----------|-------|
 | `gateway-api/*` | `[OCPFeatureGate:GatewayAPI]` | 5 |
 | `lb-security-groups/*` | `[OCPFeatureGate:IngressControllerLBSecurityGroupsAWS]` | 5 |
-| `ingress-operator/*` | `[OTP]` | 14 |
-| `ingress/*` | everything (all three families combined) | 24 |
+| `ingress-operator/*` | `[OTP]` | 25 |
+| `ingress/*` | everything (all three families combined) | 35 |
 
 ### gateway-api/parallel
 Gateway API CRD tests (5) — non-Serial, non-Disruptive, non-Slow. Read-only/DryRun, fully independent.
@@ -163,8 +164,8 @@ The Gateway API CRD tests carry the `[OCPFeatureGate:GatewayAPI]` tag and only r
 - Single test: 1-5 minutes
 - Gateway API suite: 2-5 minutes
 - LB Security Groups suite: 10-15 minutes (NLB provisioning)
-- QE ingress suite (`ingress-operator/all`, `--max-concurrency=1`): 20-40 minutes
-- All 24 tests: 35-55 minutes
+- QE ingress suite (`ingress-operator/all`, `--max-concurrency=1`): 30-50 minutes
+- All 35 tests: 45-70 minutes
 
 ## Files
 
@@ -181,6 +182,7 @@ tests-extension/
 │   ├── README.md                           # This file
 │   └── qe/
 │       ├── ingress_operator.go             # 14 ingress operator test implementations
+│       ├── ingress.go                      # 11 Ingress-to-Route test implementations
 │       └── README.md                       # Ingress QE test documentation
 ├── Makefile                                # Build targets
 ├── go.mod                                  # Dependencies
