@@ -18,6 +18,7 @@ import (
 var payloadCRDNames = sets.New[string](
 	"ingresses.operator.openshift.io",
 	"ingresscontrollers.operator.openshift.io",
+	"dnsrecords.ingress.operator.openshift.io",
 )
 
 type manifestIdentity struct {
