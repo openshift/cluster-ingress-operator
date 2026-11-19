@@ -2,6 +2,7 @@ package gateway_service_dns
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -176,6 +177,117 @@ func TestDNSRecordRecovery(t *testing.T) {
 				require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(record), &deleting))
 				require.False(t, deleting.DeletionTimestamp.IsZero(), "owned stale records must enter normal finalizer cleanup")
 			}
+		})
+	}
+}
+
+type failingListenerSetListCache struct {
+	testutil.FakeCache
+}
+
+func (failingListenerSetListCache) List(_ context.Context, _ client.ObjectList, _ ...client.ListOption) error {
+	return errors.New("listener set cache must not be listed when the gateway is deleting or missing")
+}
+
+func TestDNSRecordCleanupWhenGatewayDeletingOrMissing(t *testing.T) {
+	for _, scenario := range []struct {
+		name           string
+		includeGateway bool
+	}{
+		{name: "deleting gateway", includeGateway: true},
+		{name: "missing gateway", includeGateway: false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := runtime.NewScheme()
+			for _, add := range []func(*runtime.Scheme) error{gatewayapiv1.AddToScheme, configv1.AddToScheme, corev1.AddToScheme, iov1.AddToScheme} {
+				require.NoError(t, add(scheme))
+			}
+
+			deletionTimestamp := metav1.NewTime(time.Unix(1, 0))
+			gateway := &gatewayapiv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:         operatorcontroller.DefaultOperandNamespace,
+					Name:              "gateway",
+					DeletionTimestamp: &deletionTimestamp,
+					Finalizers:        []string{"test.openshift.io/deletion"},
+				},
+				Spec: gatewayapiv1.GatewaySpec{
+					Listeners: []gatewayapiv1.Listener{{
+						Name:     "existing",
+						Hostname: ptr.To(gatewayapiv1.Hostname("existing.example.com")),
+					}},
+				},
+			}
+			service := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: gateway.Namespace,
+					Name:      "service",
+					UID:       "service-uid",
+					Labels:    map[string]string{operatorcontroller.GatewayNameLabelKey: gateway.Name},
+				},
+				Status: corev1.ServiceStatus{
+					LoadBalancer: corev1.LoadBalancerStatus{
+						Ingress: []corev1.LoadBalancerIngress{{Hostname: "new-target.example.net"}},
+					},
+				},
+			}
+			record := &iov1.DNSRecord{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       operatorcontroller.GatewayDNSRecordName(gateway, "existing.example.com.").Name,
+					Namespace:  gateway.Namespace,
+					UID:        "record-uid",
+					Finalizers: []string{"test.example.com/cleanup"},
+					Labels:     service.Labels,
+					OwnerReferences: []metav1.OwnerReference{{
+						APIVersion: "v1",
+						Kind:       "Service",
+						Name:       service.Name,
+						UID:        service.UID,
+					}},
+				},
+				Spec: iov1.DNSRecordSpec{
+					DNSName:             "existing.example.com.",
+					Targets:             []string{"old-target.example.net"},
+					RecordType:          iov1.CNAMERecordType,
+					RecordTTL:           30,
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+			}
+
+			objects := []client.Object{
+				service,
+				record,
+				&configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.DNSSpec{BaseDomain: "example.com"}},
+				&configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Status: configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: configv1.AWSPlatformType}}},
+			}
+			if scenario.includeGateway {
+				objects = append(objects, gateway)
+			}
+			cl := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(objects...).
+				WithStatusSubresource(service).
+				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
+				Build()
+			normalCache := testutil.FakeCache{Reader: cl}
+			mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
+			mode.SetCRDsEstablished(true)
+			r := &reconciler{
+				config:           Config{OperandNamespace: gateway.Namespace},
+				client:           cl,
+				cache:            normalCache,
+				listenerSetCache: failingListenerSetListCache{FakeCache: normalCache},
+				modeAccessor:     mode,
+			}
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
+			require.NoError(t, err)
+
+			var current iov1.DNSRecord
+			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(record), &current))
+			require.False(t, current.DeletionTimestamp.IsZero(), "records must enter finalizer cleanup")
+			require.Equal(t, record.Spec, current.Spec, "cleanup must not rewrite the record")
 		})
 	}
 }

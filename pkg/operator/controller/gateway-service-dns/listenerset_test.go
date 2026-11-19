@@ -42,8 +42,8 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 		WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
 	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	mode.SetCRDsEstablished(true)
-	r := &reconciler{config: Config{OperandNamespace: parent.Namespace}, client: cl, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, modeAccessor: mode}
-	r.listenerSetCache = r.cache
+	normalCache := testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}
+	r := &reconciler{config: Config{OperandNamespace: parent.Namespace}, client: cl, cache: normalCache, listenerSetCache: normalCache, modeAccessor: mode}
 	check := func(expected int) {
 		t.Helper()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
@@ -64,13 +64,13 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 			require.Equal(t, []string{"lb.example.com"}, record.Spec.Targets)
 		}
 	}
-	check(4)
-	check(4)
+	check(4) // This is a reconcile to check creation.
+	check(4) // This is a second reconcile to check idempotence, i.e. we can run it twice and get same results.
 	listenerSet.Status.Listeners[0].Conditions = append(listenerSet.Status.Listeners[0].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(4)
-	// The shared hostname remains desired by the Gateway's inline listener, but
-	// a current conflict on a ListenerSet-only hostname must remove its record.
+	// The shared hostname remains desired by the Gateway's inline listener, but setting
+	// a conflict on a ListenerSet-only hostname must remove its record.
 	listenerSet.Status.Listeners[1].Conditions = append(listenerSet.Status.Listeners[1].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(3)
@@ -109,8 +109,12 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	listenerSet.Spec.ParentRef.Name = gatewayapiv1.ObjectName(parent.Name)
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(3)
-	require.NoError(t, cl.Delete(ctx, listenerSet))
-	check(1)
+
+	// A deleting parent clears all desired domains without consulting the
+	// ListenerSet cache, even while a ListenerSet remains attached.
+	parent.Finalizers = []string{"test.openshift.io/deletion"}
+	require.NoError(t, cl.Update(ctx, parent))
 	require.NoError(t, cl.Delete(ctx, parent))
+	r.listenerSetCache = failingListenerSetListCache{FakeCache: normalCache}
 	check(0)
 }

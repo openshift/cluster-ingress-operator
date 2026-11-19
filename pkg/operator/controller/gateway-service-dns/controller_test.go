@@ -3,6 +3,7 @@ package gateway_service_dns
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -17,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -338,6 +340,71 @@ func Test_Reconcile(t *testing.T) {
 	}
 }
 
+func Test_gatewayDNSInputsChanged(t *testing.T) {
+	listener := func(name, hostname string) gatewayapiv1.Listener {
+		value := gatewayapiv1.Hostname(hostname)
+		return gatewayapiv1.Listener{Name: gatewayapiv1.SectionName(name), Hostname: &value}
+	}
+	gateway := func(mutations ...func(*gatewayapiv1.Gateway)) *gatewayapiv1.Gateway {
+		object := &gatewayapiv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "openshift-ingress", Name: "gateway"},
+			Spec: gatewayapiv1.GatewaySpec{
+				GatewayClassName: "our-class",
+				Listeners:        []gatewayapiv1.Listener{listener("http", "example.com")},
+			},
+		}
+		for _, mutate := range mutations {
+			mutate(object)
+		}
+		return object
+	}
+	withHostname := func(hostname string) func(*gatewayapiv1.Gateway) {
+		return func(object *gatewayapiv1.Gateway) {
+			object.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname(hostname))
+		}
+	}
+	withGatewayClassName := func(name gatewayapiv1.ObjectName) func(*gatewayapiv1.Gateway) {
+		return func(object *gatewayapiv1.Gateway) {
+			object.Spec.GatewayClassName = name
+		}
+	}
+	withDeletionTimestamp := func(object *gatewayapiv1.Gateway) {
+		object.DeletionTimestamp = ptr.To(metav1.NewTime(time.Unix(1, 0)))
+	}
+	withAllowedListeners := func(from gatewayapiv1.FromNamespaces) func(*gatewayapiv1.Gateway) {
+		return func(object *gatewayapiv1.Gateway) {
+			object.Spec.AllowedListeners = &gatewayapiv1.AllowedListeners{
+				Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(from)},
+			}
+		}
+	}
+	withStatus := func(object *gatewayapiv1.Gateway) {
+		object.Status.Conditions = []metav1.Condition{{
+			Type:               "Accepted",
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(time.Unix(1, 0)),
+		}}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*gatewayapiv1.Gateway)
+		expect bool
+	}{
+		{name: "no DNS input changes", mutate: func(*gatewayapiv1.Gateway) {}, expect: false},
+		{name: "listener hostname changes", mutate: withHostname("changed.example.com"), expect: true},
+		{name: "gateway class changes", mutate: withGatewayClassName("other-class"), expect: true},
+		{name: "deletion timestamp changes", mutate: withDeletionTimestamp, expect: true},
+		{name: "allowed listeners change does not trigger Gateway DNS reconciliation", mutate: withAllowedListeners(gatewayapiv1.NamespacesFromAll), expect: false},
+		{name: "status change does not trigger Gateway DNS reconciliation", mutate: withStatus, expect: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, gatewayDNSInputsChanged(gateway(), gateway(tc.mutate)))
+		})
+	}
+}
+
 func Test_gatewayListenersHostnamesChanged(t *testing.T) {
 	l := func(name, hostname string) gatewayapiv1.Listener {
 		h := gatewayapiv1.Hostname(hostname)
@@ -393,6 +460,12 @@ func Test_gatewayListenersHostnamesChanged(t *testing.T) {
 			name:   "change a listener's hostname",
 			old:    []gatewayapiv1.Listener{l("https", "xyz.xyz")},
 			new:    []gatewayapiv1.Listener{l("https", "abc.xyz")},
+			expect: true,
+		},
+		{
+			name:   "remove a listener's hostname",
+			old:    []gatewayapiv1.Listener{l("https", "xyz.xyz")},
+			new:    []gatewayapiv1.Listener{l("https", "")},
 			expect: true,
 		},
 		{
