@@ -243,7 +243,7 @@ make verify
 
 Runs verification scripts:
 - `hack/verify-gofmt.sh` - gofmt
-- `hack/verify-generated-crd.sh` - Verifies CRDs under `manifests/` match CRDs under `vendor/`
+- `hack/verify-generated-crd.sh` - Verifies CRDs under `manifests/` match CRDs under `vendor/`, and that `manifests/` does not ship CRDs that openshift/api delivers in the release payload (see `payloadCRDNames` in `hack/verify-generated-crd/main.go`)
 - `hack/verify-profile-manifests.sh` - Verifies profile-specific manifests (e.g., `02-deployment.yaml` for `ibm-cloud-managed`) are up to date
 - `hack/verify-deps.sh` - Verifies `go mod` vendoring is up to date (`go mod vendor` / `go mod tidy`)
 
