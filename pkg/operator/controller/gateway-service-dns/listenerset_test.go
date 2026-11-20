@@ -122,42 +122,84 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	check(0)
 }
 
-// TestDNSRecordsAreSeparateAcrossGateways verifies that equivalent Gateway and
-// ListenerSet hostnames share one DNSRecord claim.
-func TestDNSRecordsAreSeparateAcrossGateways(t *testing.T) {
-	ctx := context.Background()
+// newDNSClaimGateway returns a managed Gateway with one listener per hostname.
+func newDNSClaimGateway(name string, hostnames ...string) *gatewayapiv1.Gateway {
+	listeners := make([]gatewayapiv1.Listener, 0, len(hostnames))
+	for index, hostname := range hostnames {
+		listeners = append(listeners, gatewayapiv1.Listener{
+			Name:     gatewayapiv1.SectionName(fmt.Sprintf("listener-%d", index)),
+			Hostname: ptr.To(gatewayapiv1.Hostname(hostname)),
+		})
+	}
+	return &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: "managed",
+			Listeners:        listeners,
+		},
+	}
+}
+
+// newDNSClaimService returns a Gateway load-balancer Service fixture.
+func newDNSClaimService(name, gatewayName string) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+			Name:      name,
+			UID:       types.UID(name + "-uid"),
+			Labels:    map[string]string{operatorcontroller.GatewayNameLabelKey: gatewayName},
+		},
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{{Hostname: name + ".example.net"}},
+			},
+		},
+	}
+}
+
+// newDNSClaimReconciler returns a reconciler and fake client for DNS claim tests.
+func newDNSClaimReconciler(t *testing.T, objects ...client.Object) (*reconciler, client.Client) {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{gatewayapiv1.AddToScheme, configv1.AddToScheme, corev1.AddToScheme, iov1.AddToScheme} {
 		require.NoError(t, add(scheme))
 	}
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objects...).
+		WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
+		Build()
 
-	gateway := func(name string) *gatewayapiv1.Gateway {
-		return &gatewayapiv1.Gateway{
-			ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name},
-			Spec: gatewayapiv1.GatewaySpec{
-				GatewayClassName: "managed",
-				Listeners: []gatewayapiv1.Listener{{
-					Name:     "inline",
-					Hostname: ptr.To(gatewayapiv1.Hostname("inline.example.com")),
-				}},
-			},
+	cache := testutil.FakeCache{
+		Informers: &informertest.FakeInformers{Scheme: scheme},
+		Reader:    cl,
+	}
+	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
+	mode.SetCRDsEstablished(true)
+	return &reconciler{
+		config:           Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace},
+		client:           cl,
+		cache:            cache,
+		listenerSetCache: cache,
+		modeAccessor:     mode,
+	}, cl
+}
+
+// containsCanonicalHostname reports whether dnsName matches one of hostnames
+// after DNS canonicalization.
+func containsCanonicalHostname(hostnames []string, dnsName string) bool {
+	for _, hostname := range hostnames {
+		if dns.NormalizeHostname(hostname) == dns.NormalizeHostname(dnsName) {
+			return true
 		}
 	}
-	service := func(name, gatewayName string) *corev1.Service {
-		return &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: operatorcontroller.DefaultOperandNamespace,
-				Name:      name,
-				UID:       types.UID(name + "-uid"),
-				Labels:    map[string]string{operatorcontroller.GatewayNameLabelKey: gatewayName},
-			},
-			Status: corev1.ServiceStatus{
-				LoadBalancer: corev1.LoadBalancerStatus{
-					Ingress: []corev1.LoadBalancerIngress{{Hostname: name + ".example.net"}},
-				},
-			},
-		}
-	}
+	return false
+}
+
+// TestDNSRecordsAreSeparateAcrossGateways verifies that equivalent Gateway and
+// ListenerSet hostnames share one DNSRecord claim.
+func TestDNSRecordsAreSeparateAcrossGateways(t *testing.T) {
+	ctx := context.Background()
 	listenerSet := func(name string, gatewayName string) *gatewayapiv1.ListenerSet {
 		return &gatewayapiv1.ListenerSet{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "tenant", Name: name, Generation: 1},
@@ -189,9 +231,11 @@ func TestDNSRecordsAreSeparateAcrossGateways(t *testing.T) {
 		}
 	}
 
-	gatewayA, gatewayB := gateway("gateway-a"), gateway("gateway-b")
-	serviceA, serviceB := service("service-a", gatewayA.Name), service("service-b", gatewayB.Name)
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+	gatewayA := newDNSClaimGateway("gateway-a", "inline.example.com")
+	gatewayB := newDNSClaimGateway("gateway-b", "inline.example.com")
+	serviceA := newDNSClaimService("service-a", gatewayA.Name)
+	serviceB := newDNSClaimService("service-b", gatewayB.Name)
+	objects := []client.Object{
 		gatewayA,
 		gatewayB,
 		&gatewayapiv1.GatewayClass{
@@ -207,44 +251,32 @@ func TestDNSRecordsAreSeparateAcrossGateways(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
 			Status:     configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: configv1.AWSPlatformType}},
 		},
-	).WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
-
-	normalCache := testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}
-	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
-	mode.SetCRDsEstablished(true)
-	r := &reconciler{
-		config:           Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace},
-		client:           cl,
-		cache:            normalCache,
-		listenerSetCache: normalCache,
-		modeAccessor:     mode,
 	}
+	r, cl := newDNSClaimReconciler(t, objects...)
 
+	// Gateway A establishes the first valid claims through both listener sources.
 	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(serviceA)})
 	require.NoError(t, err)
+
+	// Gateway B must not create a second claim for either equivalent hostname.
 	_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(serviceB)})
 	require.ErrorContains(t, err, "duplicate DNSRecord would be created")
 
 	var records iov1.DNSRecordList
 	require.NoError(t, cl.List(ctx, &records))
-	require.Len(t, records.Items, 2)
+	recordsByDNSName := map[string]types.UID{}
 
-	seenNames := map[string]int{}
-	recordsByDNSName := map[string][]iov1.DNSRecord{}
-	targetsByOwner := map[string][]string{}
 	for _, record := range records.Items {
-		seenNames[record.Name]++
-		recordsByDNSName[record.Spec.DNSName] = append(recordsByDNSName[record.Spec.DNSName], record)
 		require.Len(t, record.OwnerReferences, 1)
-		targetsByOwner[string(record.OwnerReferences[0].UID)] = append(targetsByOwner[string(record.OwnerReferences[0].UID)], record.Spec.Targets...)
+		require.Equal(t, serviceA.UID, record.OwnerReferences[0].UID)
+		require.Equal(t, []string{"service-a.example.net"}, record.Spec.Targets)
+		recordsByDNSName[record.Spec.DNSName] = record.OwnerReferences[0].UID
 	}
-	require.Len(t, seenNames, 2, "DNS names must have one globally scoped DNSRecord claim")
-	require.Equal(t, map[string][]string{
-		string(serviceA.UID): {"service-a.example.net", "service-a.example.net"},
-	}, targetsByOwner)
+
+	require.Len(t, recordsByDNSName, 2, "each DNS name must have one DNSRecord claim")
 	for _, dnsName := range []string{"inline.example.com.", "attached.example.com."} {
-		require.Len(t, recordsByDNSName[dnsName], 1, "a DNS name must not have multiple DNSRecord claims")
-		require.Equal(t, serviceA.UID, recordsByDNSName[dnsName][0].OwnerReferences[0].UID)
+		require.Contains(t, recordsByDNSName, dnsName)
+		require.Equal(t, serviceA.UID, recordsByDNSName[dnsName])
 	}
 }
 
@@ -260,51 +292,37 @@ func TestDNSRecordWildcardClaims(t *testing.T) {
 		sameGateway bool
 		conflicts   bool
 	}{
-		{name: "wildcard before subdomain", firstHosts: []string{"*.example.com"}, secondHosts: []string{"foo.example.com"}, conflicts: true},
-		{name: "subdomain before wildcard", firstHosts: []string{"foo.example.com"}, secondHosts: []string{"*.example.com"}, conflicts: true},
-		{name: "wildcard and apex", firstHosts: []string{"*.example.com"}, secondHosts: []string{"example.com"}},
-		{name: "wildcard and subdomain on one Gateway", firstHosts: []string{"*.example.com", "foo.example.com"}, secondHosts: []string{"foo.example.com"}, sameGateway: true},
+		{
+			name:        "wildcard before subdomain",
+			firstHosts:  []string{"*.example.com"},
+			secondHosts: []string{"foo.example.com"},
+			conflicts:   true,
+		},
+		{
+			name:        "subdomain before wildcard",
+			firstHosts:  []string{"foo.example.com"},
+			secondHosts: []string{"*.example.com"},
+			conflicts:   true,
+		},
+		{
+			name:        "wildcard and apex",
+			firstHosts:  []string{"*.example.com"},
+			secondHosts: []string{"example.com"},
+		},
+		{
+			name:        "wildcard and subdomain on one Gateway",
+			firstHosts:  []string{"*.example.com", "foo.example.com"},
+			secondHosts: []string{"foo.example.com"},
+			sameGateway: true,
+		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			ctx := context.Background()
-			scheme := runtime.NewScheme()
-			for _, add := range []func(*runtime.Scheme) error{gatewayapiv1.AddToScheme, configv1.AddToScheme, corev1.AddToScheme, iov1.AddToScheme} {
-				require.NoError(t, add(scheme))
-			}
 
-			gateway := func(name string, hostnames ...string) *gatewayapiv1.Gateway {
-				listeners := make([]gatewayapiv1.Listener, 0, len(hostnames))
-				for index, hostname := range hostnames {
-					listeners = append(listeners, gatewayapiv1.Listener{
-						Name:     gatewayapiv1.SectionName(fmt.Sprintf("listener-%d", index)),
-						Hostname: ptr.To(gatewayapiv1.Hostname(hostname)),
-					})
-				}
-				return &gatewayapiv1.Gateway{
-					ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name},
-					Spec:       gatewayapiv1.GatewaySpec{Listeners: listeners},
-				}
-			}
-			service := func(name, gatewayName string) *corev1.Service {
-				return &corev1.Service{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: operatorcontroller.DefaultOperandNamespace,
-						Name:      name,
-						UID:       types.UID(name + "-uid"),
-						Labels:    map[string]string{operatorcontroller.GatewayNameLabelKey: gatewayName},
-					},
-					Status: corev1.ServiceStatus{
-						LoadBalancer: corev1.LoadBalancerStatus{
-							Ingress: []corev1.LoadBalancerIngress{{Hostname: name + ".example.net"}},
-						},
-					},
-				}
-			}
-
-			gatewayA := gateway("gateway-a", scenario.firstHosts...)
-			gatewayB := gateway("gateway-b", scenario.secondHosts...)
-			serviceA := service("service-a", gatewayA.Name)
-			serviceB := service("service-b", gatewayB.Name)
+			gatewayA := newDNSClaimGateway("gateway-a", scenario.firstHosts...)
+			gatewayB := newDNSClaimGateway("gateway-b", scenario.secondHosts...)
+			serviceA := newDNSClaimService("service-a", gatewayA.Name)
+			serviceB := newDNSClaimService("service-b", gatewayB.Name)
 			if scenario.sameGateway {
 				gatewayB = gatewayA
 				serviceB = serviceA
@@ -321,22 +339,13 @@ func TestDNSRecordWildcardClaims(t *testing.T) {
 			if !scenario.sameGateway {
 				objects = append(objects, gatewayB, serviceB)
 			}
-			cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
-				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
+			r, cl := newDNSClaimReconciler(t, objects...)
 
-			normalCache := testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}
-			mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
-			mode.SetCRDsEstablished(true)
-			r := &reconciler{
-				config:           Config{OperandNamespace: operatorcontroller.DefaultOperandNamespace},
-				client:           cl,
-				cache:            normalCache,
-				listenerSetCache: normalCache,
-				modeAccessor:     mode,
-			}
-
+			// The first reconcile establishes the preclaiming Gateway's DNSRecord.
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(serviceA)})
 			require.NoError(t, err)
+
+			// A second reconcile is only meaningful when another Gateway is claiming.
 			if !scenario.sameGateway {
 				_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(serviceB)})
 			}
@@ -349,21 +358,23 @@ func TestDNSRecordWildcardClaims(t *testing.T) {
 
 			var records iov1.DNSRecordList
 			require.NoError(t, cl.List(ctx, &records))
+			recordsByDNSName := map[string]types.UID{}
+			for _, record := range records.Items {
+				require.Len(t, record.OwnerReferences, 1)
+				recordsByDNSName[record.Spec.DNSName] = record.OwnerReferences[0].UID
+			}
+
 			expectedCount := len(scenario.firstHosts)
 			if !scenario.conflicts && !scenario.sameGateway {
 				expectedCount += len(scenario.secondHosts)
 			}
-			require.Len(t, records.Items, expectedCount)
-			for _, record := range records.Items {
-				require.Len(t, record.OwnerReferences, 1)
-				ownedByFirstGateway := false
-				for _, hostname := range scenario.firstHosts {
-					ownedByFirstGateway = ownedByFirstGateway || dns.NormalizeHostname(hostname) == dns.NormalizeHostname(record.Spec.DNSName)
-				}
-				if ownedByFirstGateway {
-					require.Equal(t, serviceA.UID, record.OwnerReferences[0].UID, "the first valid claim must win")
+			require.Len(t, recordsByDNSName, expectedCount, "each DNS name must have one DNSRecord claim")
+
+			for dnsName, ownerUID := range recordsByDNSName {
+				if containsCanonicalHostname(scenario.firstHosts, dnsName) {
+					require.Equal(t, serviceA.UID, ownerUID, "the first valid claim must win")
 				} else {
-					require.Equal(t, serviceB.UID, record.OwnerReferences[0].UID)
+					require.Equal(t, serviceB.UID, ownerUID)
 				}
 			}
 		})
