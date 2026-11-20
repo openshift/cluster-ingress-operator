@@ -60,7 +60,8 @@ var (
 				Generation: generation,
 			},
 			Spec: gatewayapiv1.GatewaySpec{
-				Listeners: listeners,
+				GatewayClassName: "managed",
+				Listeners:        listeners,
 			},
 			Status: gatewayapiv1.GatewayStatus{
 				Conditions: conditions,
@@ -1019,6 +1020,8 @@ func Test_Reconcile(t *testing.T) {
 			ctx := context.Background()
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
+				WithObjects(&gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "managed"}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName}}).
+				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 				WithRuntimeObjects(tc.existingObjects...).
 				WithStatusSubresource(&gatewayapiv1.Gateway{}).
 				WithIndex(&corev1.Event{}, "involvedObject.apiVersion", fakeEventLister("apiVersion")).
@@ -1154,6 +1157,8 @@ func TestReconcileTransition(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithObjects(&gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "managed"}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName}}).
+		WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 		WithRuntimeObjects(existingObjects...).
 		WithStatusSubresource(&gatewayapiv1.Gateway{}).
 		WithIndex(&corev1.Event{}, "involvedObject.apiVersion", fakeEventLister).

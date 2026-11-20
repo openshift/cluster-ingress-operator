@@ -3,10 +3,12 @@ package gateway_service_dns
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -17,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,6 +75,7 @@ func Test_Reconcile(t *testing.T) {
 				Labels:    labels,
 				Namespace: "openshift-ingress",
 				Name:      name,
+				UID:       "service-uid",
 			},
 			Status: corev1.ServiceStatus{
 				LoadBalancer: corev1.LoadBalancerStatus{
@@ -92,9 +96,10 @@ func Test_Reconcile(t *testing.T) {
 	dnsrecord := func(name, dnsName string, policy iov1.DNSManagementPolicy, labels map[string]string, targets ...string) *iov1.DNSRecord {
 		return &iov1.DNSRecord{
 			ObjectMeta: metav1.ObjectMeta{
-				Labels:    labels,
-				Namespace: "openshift-ingress",
-				Name:      name,
+				Labels:          labels,
+				Namespace:       "openshift-ingress",
+				Name:            name,
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: "v1", Kind: "Service", Name: "example-gateway", UID: "service-uid"}},
 			},
 			Spec: iov1.DNSRecordSpec{
 				DNSName:             dnsName,
@@ -284,6 +289,7 @@ func Test_Reconcile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
+				WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
 			cl := &testutil.FakeClientRecorder{
@@ -301,9 +307,10 @@ func Test_Reconcile(t *testing.T) {
 				config: Config{
 					OperandNamespace: "openshift-ingress",
 				},
-				cache:        cache,
-				client:       cl,
-				modeAccessor: testModeAccessor,
+				cache:            cache,
+				listenerSetCache: cache,
+				client:           cl,
+				modeAccessor:     testModeAccessor,
 			}
 			res, err := reconciler.Reconcile(context.Background(), tc.reconcileRequest)
 			if tc.expectError == "" {
@@ -330,6 +337,96 @@ func Test_Reconcile(t *testing.T) {
 			if diff := cmp.Diff(tc.expectDelete, cl.Deleted, delCmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual deletes: %s", diff)
 			}
+		})
+	}
+}
+
+// TestDNSNamesOverlap verifies canonical-name equality and wildcard coverage.
+// An apex name is the wildcard's base name without the wildcard label; for
+// example, "example.com" is the apex of "*.example.com".
+func TestDNSNamesOverlap(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		first    string
+		second   string
+		expected bool
+	}{
+		{name: "exact names", first: "foo.example.com.", second: "foo.example.com", expected: true},
+		{name: "case-insensitive names", first: "FOO.Example.COM.", second: "foo.example.com.", expected: true},
+		{name: "wildcard covers child", first: "*.example.com.", second: "foo.example.com.", expected: true},
+		{name: "wildcard covers deeper child", first: "*.example.com.", second: "foo.bar.example.com.", expected: true},
+		{name: "wildcards with the same base", first: "*.example.com.", second: "*.example.com.", expected: true},
+		{name: "wildcard does not cover apex", first: "*.example.com.", second: "example.com.", expected: false},
+		{name: "disjoint names", first: "*.example.com.", second: "foo.example.org.", expected: false},
+		{name: "nested wildcard covers its child", first: "*.foo.example.com.", second: "bar.foo.example.com.", expected: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			require.Equal(t, scenario.expected, dnsNamesOverlap(scenario.first, scenario.second))
+		})
+	}
+}
+
+func Test_gatewayDNSInputsChanged(t *testing.T) {
+	listener := func(name, hostname string) gatewayapiv1.Listener {
+		value := gatewayapiv1.Hostname(hostname)
+		return gatewayapiv1.Listener{Name: gatewayapiv1.SectionName(name), Hostname: &value}
+	}
+	gateway := func(mutations ...func(*gatewayapiv1.Gateway)) *gatewayapiv1.Gateway {
+		object := &gatewayapiv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "openshift-ingress", Name: "gateway"},
+			Spec: gatewayapiv1.GatewaySpec{
+				GatewayClassName: "our-class",
+				Listeners:        []gatewayapiv1.Listener{listener("http", "example.com")},
+			},
+		}
+		for _, mutate := range mutations {
+			mutate(object)
+		}
+		return object
+	}
+	withHostname := func(hostname string) func(*gatewayapiv1.Gateway) {
+		return func(object *gatewayapiv1.Gateway) {
+			object.Spec.Listeners[0].Hostname = ptr.To(gatewayapiv1.Hostname(hostname))
+		}
+	}
+	withGatewayClassName := func(name gatewayapiv1.ObjectName) func(*gatewayapiv1.Gateway) {
+		return func(object *gatewayapiv1.Gateway) {
+			object.Spec.GatewayClassName = name
+		}
+	}
+	withDeletionTimestamp := func(object *gatewayapiv1.Gateway) {
+		object.DeletionTimestamp = ptr.To(metav1.NewTime(time.Unix(1, 0)))
+	}
+	withAllowedListeners := func(from gatewayapiv1.FromNamespaces) func(*gatewayapiv1.Gateway) {
+		return func(object *gatewayapiv1.Gateway) {
+			object.Spec.AllowedListeners = &gatewayapiv1.AllowedListeners{
+				Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(from)},
+			}
+		}
+	}
+	withStatus := func(object *gatewayapiv1.Gateway) {
+		object.Status.Conditions = []metav1.Condition{{
+			Type:               "Accepted",
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(time.Unix(1, 0)),
+		}}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*gatewayapiv1.Gateway)
+		expect bool
+	}{
+		{name: "no DNS input changes", mutate: func(*gatewayapiv1.Gateway) {}, expect: false},
+		{name: "listener hostname changes", mutate: withHostname("changed.example.com"), expect: true},
+		{name: "gateway class changes", mutate: withGatewayClassName("other-class"), expect: true},
+		{name: "deletion timestamp changes", mutate: withDeletionTimestamp, expect: true},
+		{name: "allowed listeners change does not trigger Gateway DNS reconciliation", mutate: withAllowedListeners(gatewayapiv1.NamespacesFromAll), expect: false},
+		{name: "status change does not trigger Gateway DNS reconciliation", mutate: withStatus, expect: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, gatewayDNSInputsChanged(gateway(), gateway(tc.mutate)))
 		})
 	}
 }
@@ -389,6 +486,12 @@ func Test_gatewayListenersHostnamesChanged(t *testing.T) {
 			name:   "change a listener's hostname",
 			old:    []gatewayapiv1.Listener{l("https", "xyz.xyz")},
 			new:    []gatewayapiv1.Listener{l("https", "abc.xyz")},
+			expect: true,
+		},
+		{
+			name:   "remove a listener's hostname",
+			old:    []gatewayapiv1.Listener{l("https", "xyz.xyz")},
+			new:    []gatewayapiv1.Listener{l("https", "")},
 			expect: true,
 		},
 		{

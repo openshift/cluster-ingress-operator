@@ -18,7 +18,6 @@ import (
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
@@ -257,10 +256,6 @@ func start(opts *StartOptions) error {
 	log.Info("registering Prometheus metrics for status_controller")
 	if err := statuscontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for status_controller")
-	}
-	log.Info("registering Prometheus metrics for listenerset_status_controller")
-	if err := listenersetstatuscontroller.RegisterMetrics(); err != nil {
-		log.Error(err, "unable to register metrics for listenerset_status_controller")
 	}
 	log.Info("registering Prometheus metrics for gatewayapi_controller")
 	if err := gatewayapicontroller.RegisterMetrics(); err != nil {
