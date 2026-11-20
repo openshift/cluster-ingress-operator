@@ -110,7 +110,7 @@ func TestDNSRecordRecovery(t *testing.T) {
 			mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
 			mode.SetCRDsEstablished(true)
 			r := &reconciler{config: Config{OperandNamespace: gateway.Namespace}, client: cl, cache: testutil.FakeCache{Reader: cl}, listenerSetCache: testutil.FakeCache{Reader: cl}, modeAccessor: mode}
-			blocked := scenario.foreign || scenario.unowned || scenario.sharedOwner || scenario.duplicate || scenario.unlabeled || scenario.terminating
+			blocked := scenario.foreign || scenario.unowned || scenario.sharedOwner || scenario.duplicate || scenario.terminating
 			for _, target := range []string{"new-target.example.net", "changed-target.example.net", "changed-target.example.net"} {
 				require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(service), service))
 				service.Status.LoadBalancer.Ingress[0].Hostname = target

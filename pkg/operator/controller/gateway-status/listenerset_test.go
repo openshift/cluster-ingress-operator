@@ -41,7 +41,8 @@ func TestListenerSetStatus(t *testing.T) {
 		},
 	}}
 	istioStatus := listenerSet.DeepCopy().Status
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(listenerSet, parent).WithObjects(parent, class, listenerSet, &configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.DNSSpec{PublicZone: &configv1.DNSZone{ID: "zone"}}}).WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
+	alreadyClaimed := &iov1.DNSRecord{ObjectMeta: metav1.ObjectMeta{Name: "preclaiming-gateway-record", Namespace: parent.Namespace, Labels: map[string]string{operatorcontroller.GatewayNameLabelKey: "preclaiming-gateway"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "v1", Kind: "Service", Name: "preclaiming-gateway-service", UID: "preclaiming-gateway-service-uid"}}}, Spec: iov1.DNSRecordSpec{DNSName: "example.com.", DNSManagementPolicy: iov1.ManagedDNS, RecordTTL: 30, RecordType: iov1.CNAMERecordType}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(listenerSet, parent).WithObjects(parent, class, listenerSet, alreadyClaimed, &configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.DNSSpec{PublicZone: &configv1.DNSZone{ID: "zone"}}}).WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
 	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
 	mode.SetCRDsEstablished(true)
 	r := &listenerSetReconciler{client: cl, cache: testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}, modeAccessor: mode}
@@ -60,6 +61,7 @@ func TestListenerSetStatus(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, cl.Get(ctx, request.NamespacedName, listenerSet))
 	}
+	// A claim owned by the preclaiming Gateway must not satisfy this Gateway's listener.
 	reconcileStatus()
 	require.True(t, meta.IsStatusConditionFalse(listenerSet.Status.Conditions, "DNSReady"))
 	require.Equal(t, "RecordNotFound", meta.FindStatusCondition(listenerSet.Status.Listeners[0].Conditions, "DNSReady").Reason)

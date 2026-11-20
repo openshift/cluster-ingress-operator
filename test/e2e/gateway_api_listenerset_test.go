@@ -180,6 +180,36 @@ func testGatewayAPIListenerSets(t *testing.T) {
 	traffic(first, gateways[0], firstHostname)
 	traffic(second, gateways[0], secondHostname)
 	require.NoError(t, kclient.Delete(ctx, conflict))
+
+	// Gateway one already owns firstHostname. Gateway two must not be able to
+	// claim a wildcard that covers it, and its listener must report that its own
+	// DNSRecord is missing rather than adopting Gateway one's record.
+	crossGatewayWildcard := makeListenerSet("cross-gateway-wildcard", gateways[1].Name, "*."+firstHostname)
+	require.NoError(t, kclient.Create(ctx, crossGatewayWildcard))
+	require.Eventually(t, func() bool {
+		if err := kclient.Get(ctx, client.ObjectKeyFromObject(crossGatewayWildcard), crossGatewayWildcard); err != nil {
+			return false
+		}
+		if !meta.IsStatusConditionTrue(crossGatewayWildcard.Status.Conditions, "Accepted") {
+			return false
+		}
+		for _, listener := range crossGatewayWildcard.Status.Listeners {
+			if !meta.IsStatusConditionTrue(listener.Conditions, "Accepted") {
+				return false
+			}
+			dnsReady := meta.FindStatusCondition(listener.Conditions, operatorv1.DNSReadyIngressConditionType)
+			if dnsReady == nil || dnsReady.Status != metav1.ConditionFalse || dnsReady.Reason != "RecordNotFound" {
+				return false
+			}
+		}
+		return meta.IsStatusConditionFalse(crossGatewayWildcard.Status.Conditions, operatorv1.DNSReadyIngressConditionType)
+	}, 3*time.Minute, 2*time.Second, "cross-Gateway wildcard conflict did not report RecordNotFound: %+v", crossGatewayWildcard.Status)
+	waitDNS(gateways[1], "*."+firstHostname, false)
+	require.NoError(t, kclient.Delete(ctx, crossGatewayWildcard))
+	require.Eventually(t, func() bool {
+		return errors.IsNotFound(kclient.Get(ctx, client.ObjectKeyFromObject(crossGatewayWildcard), crossGatewayWildcard))
+	}, 2*time.Minute, 2*time.Second)
+
 	updateListenerSet(first, func(spec *gatewayapiv1.ListenerSetSpec) {
 		spec.ParentRef.Name = gatewayapiv1.ObjectName(gateways[1].Name)
 	})

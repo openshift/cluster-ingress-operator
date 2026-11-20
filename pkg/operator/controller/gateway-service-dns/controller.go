@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
@@ -278,13 +279,13 @@ func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 	return domains
 }
 
-// ensureDNSRecordsForGateway ensures that a DNSRecord CR exists, associated
-// with the given gateway and service, for each of the given domains. It prevents
-// duplicate DNS record being ensured, and collects an error for those cases. It
-// returns a list of any errors that result from ensuring those DNSRecord CRs.
+// ensureDNSRecordsForGateway ensures that a DNSRecord CR exists, associated with
+// the given Gateway and Service, for each desired domain. Exact and overlapping
+// claims owned by another Gateway's Service are rejected so that the first valid
+// claim wins. It returns the errors encountered while ensuring those DNSRecords.
 func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1.Gateway, service *corev1.Service, domains []string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) []error {
 	var existing iov1.DNSRecordList
-	if err := r.client.List(ctx, &existing, client.InNamespace(gateway.Namespace), client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name}); err != nil {
+	if err := r.client.List(ctx, &existing, client.InNamespace(gateway.Namespace)); err != nil {
 		return []error{err}
 	}
 	recordsByDomain := map[string][]*iov1.DNSRecord{}
@@ -335,6 +336,24 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 				continue
 			}
 		}
+		overlappingClaim := false
+		for index := range existing.Items {
+			record := &existing.Items[index]
+			if !dnsRecordIsAlreadyClaimedByGateway(record, service) {
+				continue
+			}
+			if dnsNamesOverlap(record.Spec.DNSName, domain) {
+				errs = append(errs, fmt.Errorf(
+					"DNSRecord claim for Gateway %s/%s overlaps a claim owned by another Service; first valid claim wins",
+					gateway.Namespace, gateway.Name,
+				))
+				overlappingClaim = true
+				break
+			}
+		}
+		if overlappingClaim {
+			continue
+		}
 		dnsPolicy := iov1.UnmanagedDNS
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
 			dnsPolicy = iov1.ManagedDNS
@@ -351,6 +370,40 @@ func dnsRecordOwnedByService(record *iov1.DNSRecord, service *corev1.Service) bo
 	}
 	owner := record.OwnerReferences[0]
 	return owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service" && owner.Name == service.Name && owner.UID == service.UID
+}
+
+// dnsRecordIsAlreadyClaimedByGateway reports whether the DNSRecord represents
+// a valid DNS claim owned by another Gateway's load-balancer Service.
+func dnsRecordIsAlreadyClaimedByGateway(record *iov1.DNSRecord, service *corev1.Service) bool {
+	if dnsRecordOwnedByService(record, service) ||
+		record.Labels[operatorcontroller.GatewayNameLabelKey] == "" ||
+		len(record.OwnerReferences) != 1 {
+		return false
+	}
+	owner := record.OwnerReferences[0]
+	return owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service" && owner.UID != ""
+}
+
+// dnsNamesOverlap reports whether two DNS names are equivalent or whether a
+// wildcard name covers the other name.
+func dnsNamesOverlap(first, second string) bool {
+	return dnsNameCovers(first, second) || dnsNameCovers(second, first)
+}
+
+// dnsNameCovers reports whether pattern matches name. A non-wildcard pattern
+// matches only the same canonical name. A wildcard pattern matches at least one
+// label below its base name, but does not match the base name itself.
+func dnsNameCovers(pattern, name string) bool {
+	patternLabels := strings.Split(dns.NormalizeHostname(pattern), ".")
+	nameLabels := strings.Split(dns.NormalizeHostname(name), ".")
+	if patternLabels[0] != "*" {
+		return reflect.DeepEqual(patternLabels, nameLabels)
+	}
+	base := patternLabels[1:]
+	if len(base) == 0 || len(nameLabels) <= len(base) {
+		return false
+	}
+	return reflect.DeepEqual(nameLabels[len(nameLabels)-len(base):], base)
 }
 
 // deleteStaleDNSRecordsForGateway deletes any DNSRecord CRs that are associated

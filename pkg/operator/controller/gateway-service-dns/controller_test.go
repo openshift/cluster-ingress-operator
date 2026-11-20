@@ -8,6 +8,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -336,6 +337,31 @@ func Test_Reconcile(t *testing.T) {
 			if diff := cmp.Diff(tc.expectDelete, cl.Deleted, delCmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual deletes: %s", diff)
 			}
+		})
+	}
+}
+
+// TestDNSNamesOverlap verifies canonical-name equality and wildcard coverage.
+// An apex name is the wildcard's base name without the wildcard label; for
+// example, "example.com" is the apex of "*.example.com".
+func TestDNSNamesOverlap(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		first    string
+		second   string
+		expected bool
+	}{
+		{name: "exact names", first: "foo.example.com.", second: "foo.example.com", expected: true},
+		{name: "case-insensitive names", first: "FOO.Example.COM.", second: "foo.example.com.", expected: true},
+		{name: "wildcard covers child", first: "*.example.com.", second: "foo.example.com.", expected: true},
+		{name: "wildcard covers deeper child", first: "*.example.com.", second: "foo.bar.example.com.", expected: true},
+		{name: "wildcards with the same base", first: "*.example.com.", second: "*.example.com.", expected: true},
+		{name: "wildcard does not cover apex", first: "*.example.com.", second: "example.com.", expected: false},
+		{name: "disjoint names", first: "*.example.com.", second: "foo.example.org.", expected: false},
+		{name: "nested wildcard covers its child", first: "*.foo.example.com.", second: "bar.foo.example.com.", expected: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			require.Equal(t, scenario.expected, dnsNamesOverlap(scenario.first, scenario.second))
 		})
 	}
 }
