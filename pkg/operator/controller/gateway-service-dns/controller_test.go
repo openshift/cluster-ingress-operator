@@ -53,6 +53,11 @@ func Test_Reconcile(t *testing.T) {
 			},
 		}
 	}
+	clusterIPGateway := func(name string, listeners ...gatewayapiv1.Listener) *gatewayapiv1.Gateway {
+		gateway := gw(name, listeners...)
+		gateway.Spec.GatewayClassName = operatorcontroller.OpenShiftClusterIPGatewayClassName
+		return gateway
+	}
 	l := func(name, hostname string, port int) gatewayapiv1.Listener {
 		h := gatewayapiv1.Hostname(hostname)
 		return gatewayapiv1.Listener{
@@ -241,6 +246,32 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
+		},
+		{
+			name: "clusterip managed gateway creates no dnsrecords",
+			existingObjects: []runtime.Object{
+				clusterIPGateway("example-gateway", l("http", "*.example.com", 80)),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate:     []client.Object{},
+			expectUpdate:     []client.Object{},
+			expectDelete:     []client.Object{},
+		},
+		{
+			name: "clusterip managed gateway removes only its stale dnsrecords",
+			existingObjects: []runtime.Object{
+				clusterIPGateway("example-gateway", l("http", "*.example.com", 80)),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
+				dnsrecord("other-gateway-7bdcfc8f68-wildcard", "*.other.example.com.", iov1.ManagedDNS, map[string]string{"gateway.networking.k8s.io/gateway-name": "other-gateway"}, "lb.example.com"),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate:     []client.Object{},
+			expectUpdate:     []client.Object{},
+			expectDelete: []client.Object{
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
+			},
 		},
 	}
 

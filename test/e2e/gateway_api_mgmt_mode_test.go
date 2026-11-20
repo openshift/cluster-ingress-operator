@@ -553,6 +553,12 @@ func testGatewayAPIManagementModeUnmanaged(t *testing.T) {
 
 	setGatewayAPIManagementMode(ctx, t, operatorv1.GatewayAPIManagementModeManaged)
 	waitForGatewayAPIManagedCondition(ctx, t, metav1.ConditionTrue, "ManagedByIngressOperator")
+
+	// The managed profile returns to configured once its defaults are available again.
+	require.NoError(t, waitForGatewayClassCondition(t, operatorcontroller.OpenShiftClusterIPGatewayClassName, 3*time.Minute,
+		metav1.Condition{Type: "openshift.io/Configured", Status: metav1.ConditionTrue, Reason: "Configured"}),
+		"managed profile must report Configured=True with reason Configured after returning to Managed")
+
 	// Gateway labeler behavior is the observable proxy for dependent-controller recovery.
 	assert.Eventually(t, func() bool {
 		current := &gatewayapiv1.Gateway{}

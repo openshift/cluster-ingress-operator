@@ -68,6 +68,15 @@ const (
 	// gatewayclass that Istio creates when it is installed.
 	OpenShiftDefaultGatewayClassName = "openshift-default"
 
+	// OpenShiftClusterIPGatewayClassName names the GatewayClass for the managed ClusterIP profile.
+	OpenShiftClusterIPGatewayClassName = "openshift-clusterip"
+
+	// ManagedGatewayClassProfileLabel marks operator-managed GatewayClass profiles as an output label.
+	ManagedGatewayClassProfileLabel = "ingress.operator.openshift.io/managed-gatewayclass-profile"
+
+	// GatewayClassDefaultsLabel associates a defaults ConfigMap with its GatewayClass.
+	GatewayClassDefaultsLabel = "gateway.istio.io/defaults-for-class"
+
 	// OpenShiftGatewayCARootCertName is the name of the configmap with the
 	// CA bundle that Istio creates for the Istio CR that this operator
 	// creates.
@@ -375,5 +384,15 @@ func IstiodNetworkPolicyName() types.NamespacedName {
 	return types.NamespacedName{
 		Name:      "istiod-allow",
 		Namespace: "openshift-ingress",
+	}
+}
+
+// ManagedProfileConfigMapDefaultsName returns the namespaced name for the
+// gatewayclass defaults ConfigMap that Sail renders for a managed GatewayClass
+// profile.
+func ManagedProfileConfigMapDefaultsName(operandNamespace, profileName string) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: operandNamespace,
+		Name:      "istio-" + IstioName("").Name + "-gatewayclass-" + profileName,
 	}
 }

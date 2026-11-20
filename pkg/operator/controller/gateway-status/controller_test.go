@@ -69,6 +69,23 @@ var (
 		}
 	}
 
+	// clusterIPGwFn returns a Gateway that uses the ClusterIP GatewayClass.
+	clusterIPGwFn = func(name string, listeners []gatewayapiv1.Listener, generation int64, conditions ...metav1.Condition) *gatewayapiv1.Gateway {
+		gw := gwFn(name, listeners, generation, conditions...)
+		gw.Spec.GatewayClassName = operatorcontroller.OpenShiftClusterIPGatewayClassName
+		return gw
+	}
+
+	// withListenerCondition adds a condition to the status of the given listener.
+	withListenerCondition = func(gw *gatewayapiv1.Gateway, listenerName string, condition metav1.Condition) *gatewayapiv1.Gateway {
+		for i := range gw.Status.Listeners {
+			if string(gw.Status.Listeners[i].Name) == listenerName {
+				gw.Status.Listeners[i].Conditions = append(gw.Status.Listeners[i].Conditions, condition)
+			}
+		}
+		return gw
+	}
+
 	svcFn = func(name string, labels map[string]string, ingresses ...corev1.LoadBalancerIngress) *corev1.Service {
 		return &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
@@ -160,12 +177,14 @@ var (
 
 func Test_Reconcile(t *testing.T) {
 	tests := []struct {
-		name                   string
-		existingObjects        []runtime.Object
-		expectedConditions     []metav1.Condition
-		expectedListenerStatus []gatewayapiv1.ListenerStatus
-		reconcileRequest       reconcile.Request
-		expectError            string
+		name                             string
+		existingObjects                  []runtime.Object
+		expectedConditions               []metav1.Condition
+		expectedAbsentConditions         []string
+		expectedListenerStatus           []gatewayapiv1.ListenerStatus
+		expectedListenerAbsentConditions map[string][]string
+		reconcileRequest                 reconcile.Request
+		expectError                      string
 	}{
 		{
 			name:             "gateway not found, should not return any error",
@@ -927,6 +946,43 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectError: "",
 		},
+		{
+			name: "clusterip gateway removes stale loadbalancer and dns conditions",
+			existingObjects: []runtime.Object{
+				dnsConfigFn(true),
+				withListenerCondition(clusterIPGwFn("example-gateway", []gatewayapiv1.Listener{
+					{
+						Name:     "listener1",
+						Hostname: ptr.To(gatewayapiv1.Hostname("clusterip.example.tld")),
+					},
+				}, 6, append(append([]metav1.Condition{}, exampleConditions...),
+					metav1.Condition{
+						Type:   operatorv1.LoadBalancerReadyIngressConditionType,
+						Status: metav1.ConditionTrue,
+						Reason: "LoadBalancerProvisioned",
+					},
+					metav1.Condition{
+						Type:   operatorv1.DNSReadyIngressConditionType,
+						Status: metav1.ConditionTrue,
+						Reason: "AllListenersReady",
+					},
+				)...), "listener1", metav1.Condition{
+					Type:   operatorv1.DNSReadyIngressConditionType,
+					Status: metav1.ConditionTrue,
+					Reason: "NoFailedZones",
+				}),
+				svcFn("example-gateway", exampleManagedGatewayLabel),
+			},
+			reconcileRequest:   reqFn("openshift-ingress", "example-gateway"),
+			expectedConditions: exampleConditions,
+			expectedAbsentConditions: []string{
+				operatorv1.LoadBalancerReadyIngressConditionType,
+				operatorv1.DNSReadyIngressConditionType,
+			},
+			expectedListenerAbsentConditions: map[string][]string{
+				"listener1": {operatorv1.DNSReadyIngressConditionType},
+			},
+		},
 	}
 
 	scheme := runtime.NewScheme()
@@ -996,13 +1052,32 @@ func Test_Reconcile(t *testing.T) {
 				}
 			}
 
-			if len(tc.expectedConditions) == 0 && len(tc.expectedListenerStatus) == 0 {
+			if len(tc.expectedConditions) == 0 && len(tc.expectedAbsentConditions) == 0 &&
+				len(tc.expectedListenerStatus) == 0 && len(tc.expectedListenerAbsentConditions) == 0 {
 				return
 			}
 
 			gw := &gatewayapiv1.Gateway{}
 			err = cl.Get(ctx, tc.reconcileRequest.NamespacedName, gw)
 			assert.NoError(t, err)
+			for _, conditionType := range tc.expectedAbsentConditions {
+				assert.Nil(t, condutils.FindStatusCondition(gw.Status.Conditions, conditionType),
+					"condition %s should not be present", conditionType)
+			}
+			for listenerName, conditionTypes := range tc.expectedListenerAbsentConditions {
+				listenerFound := false
+				for _, ls := range gw.Status.Listeners {
+					if string(ls.Name) != listenerName {
+						continue
+					}
+					listenerFound = true
+					for _, conditionType := range conditionTypes {
+						assert.Nil(t, condutils.FindStatusCondition(ls.Conditions, conditionType),
+							"condition %s should not be present on listener %s", conditionType, listenerName)
+					}
+				}
+				assert.True(t, listenerFound, "listener %s not found", listenerName)
+			}
 			// Instead of diffing conditions we will try to search if the condition
 			// we want exists and has the right values
 			if len(tc.expectedConditions) > 0 {
