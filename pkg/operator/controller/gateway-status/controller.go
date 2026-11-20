@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
@@ -190,7 +191,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		log.Error(err, "error fetching the gateway object")
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}
-	if !operatorcontroller.GatewayHasOurController(log, r.client, false)(sourceGateway) {
+	// The managed ClusterIP GatewayClass is known by name and may not be
+	// represented in the test cache, so handle it before checking ownership.
+	if sourceGateway.Spec.GatewayClassName != operatorcontroller.OpenShiftClusterIPGatewayClassName &&
+		!operatorcontroller.GatewayHasOurController(log, r.client, false)(sourceGateway) {
 		return reconcile.Result{}, nil
 	}
 
