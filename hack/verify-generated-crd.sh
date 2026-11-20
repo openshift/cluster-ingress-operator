@@ -43,38 +43,19 @@ verify_crd \
   "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-OKD.crd.yaml" \
   "manifests/00-custom-resource-definition-OKD.yaml"
 
-verify_crd \
-  vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords?(-Default).crd.yaml \
-  "manifests/00-custom-resource-definition-internal.yaml"
-
-verify_crd \
-  "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords-CustomNoUpgrade.crd.yaml" \
-  "manifests/00-custom-resource-definition-internal-CustomNoUpgrade.yaml"
-
-verify_crd \
-  "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords-DevPreviewNoUpgrade.crd.yaml" \
-  "manifests/00-custom-resource-definition-internal-DevPreviewNoUpgrade.yaml"
-
-verify_crd \
-  "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords-TechPreviewNoUpgrade.crd.yaml" \
-  "manifests/00-custom-resource-definition-internal-TechPreviewNoUpgrade.yaml"
-
-verify_crd \
-  "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords-OKD.crd.yaml" \
-  "manifests/00-custom-resource-definition-internal-OKD.yaml"
-
-# openshift/api owns the ingresses.operator.openshift.io CRD in the release
-# payload.  Keep it out of this component's payload to avoid applying two
-# independently ordered copies of the same CRD.
+# openshift/api owns the CRDs listed in payloadCRDNames
+# (hack/verify-generated-crd/main.go) in the release payload.  Keep them out
+# of this component's payload to avoid applying two independently ordered
+# copies of the same CRD.
 if ingress_crd_manifests=$(GO111MODULE=on GOFLAGS=-mod=vendor go run ./hack/verify-generated-crd manifests); then
   if [[ -z "$ingress_crd_manifests" ]]; then
     exit 0
   fi
   printf '%s\n' "$ingress_crd_manifests"
-  echo "ingresses.operator.openshift.io CRD must only ship from openshift/api"
+  echo "CRDs listed in payloadCRDNames (hack/verify-generated-crd/main.go) must only ship from openshift/api"
   exit 1
 else
   scan_status=$?
-  echo "failed to scan manifests for ingresses.operator.openshift.io CRD" >&2
+  echo "failed to scan manifests for CRDs that must only ship from openshift/api" >&2
   exit "$scan_status"
 fi
