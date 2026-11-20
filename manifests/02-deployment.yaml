@@ -90,7 +90,7 @@ spec:
             - name: GATEWAY_API_OPERATOR_VERSION
               value: servicemeshoperator3.v3.3.1
             - name: ISTIO_VERSION
-              value: v1.27.8
+              value: v1.27.9
           resources:
             requests:
               cpu: 10m
