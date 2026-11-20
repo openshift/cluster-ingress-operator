@@ -35,6 +35,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/utils/ptr"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -152,6 +153,17 @@ const (
 	RouterTLSCurves            = "ROUTER_CURVES"
 
 	RouterEnableEndpointAddressValidation = "ROUTER_ENABLE_ENDPOINT_ADDRESS_VALIDATION"
+
+	// RouterQAT enables Intel QuickAssist Technology (QAT) offload in the
+	// router.
+	RouterQAT = "ROUTER_QAT"
+	// QATCryptoResourceName is the extended resource advertised by the
+	// Intel QAT device plugin for crypto (cy) instances.
+	QATCryptoResourceName corev1.ResourceName = "qat.intel.com/cy"
+	// qatMinHAProxyVersion is the first HAProxy version whose image ships
+	// qatengine. We can consider removing minimal HAProxy version validation
+	// as soon as `HAProxyVersion34` is removed from the API.
+	qatMinHAProxyVersion operatorv1.HAProxyVersion = operatorv1.HAProxyVersion34
 
 	RouterServiceHTTPPort  = "ROUTER_SERVICE_HTTP_PORT"
 	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
@@ -602,6 +614,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		// the validation altogher. "DenyAll" denies any hostname configuration, only IPv4 or IPv6 address is accepted.
 		// The default behavior is "DenyAll" if the configuration is missing.
 		HostnameTargetReferencePolicy string `json:"hostnameTargetReferencePolicy"`
+		// qatCryptoLimit enables Intel QAT offload in the router, and configures
+		// the number of QAT crypto instances (qat.intel.com/cy) assigned to the
+		// haproxy container. QAT is disabled if the value is missing, not a
+		// number, or not positive. Requires QAT-capable nodes and the Intel QAT
+		// device plugin.
+		QATCryptoLimit string `json:"qatCryptoLimit"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -849,11 +867,36 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	deployment.Spec.Template.Spec.Containers[0].Image = config.IngressControllerImage
 
 	// haproxy image.
-	_, haproxyImage, err := getEffectiveHAProxyVersionAndImage(ci, config, ingressConfig)
+	haproxyVersion, haproxyImage, err := getEffectiveHAProxyVersionAndImage(ci, config, ingressConfig)
 	if err != nil {
 		return nil, err
 	}
 	deployment.Spec.Template.Spec.InitContainers[1].Image = haproxyImage
+
+	if v, err := strconv.Atoi(unsupportedConfigOverrides.QATCryptoLimit); err == nil && v > 0 {
+		// qatengine is only shipped in HAProxy images starting on version
+		// 3.4.
+		if !haproxyVersionAtLeast(haproxyVersion, qatMinHAProxyVersion) {
+			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.qatCryptoLimit: QAT requires HAProxy %s or newer, effective HAProxy version is %q", ci.Name, qatMinHAProxyVersion, haproxyVersion)
+		}
+		// Extended resources cannot be overcommitted: requests must equal
+		// limits. Pods would default requests from limits, but we set both
+		// explicitly so the expected pod template matches what is stored.
+		qatQuantity := *resource.NewQuantity(int64(v), resource.DecimalSI)
+		haproxyResources := &deployment.Spec.Template.Spec.InitContainers[1].Resources
+		if haproxyResources.Requests == nil {
+			haproxyResources.Requests = corev1.ResourceList{}
+		}
+		if haproxyResources.Limits == nil {
+			haproxyResources.Limits = corev1.ResourceList{}
+		}
+		haproxyResources.Requests[QATCryptoResourceName] = qatQuantity
+		haproxyResources.Limits[QATCryptoResourceName] = qatQuantity
+		env = append(env, corev1.EnvVar{
+			Name:  RouterQAT,
+			Value: "true",
+		})
+	}
 
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
@@ -1483,6 +1526,17 @@ func getEffectiveHAProxyVersionAndImage(ic *operatorv1.IngressController, config
 	}
 
 	return version, image, nil
+}
+
+// haproxyVersionAtLeast returns true if the provided HAProxy version, in "X.Y"
+// format, is equal to or newer than minVersion. An empty or malformed version
+// is considered older than any version.
+func haproxyVersionAtLeast(version, minVersion operatorv1.HAProxyVersion) bool {
+	v, err := utilversion.ParseGeneric(string(version))
+	if err != nil {
+		return false
+	}
+	return v.AtLeast(utilversion.MustParseGeneric(string(minVersion)))
 }
 
 // accessLoggingForIngressController returns an AccessLogging value for the

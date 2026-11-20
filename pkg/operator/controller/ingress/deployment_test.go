@@ -46,6 +46,7 @@ const (
 	// constants instead of the operatorv1.HAProxyVersion* values.
 	haproxyVersion28 operatorv1.HAProxyVersion = "2.8"
 	haproxyVersion32 operatorv1.HAProxyVersion = "3.2"
+	haproxyVersion34 operatorv1.HAProxyVersion = "3.4"
 
 	defaultHAProxyVersion   = haproxyVersion32
 	alternateHAProxyVersion = haproxyVersion28
@@ -411,6 +412,7 @@ func TestConfigOverridesOptions(t *testing.T) {
 			expectedEnv: []envData{
 				// add all new config validations here
 				{RouterEnableEndpointAddressValidation, false, ""},
+				{RouterQAT, false, ""},
 			},
 		},
 		{
@@ -1941,6 +1943,152 @@ func TestDesiredRouterDeploymentMutualTLSHeaderFilter(t *testing.T) {
 	}
 }
 
+// TestDesiredRouterDeploymentQAT verifies that the qatCryptoLimit unsupported
+// config override configures the QAT crypto resource on the haproxy container
+// and enables QAT in the router only when it is a positive number, and that it
+// is refused if the effective HAProxy version does not support QAT.
+func TestDesiredRouterDeploymentQAT(t *testing.T) {
+	haproxyImages := map[operatorv1.HAProxyVersion]string{
+		haproxyVersion28: "quay.io/openshift/haproxy:2.8",
+		haproxyVersion32: "quay.io/openshift/haproxy:3.2",
+		haproxyVersion34: "quay.io/openshift/haproxy:3.4",
+	}
+	testCases := []struct {
+		name                       string
+		unsupportedConfigOverrides string
+		// haproxyVersion is the desired version; the default is set to 3.4,
+		// which is the minimum supported for QAT.
+		haproxyVersion   operatorv1.HAProxyVersion
+		expectedQATLimit int64
+		expectedError    string
+	}{
+		{
+			name:                       "not-set",
+			unsupportedConfigOverrides: `{}`,
+		},
+		{
+			name:                       "set-to-1",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"1"}`,
+			expectedQATLimit:           1,
+		},
+		{
+			name:                       "set-to-4",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"4"}`,
+			expectedQATLimit:           4,
+		},
+		{
+			name:                       "set-to-0",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"0"}`,
+		},
+		{
+			name:                       "set-to-negative",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"-1"}`,
+		},
+		{
+			name:                       "set-to-invalid-value",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"banana"}`,
+		},
+		{
+			name:                       "set-to-1-haproxy-3.4",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"1"}`,
+			haproxyVersion:             haproxyVersion34,
+			expectedQATLimit:           1,
+		},
+		{
+			name:                       "set-to-1-haproxy-3.2",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"1"}`,
+			haproxyVersion:             haproxyVersion32,
+			expectedError:              `ingresscontroller "default" has invalid spec.unsupportedConfigOverrides.qatCryptoLimit: QAT requires HAProxy 3.4 or newer, effective HAProxy version is "3.2"`,
+		},
+		{
+			name:                       "set-to-1-haproxy-2.8",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"1"}`,
+			haproxyVersion:             haproxyVersion28,
+			expectedError:              `ingresscontroller "default" has invalid spec.unsupportedConfigOverrides.qatCryptoLimit: QAT requires HAProxy 3.4 or newer, effective HAProxy version is "2.8"`,
+		},
+		{
+			name:                       "set-to-0-haproxy-3.2",
+			unsupportedConfigOverrides: `{"qatCryptoLimit":"0"}`,
+			haproxyVersion:             haproxyVersion32,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+				Raw: []byte(tc.unsupportedConfigOverrides),
+			}
+			ic.Spec.HAProxyVersion = tc.haproxyVersion
+
+			deploymentConfig := &Config{
+				IngressControllerImage:     ingressControllerImage,
+				HAProxyImages:              haproxyImages,
+				DefaultHAProxyVersion:      haproxyVersion34,
+				FeatureMultiHAProxyEnabled: true,
+			}
+
+			deployment, err := desiredRouterDeployment(ic, deploymentConfig, ingressConfig, infraConfig, apiConfig, networkConfig, nil, false, false, nil, clusterProxyConfig)
+			if tc.expectedError != "" {
+				require.EqualError(t, err, tc.expectedError)
+				return
+			}
+			require.NoError(t, err)
+
+			expectedEnv := []envData{{RouterQAT, false, ""}}
+			if tc.expectedQATLimit > 0 {
+				expectedEnv = []envData{{RouterQAT, true, "true"}}
+			}
+			assert.NoError(t, checkDeploymentEnvironment(t, deployment, expectedEnv))
+
+			haproxyResources := deployment.Spec.Template.Spec.InitContainers[1].Resources
+			if tc.expectedQATLimit > 0 {
+				// Extended resources require requests to be equal to limits.
+				requests, requestsFound := haproxyResources.Requests[QATCryptoResourceName]
+				if assert.True(t, requestsFound, "missing %s in haproxy requests", QATCryptoResourceName) {
+					assert.Equal(t, tc.expectedQATLimit, requests.Value(), "unexpected %s in haproxy requests", QATCryptoResourceName)
+				}
+				limits, limitsFound := haproxyResources.Limits[QATCryptoResourceName]
+				if assert.True(t, limitsFound, "missing %s in haproxy limits", QATCryptoResourceName) {
+					assert.Equal(t, tc.expectedQATLimit, limits.Value(), "unexpected %s in haproxy limits", QATCryptoResourceName)
+				}
+				assert.Len(t, haproxyResources.Limits, 1, "haproxy limits should only have the QAT resource")
+			} else {
+				assert.NotContains(t, haproxyResources.Requests, QATCryptoResourceName)
+				assert.Empty(t, haproxyResources.Limits)
+			}
+
+			// The original cpu and memory requests from the manifest must be preserved.
+			assert.Contains(t, haproxyResources.Requests, corev1.ResourceCPU)
+			assert.Contains(t, haproxyResources.Requests, corev1.ResourceMemory)
+
+			// The QAT resource is only assigned to the haproxy container.
+			routerResources := deployment.Spec.Template.Spec.Containers[0].Resources
+			assert.NotContains(t, routerResources.Requests, QATCryptoResourceName)
+			assert.NotContains(t, routerResources.Limits, QATCryptoResourceName)
+		})
+	}
+}
+
+func Test_haproxyVersionAtLeast(t *testing.T) {
+	testCases := []struct {
+		version  operatorv1.HAProxyVersion
+		expected bool
+	}{
+		{version: "3.4", expected: true},
+		{version: "3.10", expected: true},
+		{version: "4.0", expected: true},
+		{version: "3.2", expected: false},
+		{version: "2.8", expected: false},
+		{version: "", expected: false},
+		{version: "zz", expected: false},
+	}
+	for _, tc := range testCases {
+		t.Run(string(tc.version), func(t *testing.T) {
+			assert.Equal(t, tc.expected, haproxyVersionAtLeast(tc.version, "3.4"))
+		})
+	}
+}
+
 func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, port int32) {
 	t.Helper()
 	for _, p := range d.Spec.Template.Spec.Containers[0].Ports {
@@ -2505,6 +2653,34 @@ func Test_deploymentConfigChanged(t *testing.T) {
 				}
 			},
 			expect: true,
+		},
+		{
+			description: "if the sidecar container QAT resource is added",
+			mutate: func(deployment *appsv1.Deployment) {
+				resources := &deployment.Spec.Template.Spec.InitContainers[1].Resources
+				resources.Requests[QATCryptoResourceName] = resource.MustParse("2")
+				resources.Limits = corev1.ResourceList{QATCryptoResourceName: resource.MustParse("2")}
+			},
+			expect: true,
+			assert: func(t *testing.T, deployment *appsv1.Deployment) {
+				resources := deployment.Spec.Template.Spec.InitContainers[1].Resources
+				assert.Contains(t, resources.Requests, QATCryptoResourceName)
+				assert.Contains(t, resources.Limits, QATCryptoResourceName)
+			},
+		},
+		{
+			description: "if the sidecar container QAT resource is removed",
+			mutateCurr: func(deployment *appsv1.Deployment) {
+				resources := &deployment.Spec.Template.Spec.InitContainers[1].Resources
+				resources.Requests[QATCryptoResourceName] = resource.MustParse("2")
+				resources.Limits = corev1.ResourceList{QATCryptoResourceName: resource.MustParse("2")}
+			},
+			expect: true,
+			assert: func(t *testing.T, deployment *appsv1.Deployment) {
+				resources := deployment.Spec.Template.Spec.InitContainers[1].Resources
+				assert.NotContains(t, resources.Requests, QATCryptoResourceName)
+				assert.NotContains(t, resources.Limits, QATCryptoResourceName)
+			},
 		},
 		{
 			description: "if the current init container slice is missing from an upgrade",
