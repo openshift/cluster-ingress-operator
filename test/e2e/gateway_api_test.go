@@ -804,7 +804,11 @@ func testGatewayAPIDNS(t *testing.T) {
 		{
 			// Use a dedicated subdomain so this case does not collide with the
 			// suite-scoped test-gateway (*.gws.<basedomain>) from testGatewayAPIObjects.
-			name: "gatewayListenersWithOverlappingHostname",
+			// Establish gw3's DNSRecord before creating gw4 so gw3 is the
+			// winning claim. gw4's wildcard overlaps gw3's hostname and must
+			// not leave a competing DNSRecord behind.
+			name:                       "gatewayListenersWithOverlappingHostname",
+			establishDNSOwnershipFirst: true,
 			createGateways: []testGateway{
 				{gatewayName: "gw3",
 					namespace: operatorcontroller.DefaultOperandNamespace,
@@ -832,7 +836,7 @@ func testGatewayAPIDNS(t *testing.T) {
 			},
 			expectedDNSRecords: map[expectedDnsRecord]dnsRecordExpectation{
 				{dnsName: "qwe.overlap-gws." + dnsConfig.Spec.BaseDomain + ".", gatewayName: "gw3"}: expectDNSRecordPublished(),
-				{dnsName: "*.overlap-gws." + dnsConfig.Spec.BaseDomain + ".", gatewayName: "gw4"}:   expectDNSRecordPublished(),
+				{dnsName: "*.overlap-gws." + dnsConfig.Spec.BaseDomain + ".", gatewayName: "gw4"}:   expectDNSRecordAbsent(),
 			},
 		},
 	}
