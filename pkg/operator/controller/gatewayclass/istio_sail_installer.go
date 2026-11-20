@@ -156,6 +156,12 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 	openshiftOverrides := openshiftValues(enableInferenceExtension, r.config.OperandNamespace, extraConfig)
 	values = install.MergeValues(values, openshiftOverrides)
 
+	// Pin images for versions whose embedded Sail library digests are older
+	// than the images we need to ship (see istioImageOverrides).
+	if imageOverrides := istioImageOverrides(istioVersion); imageOverrides != nil {
+		values = install.MergeValues(values, imageOverrides)
+	}
+
 	return install.Options{
 		Namespace:      r.config.OperandNamespace,
 		Revision:       controller.IstioName("").Name,
