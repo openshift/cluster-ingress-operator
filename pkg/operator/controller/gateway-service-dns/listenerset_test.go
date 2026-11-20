@@ -196,6 +196,36 @@ func containsCanonicalHostname(hostnames []string, dnsName string) bool {
 	return false
 }
 
+// newDNSClaimRecord returns a preexisting DNSRecord owned by a Gateway Service.
+func newDNSClaimRecord(
+	name, dnsName, gatewayName string,
+	service *corev1.Service,
+	target string,
+) *iov1.DNSRecord {
+	return &iov1.DNSRecord{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: service.Namespace,
+			Name:      name,
+			Labels: map[string]string{
+				operatorcontroller.GatewayNameLabelKey: gatewayName,
+			},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: corev1.SchemeGroupVersion.String(),
+				Kind:       "Service",
+				Name:       service.Name,
+				UID:        service.UID,
+			}},
+		},
+		Spec: iov1.DNSRecordSpec{
+			DNSName:             dnsName,
+			Targets:             []string{target},
+			RecordType:          iov1.CNAMERecordType,
+			RecordTTL:           30,
+			DNSManagementPolicy: iov1.ManagedDNS,
+		},
+	}
+}
+
 // TestDNSRecordsAreSeparateAcrossGateways verifies that equivalent Gateway and
 // ListenerSet hostnames share one DNSRecord claim.
 func TestDNSRecordsAreSeparateAcrossGateways(t *testing.T) {
@@ -379,4 +409,57 @@ func TestDNSRecordWildcardClaims(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExistingDNSRecordUpdatesWithOverlappingClaim verifies that an existing
+// claim remains reconcilable when another overlapping claim already exists.
+// Overlap rejection applies to new claims; it must not block updates to the
+// Gateway's own existing DNSRecord.
+func TestExistingDNSRecordUpdatesWithOverlappingClaim(t *testing.T) {
+	ctx := context.Background()
+	gatewayA := newDNSClaimGateway("gateway-a", "foo.example.com")
+	gatewayB := newDNSClaimGateway("gateway-b", "*.example.com")
+	serviceA := newDNSClaimService("service-a", gatewayA.Name)
+	serviceB := newDNSClaimService("service-b", gatewayB.Name)
+	serviceA.Status.LoadBalancer.Ingress[0].Hostname = "new-target.example.net"
+
+	existingRecord := newDNSClaimRecord(
+		"existing-record",
+		"foo.example.com.",
+		gatewayA.Name,
+		serviceA,
+		"old-target.example.net",
+	)
+	overlappingRecord := newDNSClaimRecord(
+		"overlapping-record",
+		"*.example.com.",
+		gatewayB.Name,
+		serviceB,
+		"service-b.example.net",
+	)
+	objects := []client.Object{
+		gatewayA,
+		gatewayB,
+		serviceA,
+		serviceB,
+		existingRecord,
+		overlappingRecord,
+		&configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}},
+		&configv1.Infrastructure{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+			Status:     configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: configv1.AWSPlatformType}},
+		},
+	}
+	r, cl := newDNSClaimReconciler(t, objects...)
+
+	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(serviceA)})
+	require.NoError(t, err, "the existing claim must remain updatable")
+
+	var updatedExistingRecord iov1.DNSRecord
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(existingRecord), &updatedExistingRecord))
+	require.Equal(t, []string{"new-target.example.net"}, updatedExistingRecord.Spec.Targets)
+
+	var unchangedOverlappingClaim iov1.DNSRecord
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(overlappingRecord), &unchangedOverlappingClaim))
+	require.Equal(t, []string{"service-b.example.net"}, unchangedOverlappingClaim.Spec.Targets)
 }

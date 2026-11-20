@@ -310,6 +310,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 		records := recordsByDomain[domain]
+		hasExistingClaim := false
 		if len(records) > 1 {
 			errs = append(errs, fmt.Errorf("duplicate DNSRecords block desired record %s; remove the duplicate claim", name))
 			continue
@@ -325,6 +326,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 				continue
 			}
 			name.Name = record.Name
+			hasExistingClaim = true
 		} else {
 			var occupied iov1.DNSRecord
 			if err := r.client.Get(ctx, name, &occupied); !apierrors.IsNotFound(err) {
@@ -337,18 +339,23 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 			}
 		}
 		overlappingClaim := false
-		for index := range existing.Items {
-			record := &existing.Items[index]
-			if !dnsRecordIsAlreadyClaimedByGateway(record, service) {
-				continue
-			}
-			if dnsNamesOverlap(record.Spec.DNSName, domain) {
-				errs = append(errs, fmt.Errorf(
-					"DNSRecord claim for Gateway %s/%s overlaps a claim owned by another Service; first valid claim wins",
-					gateway.Namespace, gateway.Name,
-				))
-				overlappingClaim = true
-				break
+		// Only a new claim needs to be checked for overlap. The Gateway must
+		// still be able to update its own existing claim if another overlapping
+		// claim was created later.
+		if !hasExistingClaim {
+			for index := range existing.Items {
+				record := &existing.Items[index]
+				if !dnsRecordIsAlreadyClaimedByGateway(record, service) {
+					continue
+				}
+				if dnsNamesOverlap(record.Spec.DNSName, domain) {
+					errs = append(errs, fmt.Errorf(
+						"DNSRecord claim for Gateway %s/%s overlaps a claim owned by another Service; first valid claim wins",
+						gateway.Namespace, gateway.Name,
+					))
+					overlappingClaim = true
+					break
+				}
 			}
 		}
 		if overlappingClaim {
