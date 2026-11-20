@@ -24,9 +24,14 @@ const (
 // those objects are unreachable; 75909 reported this as "no ingress-operator
 // pod found". 75908 is excluded for the same reason: once it confirms HTTP/2 is
 // enabled it reads the ingress-operator pod to collect its logs, and that pod
-// lives on the management cluster.
+// lives on the management cluster. 51429, 51437, and 57370 carried the
+// NonHyperShiftHOST token in openshift-tests-private for the same reason: they
+// read the router pods and their HAProxy configurations.
 var hyperShiftUnsupported = []string{
 	"OCP-22633",
+	"OCP-51429",
+	"OCP-51437",
+	"OCP-57370",
 	"OCP-63832",
 	"OCP-64611",
 	"OCP-75907",
@@ -51,8 +56,22 @@ var privateLBUnverified = []string{
 var internalRegistryRequired = []string{
 	"OCP-22636",
 	"OCP-22637",
+	"OCP-33960",
+	"OCP-41109",
+	"OCP-51148",
+	"OCP-51429",
+	"OCP-51437",
+	"OCP-57089",
 	"OCP-60012",
 	"OCP-60013",
+	"OCP-85280",
+	"OCP-85950",
+}
+
+// azureOnly lists the specs that exercise Azure load balancer behaviour.
+// Selecting them on any other platform is a clean skip rather than a failure.
+var azureOnly = []string{
+	"OCP-57089",
 }
 
 // addEnvironmentSelectors restricts the environments in which the ported specs
@@ -66,9 +85,9 @@ var internalRegistryRequired = []string{
 // (OCPBUGS-132070). The constraints are declared here instead, keyed on the
 // OCP-<id> Ginkgo label so that rewording a title cannot drop one.
 func addEnvironmentSelectors(specs et.ExtensionTestSpecs) {
-	// Every ported spec reads dns.config/cluster or drives an
-	// IngressController. MicroShift serves neither, so without this gate every
-	// ported spec fails during setup on the MicroShift job.
+	// Every ported spec reads dns.config/cluster, drives an IngressController,
+	// or creates Ingresses. MicroShift serves none of those APIs, so without
+	// this gate every ported spec fails during setup on the MicroShift job.
 	//
 	// Gate on the API group, not the platform. Excluding PlatformEquals("none")
 	// looks like the obvious way to skip MicroShift and is wrong: origin derives
@@ -112,6 +131,10 @@ func addEnvironmentSelectors(specs et.ExtensionTestSpecs) {
 			Exclude(et.PlatformEquals(platform)).
 			AddLabel(fmt.Sprintf("[Skipped:%s]", platform))
 	}
+
+	mustSelectLabels(specs, azureOnly, "azureOnly").
+		Exclude("!(" + et.PlatformEquals("azure") + ")").
+		AddLabel("[Skipped:NonAzurePlatform]")
 }
 
 // selectPorted returns the specs ported from openshift-tests-private.
