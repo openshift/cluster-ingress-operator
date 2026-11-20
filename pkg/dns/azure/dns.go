@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"github.com/Azure/go-autorest/autorest/azure"
@@ -14,6 +15,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure/client"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 )
 
 const (
@@ -52,6 +54,11 @@ type Config struct {
 	InfraID string
 	// Tags is a map of user-defined tags which should be applied to new resources created by the operator.
 	Tags map[string]*string
+	// IPFamily is the cluster's IP family configuration from the
+	// Infrastructure's PlatformStatus. It is fixed for the lifetime of the
+	// operator and determines whether a record is expected to have both an
+	// A and an AAAA record set.
+	IPFamily configv1.IPFamilyType
 }
 
 type provider struct {
@@ -60,7 +67,7 @@ type provider struct {
 }
 
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
-// type A.
+// type A or AAAA.
 func NewProvider(config Config) (dns.Provider, error) {
 	var env azure.Environment
 	var err error
@@ -88,8 +95,8 @@ func NewProvider(config Config) (dns.Provider, error) {
 }
 
 func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
-	if record.Spec.RecordType != iov1.ARecordType {
-		return fmt.Errorf("only A record types are supported")
+	if record.Spec.RecordType != iov1.ARecordType && record.Spec.RecordType != iov1.AAAARecordType {
+		return fmt.Errorf("only A and AAAA record types are supported")
 	}
 
 	targetZone, err := client.ParseZone(zone.ID)
@@ -97,27 +104,25 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	metadataLabel := m.config.InfraID
 	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
-	ARecord := client.ARecord{
-		Address: record.Spec.Targets[0],
-		Name:    ARecordName,
-		TTL:     record.Spec.RecordTTL,
+	recordSets, err := recordSetsForTargets(ARecordName, record.Spec.Targets, record.Spec.RecordTTL, m.config.InfraID)
+	if err != nil {
+		return err
 	}
-	if metadataLabel != "" {
-		ARecord.Label = fmt.Sprintf("kubernetes.io_cluster.%s", metadataLabel)
-	}
-
-	// TODO: handle >0 targets
-	err = m.client.Put(context.TODO(), *targetZone, ARecord, m.config.Tags)
-
-	if err == nil {
-		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
+	for _, rs := range recordSets {
+		if err := m.client.Put(context.TODO(), *targetZone, rs, m.config.Tags); err != nil {
+			return err
+		}
 	}
 
+	if awsutil.IsDualStack(m.config.IPFamily) && len(recordSets) < 2 {
+		return fmt.Errorf("dual-stack cluster requires both an IPv4 and an IPv6 target for %s, got %v", record.Spec.DNSName, record.Spec.Targets)
+	}
+
+	log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
 	return err
 }
 
@@ -127,26 +132,35 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
+	recordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
 
-	// TODO: handle >0 targets
-	err = m.client.Delete(
-		context.TODO(),
-		*targetZone,
-		client.ARecord{
-			Address: record.Spec.Targets[0],
-			Name:    ARecordName,
-			TTL:     record.Spec.RecordTTL,
-		})
-
-	if err == nil {
-		log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
+	recordTypes := []client.RecordType{}
+	switch {
+	case awsutil.IsDualStack(m.config.IPFamily):
+		recordTypes = append(recordTypes, client.RecordTypeA, client.RecordTypeAAAA)
+	case record.Spec.RecordType == iov1.AAAARecordType:
+		recordTypes = append(recordTypes, client.RecordTypeAAAA)
+	default:
+		recordTypes = append(recordTypes, client.RecordTypeA)
 	}
 
-	return err
+	// TODO: handle >0 targets
+	for _, recordType := range recordTypes {
+		rs := client.RecordSet{
+			Name: recordName,
+			Type: recordType,
+			TTL:  record.Spec.RecordTTL,
+		}
+		if err := m.client.Delete(context.TODO(), *targetZone, rs); err != nil {
+			return err
+		}
+	}
+
+	log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
+	return nil
 }
 
 func (m *provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error {
@@ -179,4 +193,50 @@ func GetTagList(infraStatus *configv1.InfrastructureStatus) map[string]*string {
 		}
 	}
 	return tags
+}
+
+// recordSetsForTargets partitions targets by address family and returns the
+// record sets to publish: at most one A set holding every IPv4 target and one
+// AAAA set holding every IPv6 target. The A set is returned first.
+//
+// An IPv4-mapped IPv6 address belongs in an A record, so it is normalized to
+// its IPv4 form rather than written in its "::ffff:" spelling, which Azure
+// would reject as an A record address.
+func recordSetsForTargets(name string, targets []string, ttl int64, infraID string) ([]client.RecordSet, error) {
+	var ipv4, ipv6 []string
+	for _, target := range targets {
+		ip, err := netip.ParseAddr(target)
+		if err != nil {
+			return nil, fmt.Errorf("target %q is not a valid IP address: %w", target, err)
+		}
+		if ip.Is4() || ip.Is4In6() {
+			ipv4 = append(ipv4, ip.Unmap().String())
+		} else {
+			ipv6 = append(ipv6, ip.String())
+		}
+	}
+
+	defaultRecordSet := client.RecordSet{Name: name, TTL: ttl}
+
+	if infraID != "" {
+		defaultRecordSet.Label = fmt.Sprintf("kubernetes.io_cluster.%s", infraID)
+	}
+
+	var recordSets []client.RecordSet
+	if len(ipv4) > 0 {
+		rs := defaultRecordSet
+		rs.Type = client.RecordTypeA
+		rs.Addresses = ipv4
+		recordSets = append(recordSets, rs)
+	}
+	if len(ipv6) > 0 {
+		rs := defaultRecordSet
+		rs.Type = client.RecordTypeAAAA
+		rs.Addresses = ipv6
+		recordSets = append(recordSets, rs)
+	}
+	if len(recordSets) == 0 {
+		return nil, fmt.Errorf("no targets to publish")
+	}
+	return recordSets, nil
 }

@@ -267,7 +267,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
 			dnsPolicy = iov1.ManagedDNS
 		}
-		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service)
+		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service, infraConfig.Status.PlatformStatus)
 		errs = append(errs, err)
 	}
 	return errs
