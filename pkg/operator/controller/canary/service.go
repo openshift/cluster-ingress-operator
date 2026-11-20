@@ -56,7 +56,7 @@ func (r *reconciler) updateCanaryService(ctx context.Context, current, desired *
 	return true, nil
 }
 
-// canaryServiceChanged returns true if the canary service's ports or annotations have changed. If a change occurred, it
+// canaryServiceChanged returns true if the canary service's ports, annotations, or owner kind have changed. If a change occurred, it
 // also returns a copy of the service with the relevant changes merged.
 func canaryServiceChanged(current, desired *corev1.Service) (bool, *corev1.Service) {
 	changed := false
@@ -66,9 +66,22 @@ func canaryServiceChanged(current, desired *corev1.Service) (bool, *corev1.Servi
 		updated.Spec.Ports = desired.Spec.Ports
 		changed = true
 	}
-	if !cmp.Equal(current.Annotations, desired.Annotations, cmpopts.EquateEmpty()) {
-		updated.Annotations = desired.Annotations
-		changed = true
+	for key, value := range desired.Annotations {
+		if currentValue, exists := updated.Annotations[key]; !exists || currentValue != value {
+			if updated.Annotations == nil {
+				updated.Annotations = make(map[string]string)
+			}
+			updated.Annotations[key] = value
+			changed = true
+		}
+	}
+	for index, owner := range updated.OwnerReferences {
+		for _, desiredOwner := range desired.OwnerReferences {
+			if owner.Kind == "daemonset" && desiredOwner.Kind == "DaemonSet" && owner.APIVersion == desiredOwner.APIVersion && owner.Name == desiredOwner.Name && owner.UID == desiredOwner.UID {
+				updated.OwnerReferences[index].Kind = desiredOwner.Kind
+				changed = true
+			}
+		}
 	}
 
 	if !changed {
