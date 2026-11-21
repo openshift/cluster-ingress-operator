@@ -9,10 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-const ingressCRDName = "ingresses.operator.openshift.io"
+// payloadCRDNames are the CRDs delivered in the release payload by
+// openshift/api, which must not also be shipped from this component.
+var payloadCRDNames = sets.New[string](
+	"ingresses.operator.openshift.io",
+	"ingresscontrollers.operator.openshift.io",
+)
 
 type manifestIdentity struct {
 	APIVersion string `json:"apiVersion"`
@@ -92,7 +98,7 @@ func containsIngressCRD(path string) (bool, error) {
 		}
 		if strings.HasPrefix(identity.APIVersion, "apiextensions.k8s.io/") &&
 			identity.Kind == "CustomResourceDefinition" &&
-			identity.Metadata.Name == ingressCRDName {
+			payloadCRDNames.Has(identity.Metadata.Name) {
 			found = true
 		}
 	}
