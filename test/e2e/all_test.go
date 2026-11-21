@@ -53,6 +53,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestHealthCheckIntervalIngressController", TestHealthCheckIntervalIngressController)
 		t.Run("TestHostNetworkEndpointPublishingStrategy", TestHostNetworkEndpointPublishingStrategy)
 		t.Run("TestHostedClusterCustomRouterReadiness", TestHostedClusterCustomRouterReadiness)
+		t.Run("TestIngressControllerResourceConfiguration", TestIngressControllerResourceConfiguration)
 		t.Run("TestIngressControllerScale", TestIngressControllerScale)
 		t.Run("TestIngressControllerServiceNameCollision", TestIngressControllerServiceNameCollision)
 		t.Run("TestInternalLoadBalancer", TestInternalLoadBalancer)

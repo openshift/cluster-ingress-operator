@@ -13,7 +13,9 @@ import (
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Test_setDefaultDomain verifies that setDefaultDomain behaves correctly.
@@ -1640,6 +1642,104 @@ func Test_validateClientTLS(t *testing.T) {
 	}
 }
 
+// Test_validateIngressControllerResources verifies that
+// validateIngressControllerResources rejects quantities that overflow the
+// int64 values consumers derive from them and accepts the boundary values.
+func Test_validateIngressControllerResources(t *testing.T) {
+	quantity := func(value string) *resource.Quantity {
+		q := resource.MustParse(value)
+		return &q
+	}
+	testCases := []struct {
+		description string
+		resources   operatorv1.IngressControllerResources
+		valid       bool
+	}{
+		{
+			description: "no resources",
+			valid:       true,
+		},
+		{
+			description: "typical values",
+			resources: operatorv1.IngressControllerResources{
+				Router:  []operatorv1.IngressControllerContainerResource{{Name: "cpu", Request: quantity("500m"), Limit: quantity("1")}},
+				HAProxy: []operatorv1.IngressControllerContainerResource{{Name: "memory", Request: quantity("256Mi"), Limit: quantity("512Mi")}},
+			},
+			valid: true,
+		},
+		{
+			description: "cpu at the maximum representable millicore value",
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{{Name: "cpu", Request: quantity("9223372036854775807m")}},
+			},
+			valid: true,
+		},
+		{
+			description: "memory at the maximum representable value",
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{{Name: "memory", Limit: quantity("9223372036854775807")}},
+			},
+			valid: true,
+		},
+		{
+			description: "binary memory value below the maximum",
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{{Name: "memory", Request: quantity("1Ei")}},
+			},
+			valid: true,
+		},
+		{
+			description: "cpu request overflows millicores",
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{{Name: "cpu", Request: quantity("10P")}},
+			},
+			valid: false,
+		},
+		{
+			description: "cpu limit overflows millicores",
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{{Name: "cpu", Limit: quantity("1Ei")}},
+			},
+			valid: false,
+		},
+		{
+			description: "haproxy cpu overflows millicores",
+			resources: operatorv1.IngressControllerResources{
+				HAProxy: []operatorv1.IngressControllerContainerResource{{Name: "cpu", Request: quantity("10P"), Limit: quantity("10P")}},
+			},
+			valid: false,
+		},
+		{
+			description: "memory overflows int64 units",
+			resources: operatorv1.IngressControllerResources{
+				Router: []operatorv1.IngressControllerContainerResource{{Name: "memory", Limit: quantity("10E")}},
+			},
+			valid: false,
+		},
+		{
+			description: "ephemeral-storage overflows int64 units",
+			resources: operatorv1.IngressControllerResources{
+				HAProxy: []operatorv1.IngressControllerContainerResource{{Name: "ephemeral-storage", Request: quantity("100E")}},
+			},
+			valid: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{}
+			ic.Spec.Resources = tc.resources
+			err := validateIngressControllerResources(ic)
+			if tc.valid && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !tc.valid && err == nil {
+				t.Error("expected error, got nil")
+			}
+		})
+	}
+}
+
 // Test_IsProxyProtocolNeeded verifies that IsProxyProtocolNeeded returns the
 // expected values for various platforms and endpoint publishing strategy
 // parameters.
@@ -2235,6 +2335,82 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
 					}
 				}
+			}
+		})
+	}
+}
+
+// Test_podUnschedulabilityChanged verifies which pod updates trigger a
+// reconcile: a pod becoming unschedulable, or its unschedulable message
+// changing.
+func Test_podUnschedulabilityChanged(t *testing.T) {
+	unschedulable := func(message string) *corev1.Pod {
+		return &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+			Type:    corev1.PodScheduled,
+			Status:  corev1.ConditionFalse,
+			Reason:  corev1.PodReasonUnschedulable,
+			Message: message,
+		}}}}
+	}
+	scheduled := &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+		Type:   corev1.PodScheduled,
+		Status: corev1.ConditionTrue,
+	}}}}
+	notReady := &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+		Type:   corev1.PodScheduled,
+		Status: corev1.ConditionFalse,
+		Reason: "ContainersNotReady",
+	}}}}
+	taintFailure := unschedulable("0/3 nodes are available: 3 node(s) had untolerated taint {node-role.kubernetes.io/infra}.")
+	insufficientCPU := unschedulable("0/3 nodes are available: 3 Insufficient cpu.")
+	tests := []struct {
+		name     string
+		old      client.Object
+		new      client.Object
+		expected bool
+	}{
+		{
+			name: "scheduled pod stays scheduled",
+			old:  scheduled,
+			new:  scheduled,
+		},
+		{
+			name:     "pod becomes unschedulable",
+			old:      scheduled,
+			new:      insufficientCPU,
+			expected: true,
+		},
+		{
+			name:     "unschedulable message changes",
+			old:      taintFailure,
+			new:      insufficientCPU,
+			expected: true,
+		},
+		{
+			name: "unschedulable message is unchanged",
+			old:  insufficientCPU,
+			new:  insufficientCPU,
+		},
+		{
+			name: "pod becomes schedulable",
+			old:  insufficientCPU,
+			new:  scheduled,
+		},
+		{
+			name: "pod pending for another reason",
+			old:  scheduled,
+			new:  notReady,
+		},
+		{
+			name: "new object that is not a pod",
+			old:  scheduled,
+			new:  &corev1.ConfigMap{},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := podUnschedulabilityChanged(test.old, test.new); got != test.expected {
+				t.Errorf("expected %t, got %t", test.expected, got)
 			}
 		})
 	}
