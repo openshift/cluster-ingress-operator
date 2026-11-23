@@ -1152,6 +1152,32 @@ func Test_TLSProfileSpecForSecurityProfile(t *testing.T) {
 			valid: false,
 		},
 		{
+			description: "custom, TLS 1.3 minimum with a TLS 1.3 cipher",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       []string{"TLS_AES_128_GCM_SHA256"},
+						MinTLSVersion: configv1.VersionTLS13,
+					},
+				},
+			},
+			valid: true,
+		},
+		{
+			description: "custom, TLS 1.3 minimum with only TLS 1.2 ciphers",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       validCiphers,
+						MinTLSVersion: configv1.VersionTLS13,
+					},
+				},
+			},
+			valid: false,
+		},
+		{
 			description: "custom, mixed tls v1.2 and v1.3 ciphers",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileCustomType,
@@ -1340,17 +1366,17 @@ func Test_validateTLSSecurityProfileInheritedCustom(t *testing.T) {
 			expectError: true,
 		},
 		{
-			description: "inherited custom profile without TLS 1.3 cipher and minimum TLS 1.3 is rejected",
+			description: "inherited custom profile with empty ciphers and minimum TLS 1.3 is accepted",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileCustomType,
 				Custom: &configv1.CustomTLSProfile{
 					TLSProfileSpec: configv1.TLSProfileSpec{
-						Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+						Ciphers:       []string{},
 						MinTLSVersion: configv1.VersionTLS13,
 					},
 				},
 			},
-			expectError: true,
+			expectError: false,
 		},
 		{
 			description: "valid inherited custom profile is accepted",
