@@ -8,7 +8,10 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/prometheus/client_golang/prometheus"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -19,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -35,9 +39,28 @@ const (
 	// as defined by the Gateway API specification.
 	// See: https://github.com/kubernetes-sigs/gateway-api/blob/main/apis/v1/gateway_types.go
 	maxGatewayConditions = 8
+
+	// staleResourcesConditionType flags a Gateway whose previous GatewayClass
+	// resources were left behind by a gatewayClassName change.
+	staleResourcesConditionType = "openshift.io/StaleResources"
 )
 
 var logger = logf.Logger.WithName(controllerName)
+
+// staleResourcesMetric reports Gateways with resources left from a previous
+// GatewayClass. See ensureStaleResourcesStatus.
+var staleResourcesMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "ingress_controller_gateway_api_stale_resources",
+	Help: "Set to 1 when a Gateway has Service or Deployment resources left from a previous GatewayClass after a gatewayClassName change. See https://github.com/istio/istio/issues/62498.",
+}, []string{"gateway_namespace", "gateway_name"})
+
+// RegisterMetrics registers the gateway-status controller metrics.
+func RegisterMetrics() error {
+	if err := ctrlruntimemetrics.Registry.Register(staleResourcesMetric); err != nil {
+		return fmt.Errorf("failed to register stale resources metric: %w", err)
+	}
+	return nil
+}
 
 // reconciler reconciles gateways, adding missing conditions to the resource
 type reconciler struct {
@@ -59,11 +82,11 @@ type reconciler struct {
 func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayAPIModeAccessor) (controller.Controller, error) {
 	// Create a dedicated cache for this controller to watch resources only in the
 	// "openshift-ingress" namespace. Using the operator's main cache would cause it
-	// to watch Gateways, Services, and DNSRecords in all namespaces, which would
-	// increase memory usage unnecessarily.
+	// to watch Gateways, Services, Deployments, and DNSRecords in all namespaces,
+	// which would increase memory usage unnecessarily.
 	// This cache is optimized just for the resources that concern this controller:
 	// * Gateway resources with OpenShift-managed GatewayClass
-	// * Service and DNSRecord resources labeled with gateway.networking.k8s.io/gateway-name
+	// * Service, DNSRecord, and Deployment resources labeled with gateway.networking.k8s.io/gateway-name
 	// * Only resources in the "openshift-ingress" namespace
 	// * Managed fields stripped to reduce memory footprint
 	gatewaysCache, err := cache.New(mgr.GetConfig(), cache.Options{
@@ -109,7 +132,9 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 		CreateFunc: func(e event.CreateEvent) bool {
 			return gatewayHasOurController(e.Object)
 		},
-		DeleteFunc: func(e event.DeleteEvent) bool { return false },
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return gatewayHasOurController(e.Object)
+		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			return gatewayHasOurController(e.ObjectNew)
 		},
@@ -122,6 +147,18 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 		return ok && gwName != ""
 	})
 
+	// Deployments are only used for stale-resource detection, which keys on the
+	// GatewayClass label, so ignore updates that leave it unchanged.
+	deploymentClassChanged := predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectOld.GetLabels()[operatorcontroller.GatewayClassLabelKey] !=
+				e.ObjectNew.GetLabels()[operatorcontroller.GatewayClassLabelKey]
+		},
+	}
+
 	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &gatewayapiv1.Gateway{}, &handler.EnqueueRequestForObject{}, gatewayPredicate, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing gateway watcher: %w", err)
 	}
@@ -132,6 +169,10 @@ func NewUnmanaged(mgr manager.Manager, modeAccessor *operatorcontroller.GatewayA
 
 	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &iov1.DNSRecord{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource, modeAccessor.DependentPredicate())); err != nil {
 		return nil, fmt.Errorf("error initializing dnsrecord watcher: %w", err)
+	}
+
+	if err := c.Watch(source.Kind[client.Object](gatewaysCache, &appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(gatewayFromResourceLabel), isManagedResource, deploymentClassChanged, modeAccessor.DependentPredicate())); err != nil {
+		return nil, fmt.Errorf("error initializing deployment watcher: %w", err)
 	}
 
 	// Watch the Ingress CR for mode changes. Any change to the Ingress
@@ -163,14 +204,21 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	log := logger.WithValues("name", request.Name, "namespace", request.Namespace)
 	log.Info("Reconciling gateway")
 	if r.modeAccessor == nil || !r.modeAccessor.AllowDependents() {
+		// Stop asserting stale resources once CIO no longer manages Gateway API.
+		staleResourcesMetric.DeleteLabelValues(request.Namespace, request.Name)
 		log.Info("Management mode does not allow dependent controllers, skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
 	sourceGateway := &gatewayapiv1.Gateway{}
 	if err := r.cache.Get(ctx, request.NamespacedName, sourceGateway); err != nil {
+		if apierrors.IsNotFound(err) {
+			// The Gateway was deleted; clear any stale-resources metric it left behind.
+			staleResourcesMetric.DeleteLabelValues(request.Namespace, request.Name)
+			return reconcile.Result{}, nil
+		}
 		log.Error(err, "error fetching the gateway object")
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+		return reconcile.Result{}, err
 	}
 
 	gateway := sourceGateway.DeepCopy()
@@ -186,13 +234,24 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// just one service
 	var childSvc *corev1.Service
 	childSvcs := &corev1.ServiceList{}
+	svcsListed := true
 	if err := r.cache.List(ctx, childSvcs, listOpts...); err != nil {
+		svcsListed = false
 		log.Error(err, "error fetching the services from gateway")
 		errs = append(errs, fmt.Errorf("failed to list services for gateway %s/%s: %w", gateway.Namespace, gateway.Name, err))
 	} else if len(childSvcs.Items) > 0 {
 		childSvc = childSvcs.Items[0].DeepCopy()
 	} else {
 		log.Info("no service was found for gateway")
+	}
+
+	// List Deployments to detect resources left from a previous GatewayClass.
+	childDeploys := &appsv1.DeploymentList{}
+	deploysListed := true
+	if err := r.cache.List(ctx, childDeploys, listOpts...); err != nil {
+		deploysListed = false
+		log.Error(err, "error fetching the deployments from gateway")
+		errs = append(errs, fmt.Errorf("failed to list deployments for gateway %s/%s: %w", gateway.Namespace, gateway.Name, err))
 	}
 
 	// Because we will have multiple DNS records per Gateway (one per listener)
@@ -267,6 +326,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		status.ComputeGatewayAPIDNSStatus(dnsConfig, gateway.GetGeneration(), &gateway.Status, listenerToHostname, hostnameToDNSRecord)
 	}
 
+	// Surface resources left from a previous GatewayClass after a
+	// gatewayClassName change. Only recompute when both lists succeeded, so a
+	// failed List does not mask stale resources.
+	if svcsListed && deploysListed {
+		r.ensureStaleResourcesStatus(gateway, childSvcs.Items, childDeploys.Items)
+	}
+
 	// The Gateway API specification limits Gateway status conditions to maxGatewayConditions (8).
 	// If other controllers (e.g., Istio) are adding conditions, we need to ensure we don't exceed this limit.
 	// Validate that we haven't exceeded the Gateway API condition limit
@@ -300,6 +366,61 @@ func removeLoadBalancerAndDNSReadyConditions(gatewayStatus *gatewayapiv1.Gateway
 	for i := range gatewayStatus.Listeners {
 		meta.RemoveStatusCondition(&gatewayStatus.Listeners[i].Conditions, operatorv1.DNSReadyIngressConditionType)
 	}
+}
+
+// ensureStaleResourcesStatus surfaces resources left behind by a
+// gatewayClassName change. Istio removes a Gateway's generated resources only
+// via ownerReferences on Gateway deletion, so a class change leaves the
+// previous class's resources running. This sets a per-Gateway metric and the
+// openshift.io/StaleResources condition so the leftovers are discoverable.
+//
+// TODO: Remove this, staleResourcesMetric, the Deployment watch, and the alert
+// once this upstream bug is fixed: https://github.com/istio/istio/issues/62498
+func (r *reconciler) ensureStaleResourcesStatus(gateway *gatewayapiv1.Gateway, services []corev1.Service, deployments []appsv1.Deployment) {
+	// Identify current resources by their GatewayClass label rather than by
+	// name, so long Gateway names that Istio renames are not misreported.
+	currentClass := string(gateway.Spec.GatewayClassName)
+	isStale := func(labels map[string]string) bool {
+		class := labels[operatorcontroller.GatewayClassLabelKey]
+		return class != "" && class != currentClass
+	}
+	var stale bool
+	for i := range services {
+		if isStale(services[i].Labels) {
+			stale = true
+			break
+		}
+	}
+	if !stale {
+		for i := range deployments {
+			if isStale(deployments[i].Labels) {
+				stale = true
+				break
+			}
+		}
+	}
+
+	if !stale {
+		meta.RemoveStatusCondition(&gateway.Status.Conditions, staleResourcesConditionType)
+		staleResourcesMetric.DeleteLabelValues(gateway.Namespace, gateway.Name)
+		return
+	}
+
+	if meta.FindStatusCondition(gateway.Status.Conditions, staleResourcesConditionType) != nil ||
+		len(gateway.Status.Conditions) < maxGatewayConditions {
+		meta.SetStatusCondition(&gateway.Status.Conditions, metav1.Condition{
+			Type:               staleResourcesConditionType,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: gateway.Generation,
+			Reason:             "PreviousGatewayClassResourcesFound",
+			Message: fmt.Sprintf("Resources from a previous GatewayClass remain in namespace %s after gatewayClassName changed to %q. "+
+				"To list leaked resources, run: "+
+				"oc -n %s get deploy,svc,sa,hpa -l gateway.networking.k8s.io/gateway-name=%s,gateway.networking.k8s.io/gateway-class-name,gateway.networking.k8s.io/gateway-class-name!=%s",
+				operatorcontroller.DefaultOperandNamespace, gateway.Spec.GatewayClassName,
+				operatorcontroller.DefaultOperandNamespace, gateway.Name, gateway.Spec.GatewayClassName),
+		})
+	}
+	staleResourcesMetric.WithLabelValues(gateway.Namespace, gateway.Name).Set(1)
 }
 
 // The Service and DNSRecord are created with labels that indicate they are Gateway API

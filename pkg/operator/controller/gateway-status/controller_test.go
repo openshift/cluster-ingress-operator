@@ -11,6 +11,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	condutils "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -86,6 +87,16 @@ var (
 		return gw
 	}
 
+	deployFn = func(name string, labels map[string]string) *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels:    labels,
+				Namespace: "openshift-ingress",
+				Name:      name,
+			},
+		}
+	}
+
 	svcFn = func(name string, labels map[string]string, ingresses ...corev1.LoadBalancerIngress) *corev1.Service {
 		return &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
@@ -125,6 +136,14 @@ var (
 	exampleManagedGatewayLabel = map[string]string{
 		"gateway.istio.io/managed":               "openshift.io-gateway-controller",
 		"gateway.networking.k8s.io/gateway-name": "example-gateway",
+	}
+
+	exampleManagedGatewayLabelFor = func(className string) map[string]string {
+		return map[string]string{
+			"gateway.istio.io/managed":                     "openshift.io-gateway-controller",
+			"gateway.networking.k8s.io/gateway-name":       "example-gateway",
+			"gateway.networking.k8s.io/gateway-class-name": className,
+		}
 	}
 
 	exampleConditions = []metav1.Condition{
@@ -947,6 +966,40 @@ func Test_Reconcile(t *testing.T) {
 			expectError: "",
 		},
 		{
+			name: "stale resources condition set when previous gatewayclass resources remain",
+			existingObjects: []runtime.Object{
+				dnsConfigFn(true),
+				clusterIPGwFn("example-gateway", nil, 20, exampleConditions...),
+				svcFn("example-gateway-openshift-clusterip", exampleManagedGatewayLabelFor(operatorcontroller.OpenShiftClusterIPGatewayClassName)),
+				svcFn("example-gateway-openshift-default", exampleManagedGatewayLabelFor(operatorcontroller.OpenShiftDefaultGatewayClassName)),
+				deployFn("example-gateway-openshift-clusterip", exampleManagedGatewayLabelFor(operatorcontroller.OpenShiftClusterIPGatewayClassName)),
+				deployFn("example-gateway-openshift-default", exampleManagedGatewayLabelFor(operatorcontroller.OpenShiftDefaultGatewayClassName)),
+			},
+			reconcileRequest: reqFn("openshift-ingress", "example-gateway"),
+			expectedConditions: []metav1.Condition{
+				{
+					Type:               staleResourcesConditionType,
+					Status:             metav1.ConditionTrue,
+					Reason:             "PreviousGatewayClassResourcesFound",
+					ObservedGeneration: 20,
+					Message:            "Resources from a previous GatewayClass remain in namespace openshift-ingress after gatewayClassName changed to \"openshift-clusterip\". To list leaked resources, run: oc -n openshift-ingress get deploy,svc,sa,hpa -l gateway.networking.k8s.io/gateway-name=example-gateway,gateway.networking.k8s.io/gateway-class-name,gateway.networking.k8s.io/gateway-class-name!=openshift-clusterip",
+				},
+			},
+		},
+		{
+			name: "stale resources condition absent when all resources match current gatewayclass",
+			existingObjects: []runtime.Object{
+				dnsConfigFn(true),
+				clusterIPGwFn("example-gateway", nil, 21, exampleConditions...),
+				svcFn("example-gateway-openshift-clusterip", exampleManagedGatewayLabelFor(operatorcontroller.OpenShiftClusterIPGatewayClassName)),
+				deployFn("example-gateway-openshift-clusterip", exampleManagedGatewayLabelFor(operatorcontroller.OpenShiftClusterIPGatewayClassName)),
+			},
+			reconcileRequest: reqFn("openshift-ingress", "example-gateway"),
+			expectedAbsentConditions: []string{
+				staleResourcesConditionType,
+			},
+		},
+		{
 			name: "clusterip gateway removes stale loadbalancer and dns conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
@@ -986,6 +1039,7 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
+	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, iov1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, configv1.AddToScheme(scheme))
@@ -1130,6 +1184,7 @@ func Test_Reconcile(t *testing.T) {
 // just change if the condition has also changed
 func TestReconcileTransition(t *testing.T) {
 	scheme := runtime.NewScheme()
+	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, iov1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, configv1.AddToScheme(scheme))
