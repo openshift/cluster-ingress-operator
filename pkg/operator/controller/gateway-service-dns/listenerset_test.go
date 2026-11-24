@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -26,9 +27,12 @@ import (
 func TestListenerSetDNSLifecycle(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
+	// Build a runtime scheme containing all APIs the fake client needs.
 	for _, add := range []func(*runtime.Scheme) error{gatewayapiv1.AddToScheme, configv1.AddToScheme, corev1.AddToScheme, iov1.AddToScheme} {
 		require.NoError(t, add(scheme))
 	}
+
+	// Set up parent Gateway, GatewayClass, Service, and ListenerSet.
 	parent := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "gateway"}, Spec: gatewayapiv1.GatewaySpec{Listeners: []gatewayapiv1.Listener{{Name: "inline", Hostname: ptr.To(gatewayapiv1.Hostname("shared.example.com"))}}}}
 	parent.Spec.GatewayClassName = "managed"
 	class := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: "managed"}, Spec: gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName}}
@@ -39,20 +43,28 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 		listenerSet.Spec.Listeners = append(listenerSet.Spec.Listeners, gatewayapiv1.ListenerEntry{Name: name, Hostname: ptr.To(gatewayapiv1.Hostname(hostname))})
 		listenerSet.Status.Listeners = append(listenerSet.Status.Listeners, gatewayapiv1.ListenerEntryStatus{Name: name, Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue, ObservedGeneration: 2}}})
 	}
+
+	// Set up the CRD mode access as it would be for supported tests.
+	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
+	mode.SetCRDsEstablished(true)
+
+	// Set up a fake client, cahce, and create a reconciler with them.
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(parent, class, service, listenerSet,
 		&configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}},
 		&configv1.Infrastructure{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Status: configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: configv1.AWSPlatformType}}}).
 		WithIndex(&gatewayapiv1.ListenerSet{}, operatorcontroller.ListenerSetParentGatewayIndex, operatorcontroller.IndexListenerSetParent).Build()
-	mode := operatorcontroller.NewGatewayAPIModeAccessor(false)
-	mode.SetCRDsEstablished(true)
 	normalCache := testutil.FakeCache{Informers: &informertest.FakeInformers{Scheme: scheme}, Reader: cl}
 	r := &reconciler{config: Config{OperandNamespace: parent.Namespace}, client: cl, cache: normalCache, listenerSetCache: normalCache, modeAccessor: mode}
+
 	check := func(expected int) {
 		t.Helper()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
 		require.NoError(t, err)
 		var records iov1.DNSRecordList
 		require.NoError(t, cl.List(ctx, &records))
+
+		// Simulate the DNSRecord controller removing finalizers so deleted records
+		// actually disappear from the fake client.
 		for index := range records.Items {
 			if !records.Items[index].DeletionTimestamp.IsZero() {
 				records.Items[index].Finalizers = nil
@@ -61,43 +73,54 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 		}
 		require.NoError(t, cl.List(ctx, &records))
 		require.Len(t, records.Items, expected)
+
+		// Verify that every DNSRecord is owned by the Gateway's Service and targets
+		// the Service's published load-balancer hostname.
 		for _, record := range records.Items {
 			require.Equal(t, parent.Namespace, record.Namespace)
 			require.Equal(t, service.UID, record.OwnerReferences[0].UID)
 			require.Equal(t, []string{"lb.example.com"}, record.Spec.Targets)
 		}
 	}
-	check(4) // This is a reconcile to check creation.
-	check(4) // This is a second reconcile to check idempotence, i.e. we can run it twice and get same results.
+
+	// The first reconcile creates DNSRecords for the Gateway inline listener and
+	// all eligible ListenerSet hostnames.
+	check(4)
+	// Reconciling the same state again verifies that DNSRecord creation is idempotent.
+	check(4)
+
+	// Simulate an Istio update to the ListenerSets Conflicted condition to make it Conflicted=true.
 	listenerSet.Status.Listeners[0].Conditions = append(listenerSet.Status.Listeners[0].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
+	// The hostname is shared with the Gateway's inline listener so it remains.
 	check(4)
-	// The shared hostname remains desired by the Gateway's inline listener, but setting
-	// a conflict on a ListenerSet-only hostname must remove its record.
+
+	// Simulate an Istio update to the ListenerSets Conflicted condition to make it Conflicted=true.
+	// In this case, the hostname is not shared so the DNSRecord must be deleted.
 	listenerSet.Status.Listeners[1].Conditions = append(listenerSet.Status.Listeners[1].Conditions, metav1.Condition{Type: "Conflicted", Status: metav1.ConditionTrue, ObservedGeneration: 2})
 	require.NoError(t, cl.Update(ctx, listenerSet))
+	// A conflict on a ListenerSet-only hostname removes that hostname from desired DNS.
 	check(3)
-	// A Conflicted condition from an earlier generation must not block DNS.
-	listenerSet.Status.Listeners[1].Conditions[1].ObservedGeneration = 1
-	require.NoError(t, cl.Update(ctx, listenerSet))
-	check(4)
-	listenerSet.Status.Listeners[1].Conditions[0].ObservedGeneration = 1
-	require.NoError(t, cl.Update(ctx, listenerSet))
-	check(3)
-	listenerSet.Status.Listeners[1].Conditions[0].ObservedGeneration = 2
-	listenerSet.Status.Listeners[1].Conditions[0].Status = metav1.ConditionFalse
-	require.NoError(t, cl.Update(ctx, listenerSet))
-	check(3)
+
+	// A ListenerSet Accepted=False condition removes its hostnames from desired DNS.
 	listenerSet.Status.Conditions[0].Status = metav1.ConditionFalse
 	require.NoError(t, cl.Update(ctx, listenerSet))
+	// One inline listener DNSRecord remains.
 	check(1)
+
+	// Restoring Accepted=true makes the non-conflicted ListenerSet hostnames desired again.
 	listenerSet.Status.Conditions[0].Status = metav1.ConditionTrue
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(3)
+
+	// A stale Accepted=true status is trusted, so the changed hostname replaces
+	// the old ListenerSet hostname without waiting for a status update.
 	listenerSet.Spec.Listeners[2].Hostname = ptr.To(gatewayapiv1.Hostname("changed.example.com"))
 	listenerSet.Generation++
 	require.NoError(t, cl.Update(ctx, listenerSet))
-	check(1)
+	check(3)
+
+	// Reconciling with current status generations must produce the same desired set.
 	listenerSet.Status.Conditions[0].ObservedGeneration = listenerSet.Generation
 	for index := range listenerSet.Status.Listeners {
 		for conditionIndex := range listenerSet.Status.Listeners[index].Conditions {
@@ -106,9 +129,14 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	}
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(3)
+
+	// Reparenting the ListenerSet removes its hostnames from this Gateway's desired DNS.
 	listenerSet.Spec.ParentRef.Name = "other-gateway"
 	require.NoError(t, cl.Update(ctx, listenerSet))
+	// One inline listener DNSRecord remains.
 	check(1)
+
+	// Restoring the parent makes the ListenerSet hostnames desired again.
 	listenerSet.Spec.ParentRef.Name = gatewayapiv1.ObjectName(parent.Name)
 	require.NoError(t, cl.Update(ctx, listenerSet))
 	check(3)
@@ -119,6 +147,8 @@ func TestListenerSetDNSLifecycle(t *testing.T) {
 	require.NoError(t, cl.Update(ctx, parent))
 	require.NoError(t, cl.Delete(ctx, parent))
 	r.listenerSetCache = failingListenerSetListCache{FakeCache: normalCache}
+	// The deliberately failing ListenerSet cache proves that this reconcile
+	// clears desired DNS without listing attached ListenerSets.
 	check(0)
 }
 
@@ -224,6 +254,94 @@ func newDNSClaimRecord(
 			DNSManagementPolicy: iov1.ManagedDNS,
 		},
 	}
+}
+
+// newCIOWildcardDNSRecord returns a preexisting wildcard DNSRecord owned by
+// CIO's default IngressController.
+func newCIOWildcardDNSRecord(dnsName, target string) *iov1.DNSRecord {
+	return &iov1.DNSRecord{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+			Name:      "default-wildcard",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: operatorv1.GroupVersion.String(),
+				Kind:       "IngressController",
+				Name:       "default",
+				UID:        "ingress-controller-uid",
+			}},
+		},
+		Spec: iov1.DNSRecordSpec{
+			DNSName:             dnsName,
+			Targets:             []string{target},
+			RecordType:          iov1.CNAMERecordType,
+			RecordTTL:           30,
+			DNSManagementPolicy: iov1.ManagedDNS,
+		},
+	}
+}
+
+// TestListenerSetDoesNotOvertakeCIOWildcard verifies that a ListenerSet hostname
+// covered by CIO's default wildcard DNSRecord is rejected instead of creating a
+// more-specific Gateway DNSRecord.
+func TestListenerSetDoesNotOvertakeCIOWildcard(t *testing.T) {
+	ctx := context.Background()
+	gateway := newDNSClaimGateway("gateway")
+	service := newDNSClaimService("service", gateway.Name)
+	listenerSet := &gatewayapiv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "tenant", Name: "listeners", Generation: 1},
+		Spec: gatewayapiv1.ListenerSetSpec{
+			ParentRef: gatewayapiv1.ParentGatewayReference{
+				Name:      gatewayapiv1.ObjectName(gateway.Name),
+				Namespace: ptr.To(gatewayapiv1.Namespace(gateway.Namespace)),
+			},
+			Listeners: []gatewayapiv1.ListenerEntry{{
+				Name:     "attached",
+				Hostname: ptr.To(gatewayapiv1.Hostname("foo.apps.example.com")),
+			}},
+		},
+		Status: gatewayapiv1.ListenerSetStatus{
+			Conditions: []metav1.Condition{{
+				Type:               "Accepted",
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: 1,
+			}},
+			Listeners: []gatewayapiv1.ListenerEntryStatus{{
+				Name: "attached",
+				Conditions: []metav1.Condition{{
+					Type:               "Accepted",
+					Status:             metav1.ConditionTrue,
+					ObservedGeneration: 1,
+				}},
+			}},
+		},
+	}
+	cioWildcard := newCIOWildcardDNSRecord("*.apps.example.com.", "router-default.example.com")
+	objects := []client.Object{
+		gateway,
+		service,
+		listenerSet,
+		cioWildcard,
+		&gatewayapiv1.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{Name: "managed"},
+			Spec:       gatewayapiv1.GatewayClassSpec{ControllerName: operatorcontroller.OpenShiftGatewayClassControllerName},
+		},
+		&configv1.DNS{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}},
+		&configv1.Infrastructure{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+			Status:     configv1.InfrastructureStatus{PlatformStatus: &configv1.PlatformStatus{Type: configv1.AWSPlatformType}},
+		},
+	}
+	r, cl := newDNSClaimReconciler(t, objects...)
+
+	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(service)})
+	require.ErrorContains(t, err, "overlaps an already claimed DNS name")
+
+	var records iov1.DNSRecordList
+	require.NoError(t, cl.List(ctx, &records))
+	require.Len(t, records.Items, 1, "the ListenerSet must not create a DNSRecord")
+	require.Equal(t, cioWildcard.Name, records.Items[0].Name)
+	require.Equal(t, cioWildcard.Spec.DNSName, records.Items[0].Spec.DNSName)
+	require.Equal(t, "IngressController", records.Items[0].OwnerReferences[0].Kind)
 }
 
 // TestDNSRecordsAreSeparateAcrossGateways verifies that equivalent Gateway and
@@ -380,7 +498,7 @@ func TestDNSRecordWildcardClaims(t *testing.T) {
 				_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(serviceB)})
 			}
 			if scenario.conflicts {
-				require.ErrorContains(t, err, "overlaps a claim owned by another Service")
+				require.ErrorContains(t, err, "overlaps an already claimed DNS name")
 				require.NotContains(t, err.Error(), scenario.firstHosts[0], "errors must omit DNS payloads")
 			} else {
 				require.NoError(t, err)

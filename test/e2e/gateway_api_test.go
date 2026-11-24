@@ -764,10 +764,9 @@ func testGatewayAPIDNS(t *testing.T) {
 		// provision Services/DNSRecords out of Gateway creation order.
 		establishDNSOwnershipFirst bool
 	}{
-		// Only the oldest DNSRecord for a DNS name is published (#1229).
-		// Serialize ownership: publish gw1's DNSRecord before creating gw2 so
-		// gw1 is guaranteed to be the oldest claimant.
-		// TODO: Gateway Listeners should eventually be reported as Conflicted.
+		// The first valid DNS claim wins. Serialize ownership: publish gw1's
+		// DNSRecord before creating gw2 so gw1 is guaranteed to win. gw2's
+		// exact-overlap claim must be rejected before it creates a DNSRecord.
 		{
 			name:                       "multipleGatewaysSameListenerHostname",
 			establishDNSOwnershipFirst: true,
@@ -798,7 +797,7 @@ func testGatewayAPIDNS(t *testing.T) {
 			},
 			expectedDNSRecords: map[expectedDnsRecord]dnsRecordExpectation{
 				{dnsName: "abc." + domain + ".", gatewayName: "gw1"}: expectDNSRecordPublished(),
-				{dnsName: "abc." + domain + ".", gatewayName: "gw2"}: expectDNSRecordUnpublished("DomainAlreadyInUse"),
+				{dnsName: "abc." + domain + ".", gatewayName: "gw2"}: expectDNSRecordAbsent(),
 			},
 		},
 		{

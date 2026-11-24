@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -101,7 +101,7 @@ func NewUnmanaged(mgr manager.Manager, config Config, modeAccessor *operatorcont
 	// TechPreview/DevPreview clusters.
 	if modeAccessor != nil && modeAccessor.GateEnabled() {
 		ingressToServices := operatorcontroller.IngressWakeUpMapper(operatorCache, func() client.ObjectList { return &corev1.ServiceList{} }, client.InNamespace(config.OperandNamespace), client.HasLabels{operatorcontroller.ManagedByIstioLabelKey})
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToServices), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(ingressToServices), operatorcontroller.GatewayAPIModeChangePredicate())); err != nil {
 			return nil, err
 		}
 	}
@@ -345,12 +345,12 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		if !hasExistingClaim {
 			for index := range existing.Items {
 				record := &existing.Items[index]
-				if !dnsRecordIsAlreadyClaimedByGateway(record, service) {
+				if !dnsRecordIsAlreadyClaimed(record, service) {
 					continue
 				}
 				if dnsNamesOverlap(record.Spec.DNSName, domain) {
 					errs = append(errs, fmt.Errorf(
-						"DNSRecord claim for Gateway %s/%s overlaps a claim owned by another Service; first valid claim wins",
+						"DNSRecord claim for Gateway %s/%s overlaps an already claimed DNS name; first valid claim wins",
 						gateway.Namespace, gateway.Name,
 					))
 					overlappingClaim = true
@@ -379,16 +379,21 @@ func dnsRecordOwnedByService(record *iov1.DNSRecord, service *corev1.Service) bo
 	return owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service" && owner.Name == service.Name && owner.UID == service.UID
 }
 
-// dnsRecordIsAlreadyClaimedByGateway reports whether the DNSRecord represents
-// a valid DNS claim owned by another Gateway's load-balancer Service.
-func dnsRecordIsAlreadyClaimedByGateway(record *iov1.DNSRecord, service *corev1.Service) bool {
-	if dnsRecordOwnedByService(record, service) ||
-		record.Labels[operatorcontroller.GatewayNameLabelKey] == "" ||
-		len(record.OwnerReferences) != 1 {
+// dnsRecordIsAlreadyClaimed reports whether the DNSRecord represents a valid
+// DNS claim owned by another Gateway's load-balancer Service or by CIO.
+func dnsRecordIsAlreadyClaimed(record *iov1.DNSRecord, service *corev1.Service) bool {
+	if dnsRecordOwnedByService(record, service) || len(record.OwnerReferences) != 1 {
 		return false
 	}
 	owner := record.OwnerReferences[0]
-	return owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service" && owner.UID != ""
+	switch {
+	case owner.APIVersion == corev1.SchemeGroupVersion.String() && owner.Kind == "Service":
+		return record.Labels[operatorcontroller.GatewayNameLabelKey] != "" && owner.UID != ""
+	case owner.APIVersion == operatorv1.GroupVersion.String() && owner.Kind == "IngressController":
+		return owner.UID != ""
+	default:
+		return false
+	}
 }
 
 // dnsNamesOverlap reports whether two DNS names are equivalent or whether a
