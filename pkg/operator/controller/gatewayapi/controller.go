@@ -8,7 +8,6 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 
 	"k8s.io/client-go/tools/record"
 
@@ -221,7 +220,6 @@ type reconciler struct {
 	fieldIndexer        client.FieldIndexer
 	mu                  sync.Mutex
 	gatewayClassIndexed bool
-	listenerSetIndexed  bool
 	controllersStarted  bool
 
 	// dependentsBlockedLogged tracks whether we have already logged that
@@ -483,9 +481,9 @@ func (r *reconciler) ensureManagedResources(ctx context.Context) error {
 }
 
 // ensureDependentControllers creates the required Gateway API field indexes.
-// gatewayClassIndexed and listenerSetIndexed record successful registrations,
-// so later reconciles retry only unset registrations after a partial failure.
-// Dependent controllers start exactly once after both indexes are registered.
+// gatewayClassIndexed records successful registrations, so later
+// reconciles retry only unset registrations after a partial failure.
+// Dependent controllers start exactly once after the index is registered.
 func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -511,28 +509,6 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
 		}
 		r.gatewayClassIndexed = true
 	}
-	if !r.listenerSetIndexed {
-		// Index ListenerSets by parent Gateway after CRDs are installed.
-		if err := r.fieldIndexer.IndexField(
-			ctx,
-			&gatewayapiv1.ListenerSet{},
-			listenersetstatuscontroller.ListenerSetParentGatewayIndex,
-			client.IndexerFunc(func(o client.Object) []string {
-				ls, ok := o.(*gatewayapiv1.ListenerSet)
-				if !ok {
-					return []string{}
-				}
-				parentNS := ls.GetNamespace()
-				if ls.Spec.ParentRef.Namespace != nil {
-					parentNS = string(*ls.Spec.ParentRef.Namespace)
-				}
-				return []string{parentNS + "/" + string(ls.Spec.ParentRef.Name)}
-			})); err != nil {
-			return fmt.Errorf("failed to add ListenerSet field indexer: %w", err)
-		}
-		r.listenerSetIndexed = true
-	}
-
 	for i := range r.config.DependentControllers {
 		c := &r.config.DependentControllers[i]
 		go func() {

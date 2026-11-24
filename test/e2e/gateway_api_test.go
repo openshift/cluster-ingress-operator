@@ -18,7 +18,6 @@ import (
 	routev1client "github.com/openshift/client-go/route/clientset/versioned"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/library-go/test/library/metrics"
 	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -159,7 +158,6 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	}
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
-	t.Run("testListenerSetNotAccepted", testListenerSetNotAccepted)
 	if gatewayAPIManagementModeFGEnabled && ingressesAPIExists {
 		t.Run("testGatewayAPIManagementModeDefault", testGatewayAPIManagementModeDefault)
 		t.Run("testGatewayAPIManagementModeMetrics", testGatewayAPIManagementModeMetrics)
@@ -1975,122 +1973,6 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	}
 
 	return errs
-}
-
-// testListenerSetNotAccepted verifies that a ListenerSet targeting an
-// OpenShift-managed Gateway gets Accepted=False and that the Prometheus
-// metric is set and cleaned up on both ListenerSet deletion and Gateway
-// deletion.
-func testListenerSetNotAccepted(t *testing.T) {
-	gwName := names.SimpleNameGenerator.GenerateName("test-ls-gw-")
-	gw := &gatewayapiv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      gwName,
-			Namespace: operatorcontroller.DefaultOperandNamespace,
-		},
-		Spec: gatewayapiv1.GatewaySpec{
-			GatewayClassName: operatorcontroller.OpenShiftDefaultGatewayClassName,
-			Listeners: []gatewayapiv1.Listener{
-				{
-					Name:     "http",
-					Port:     80,
-					Protocol: gatewayapiv1.HTTPProtocolType,
-				},
-			},
-		},
-	}
-	t.Logf("creating Gateway %s/%s", gw.Namespace, gw.Name)
-	if err := kclient.Create(t.Context(), gw); err != nil {
-		t.Fatalf("failed to create Gateway: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), gw); err != nil {
-			if !errors.IsNotFound(err) {
-				t.Logf("failed to delete Gateway: %v", err)
-			}
-		}
-	})
-
-	createListenerSet := func(name string) *gatewayapiv1.ListenerSet {
-		ls := &gatewayapiv1.ListenerSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: operatorcontroller.DefaultOperandNamespace,
-			},
-			Spec: gatewayapiv1.ListenerSetSpec{
-				ParentRef: gatewayapiv1.ParentGatewayReference{
-					Name: gatewayapiv1.ObjectName(gwName),
-				},
-				Listeners: []gatewayapiv1.ListenerEntry{
-					{
-						Name:     "test-listener",
-						Port:     8443,
-						Protocol: gatewayapiv1.HTTPSProtocolType,
-					},
-				},
-			},
-		}
-		t.Logf("creating ListenerSet %s/%s targeting gateway %s", ls.Namespace, ls.Name, gwName)
-		if err := kclient.Create(t.Context(), ls); err != nil {
-			t.Fatalf("failed to create ListenerSet: %v", err)
-		}
-		t.Cleanup(func() {
-			if err := kclient.Delete(context.Background(), ls); err != nil {
-				if !errors.IsNotFound(err) {
-					t.Logf("failed to delete ListenerSet: %v", err)
-				}
-			}
-		})
-		return ls
-	}
-
-	ls1Name := names.SimpleNameGenerator.GenerateName("test-listenerset-")
-	ls2Name := names.SimpleNameGenerator.GenerateName("test-listenerset-")
-	ls1 := createListenerSet(ls1Name)
-	ls2 := createListenerSet(ls2Name)
-
-	for _, ls := range []*gatewayapiv1.ListenerSet{ls1, ls2} {
-		t.Logf("verifying ListenerSet %s gets Accepted=False", ls.Name)
-		nsName := types.NamespacedName{Namespace: ls.Namespace, Name: ls.Name}
-		lsCopy := ls
-		assert.Eventually(t, func() bool {
-			if err := kclient.Get(t.Context(), nsName, lsCopy); err != nil {
-				t.Logf("failed to get ListenerSet: %v", err)
-				return false
-			}
-			cond := condutils.FindStatusCondition(lsCopy.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
-			if cond == nil {
-				return false
-			}
-			return cond.Status == metav1.ConditionFalse && cond.Reason == listenersetstatuscontroller.ReasonUnsupportedByController
-		}, 2*time.Minute, 2*time.Second, "ListenerSet %s did not get Accepted=False", ls.Name)
-	}
-
-	prometheusClient := createPrometheusClient(t)
-	metricQuery1 := fmt.Sprintf(`ingress_operator_listenerset_on_managed_gateway{listenerset_name="%s",listenerset_namespace="%s"}`, ls1Name, operatorcontroller.DefaultOperandNamespace)
-	metricQuery2 := fmt.Sprintf(`ingress_operator_listenerset_on_managed_gateway{listenerset_name="%s",listenerset_namespace="%s"}`, ls2Name, operatorcontroller.DefaultOperandNamespace)
-
-	t.Log("verifying Prometheus metrics are set for both ListenerSets")
-	assertMetricValue(t, prometheusClient, metricQuery1, 1, "Prometheus metric was not set for ListenerSet 1")
-	assertMetricValue(t, prometheusClient, metricQuery2, 1, "Prometheus metric was not set for ListenerSet 2")
-
-	// Delete ListenerSet 1 directly and verify its metric is cleaned up.
-	t.Logf("deleting ListenerSet %s and verifying metric cleanup", ls1Name)
-	if err := kclient.Delete(t.Context(), ls1); err != nil {
-		if !errors.IsNotFound(err) {
-			t.Fatalf("failed to delete ListenerSet: %v", err)
-		}
-	}
-	assertMetricGone(t, prometheusClient, metricQuery1, "Prometheus metric was not cleaned up after ListenerSet deletion")
-
-	// Delete the Gateway and verify ListenerSet 2's metric is also cleaned up.
-	t.Logf("deleting Gateway %s and verifying ListenerSet %s metric cleanup", gwName, ls2Name)
-	if err := kclient.Delete(t.Context(), gw); err != nil {
-		if !errors.IsNotFound(err) {
-			t.Fatalf("failed to delete Gateway: %v", err)
-		}
-	}
-	assertMetricGone(t, prometheusClient, metricQuery2, "Prometheus metric was not cleaned up after Gateway deletion")
 }
 
 func createPrometheusClient(t *testing.T) prometheusv1.API {
