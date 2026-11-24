@@ -1,6 +1,6 @@
 # cluster-ingress-operator OTE Test Extension — Ingress QE Tests
 
-The QE package carries 25 test cases migrated from openshift-tests-private:
+The QE package carries 39 test cases migrated from openshift-tests-private:
 
 * 14 IngressController lifecycle, router deployment, routing, and certificate
   cases in `ingress_operator.go`.
@@ -9,10 +9,21 @@ The QE package carries 25 test cases migrated from openshift-tests-private:
   `openshift-tests-private/test/extended/router/ingress.go`. TC41117 is
   intentionally omitted because equivalent IngressClass lifecycle coverage
   already exists in the operator e2e suite.
+* 5 cloud load-balancer cases in `cloud_load_balancer.go`, migrated from
+  `openshift-tests-private/test/extended/router/cloud_load_balancer.go`.
+  OCP-36891, OCP-75439, and OCP-75617 are intentionally omitted.
+* 9 tuning cases in `tuning.go`, migrated from
+  `openshift-tests-private/test/extended/router/tuning.go`. OCP-43112 is
+  intentionally omitted; because the omitted source spec also carried
+  OCP-43111, that case is omitted with it.
 
-Both files follow the same structure: a single `Network_Edge Component_Router`
-describe block, one `g.It` per case, numbered `g.By` steps, a test-owned
-namespace and fixtures, and cleanup through `defer`. They are registered
+These files follow the same structure: a single component describe block, one
+`g.It` per case, numbered `g.By` steps, a test-owned namespace and fixtures,
+and cleanup through `defer`. `ingress_operator.go` uses
+`Network_Edge Component_Ingress-Operator`, `ingress.go` uses
+`Network_Edge Component_Ingress`, `cloud_load_balancer.go` uses
+`Network_Edge Component_Route-CLB`, and `tuning.go` uses
+`Network_Edge Component_Route-Tuning`. They are registered
 together through the `ingress-operator/*` suites; there is no separate router
 suite family.
 
@@ -22,13 +33,15 @@ suite family.
 |------|-------|-------------|
 | `ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
 | `ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
+| `cloud_load_balancer.go` | 5 | Default endpoint publishing and AWS/Azure load-balancer configuration tests |
+| `tuning.go` | 9 | HAProxy tuningOptions configuration and validation tests |
 
 ## Test naming and registration
 
 Every test name has the shape:
 
 ```text
-[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router <description> [<execution tags>] [Suite:...]
+[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge <component> <description> [<execution tags>] [Suite:...]
 ```
 
 Each `g.It` carries its canonical case label, for example
@@ -40,22 +53,22 @@ Priorities and platform tokens are omitted from titles. `[Serial]` and
 The 11 cases in `ingress.go` are registered for the first time under these
 names, so they do not set `OriginalName`. They are **informing**:
 `cmd/main.go` marks every `[OTP]` spec informing while it builds a reliability
-record. The existing 14 cases keep their current names and lifecycle.
+record.
 
 `[Level0]` gates entry to the conformance suites. Confirm the classification
 against the QE-approved Level0 plan before promotion.
 
 ## Test Suites
 
-All 25 `[OTP]` cases are selected by the existing `ingress-operator/*` suites:
+All 39 `[OTP]` cases are selected by the existing `ingress-operator/*` suites:
 
 | Suite | Cases before environment filtering | Conformance parent |
 |-------|------------------------------------|--------------------|
-| `ingress-operator/conformance/parallel` | 17 | `openshift/conformance/parallel` |
+| `ingress-operator/conformance/parallel` | 31 | `openshift/conformance/parallel` |
 | `ingress-operator/conformance/serial` | 4: OCP-56772, OCP-62530, OCP-57370, OCP-85280 | `openshift/conformance/serial` |
 | `ingress-operator/disruptive` | 4: OCP-75907, OCP-75908, OCP-75909, OCP-56228 | None |
-| `ingress-operator/non-disruptive` | 21 | None |
-| `ingress-operator/all` | 25 (`--max-concurrency=1`) | None |
+| `ingress-operator/non-disruptive` | 35 | None |
+| `ingress-operator/all` | 39 (`--max-concurrency=1`) | None |
 
 The disruptive cases have no conformance parent and require explicit
 selection. 56228 deletes the default router service, and 75907, 75908, and
@@ -77,11 +90,13 @@ selector there when a new case is platform-limited.
 
 | Restriction | Applied cases |
 |-------------|---------------|
-| Require `config.openshift.io` API group, excluding MicroShift | All 25 |
-| Exclude hosted-cluster topology `External` | OCP-22633, OCP-51429, OCP-51437, OCP-57370, OCP-63832, OCP-64611, OCP-75907, OCP-75908, OCP-75909 |
+| Require `config.openshift.io` API group, excluding MicroShift | All 39 |
+| Exclude hosted-cluster topology `External` | OCP-22633, OCP-40747, OCP-41110, OCP-43105, OCP-43113, OCP-50662, OCP-50926, OCP-51429, OCP-51437, OCP-52837, OCP-53605, OCP-55367, OCP-57370, OCP-63832, OCP-64611, OCP-72126, OCP-75440, OCP-75499, OCP-75907, OCP-75908, OCP-75909, OCP-86153 |
 | Exclude `externalConnectivity == "Disconnected"` | OCP-63832 |
 | Require the `ImageRegistry` capability | OCP-22636, OCP-22637, OCP-33960, OCP-41109, OCP-51148, OCP-51429, OCP-51437, OCP-57089, OCP-60012, OCP-60013, OCP-85280, OCP-85950 |
-| Require platform `azure` | OCP-57089 |
+| Require platform `azure` | OCP-57089, OCP-72126 |
+| Exclude IPv6 network stack | OCP-72126 |
+| Require platform `aws` | OCP-52837, OCP-75440, OCP-75499 |
 | Exclude bare metal and vSphere | OCP-75909 |
 
 The web server fixtures pull
@@ -100,12 +115,13 @@ disable these specs on supported platforms. `openshift-tests` passes
 `--api-group` only when it can discover cluster state, which it cannot do on
 MicroShift.
 
-Several cases also carry narrow runtime guards: OCP-57089 skips on a
-non-Azure platform, OCP-56228 skips when `openshift-ingress/router-default` is
-absent (for example on a hosted control plane), OCP-57370 skips when the
-console namespace is absent, OCP-63832 and OCP-64611 skip on non-AWS
-platforms, OCP-64611 also skips when the cluster is not a shared-VPC install,
-and OCP-75908 skips when HTTP/2 is not enabled.
+Several cases also carry narrow runtime guards: OCP-57089 and OCP-72126 skip
+on non-Azure platforms, OCP-52837, OCP-75440, and OCP-75499 skip on non-AWS
+platforms, OCP-56228 skips when `openshift-ingress/router-default` is absent
+(for example on a hosted control plane), OCP-57370 skips when the console
+namespace is absent, OCP-63832 and OCP-64611 skip on non-AWS platforms,
+OCP-64611 also skips when the cluster is not a shared-VPC install, and
+OCP-75908 skips when HTTP/2 is not enabled.
 
 ### Web server fixture reliability
 
@@ -134,13 +150,14 @@ filtered by name.
 
 | Lane | `ingress-operator/all` |
 |------|------------------------|
-| Azure | 25 |
-| AWS | 24 |
-| bare metal IPI (`platform=baremetal`) | 23 |
-| assisted bare metal (`platform=none`) | 24 |
-| vSphere | 23 |
-| disconnected | 24 |
-| HyperShift guest (`topology=External`) | 16 |
+| Azure | 36 |
+| AWS | 37 |
+| bare metal IPI (`platform=baremetal`) | 33 |
+| assisted bare metal (`platform=none`) | 34 |
+| vSphere | 33 |
+| disconnected | 36 |
+| HyperShift guest, AWS (`topology=External`, `platform=aws`) | 16 |
+| HyperShift guest, Azure (`topology=External`, `platform=azure`) | 17 |
 | MicroShift (no `--api-group`) | 0 |
 
 ## Build, list, and run
@@ -184,20 +201,20 @@ applies the cluster selectors. Case IDs appear in labels rather than names.
 ```bash
 # Run all 14 ingress operator tests by name.
 ./bin/cluster-ingress-operator-tests-ext run-test \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router misc tests for ingress operator [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router The nodeSelector and tolerations of router deployment are controlled by ingresscontroller [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router The namespaceSelector of router is controlled by ingresscontroller [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router The routeSelector of router is controlled by ingresscontroller [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress Controller sets allowPrivilegeEscalation on the haproxy container in the router deployment [Serial] [Suite:openshift/conformance/serial]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router matchExpressions for routeSelector defined in an ingress-controller [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router matchExpressions for namespaceSelector defined in an ingress-controller [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router openshift ingress operator is failing to update router-certs [Serial] [Suite:openshift/conformance/serial]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Cluster ingress health checks and routes fail on swapping application router between public and private [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress operator support for private hosted zones in Shared VPC clusters [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress Operator should not remain progressing after a clientca-configmap or service port change [Disruptive]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router http2 connection coalescing component routing should not be broken with single certificate [Disruptive]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress Operator should not remain progressing from repeated internal service or router deployment updates [Disruptive]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Router should support SHA1 CA certificates in the default certificate chain [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator misc tests for ingress operator [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator The nodeSelector and tolerations of router deployment are controlled by ingresscontroller [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator The namespaceSelector of router is controlled by ingresscontroller [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator The routeSelector of router is controlled by ingresscontroller [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator Ingress Controller sets allowPrivilegeEscalation on the haproxy container in the router deployment [Serial] [Suite:openshift/conformance/serial]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator matchExpressions for routeSelector defined in an ingress-controller [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator matchExpressions for namespaceSelector defined in an ingress-controller [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator openshift ingress operator is failing to update router-certs [Serial] [Suite:openshift/conformance/serial]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator Cluster ingress health checks and routes fail on swapping application router between public and private [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator Ingress operator support for private hosted zones in Shared VPC clusters [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator Ingress Operator should not remain progressing after a clientca-configmap or service port change [Disruptive]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator http2 connection coalescing component routing should not be broken with single certificate [Disruptive]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator Ingress Operator should not remain progressing from repeated internal service or router deployment updates [Disruptive]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator Router should support SHA1 CA certificates in the default certificate chain [Suite:openshift/conformance/parallel]" \
   --max-concurrency=1
 ```
 
@@ -206,17 +223,17 @@ applies the cluster selectors. Case IDs appear in labels rather than names.
 ```bash
 # Run the 11 Ingress-to-Route cases by name.
 ./bin/cluster-ingress-operator-tests-ext run-test \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router use IngressClass controller for ingress-to-route [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router host name of the route depends on the subdomain if provided [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router different router deployment with same route using subdomain [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Router deployment using different shard with same subdomain [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Deletion of default router service is recovered [Disruptive]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Azure external and internal load balancer services receive IPs [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router component route hostname is RFC compliant [Serial] [Suite:openshift/conformance/serial]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Ingress operator is enabled as an optional component [Suite:openshift/conformance/parallel]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router router rejects invalid certificate content on ingress [Serial] [Suite:openshift/conformance/serial]" \
-  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Propagate ingress labels to generated routes [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress use IngressClass controller for ingress-to-route [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress host name of the route depends on the subdomain if provided [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress different router deployment with same route using subdomain [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Router deployment using different shard with same subdomain [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Deletion of default router service is recovered [Disruptive]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Azure external and internal load balancer services receive IPs [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress component route hostname is RFC compliant [Serial] [Suite:openshift/conformance/serial]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Ingress operator is enabled as an optional component [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress router rejects invalid certificate content on ingress [Serial] [Suite:openshift/conformance/serial]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Propagate ingress labels to generated routes [Suite:openshift/conformance/parallel]" \
   --max-concurrency=1
 ```
 
@@ -224,6 +241,76 @@ Named `run-test` selection bypasses the environment selectors. On HyperShift
 (`topology=External`) or clusters without the `ImageRegistry` capability, omit
 OCP-51429 and OCP-51437 from this command; both read router pods and both
 create the web server.
+
+### Run only `cloud_load_balancer.go` cases
+
+```bash
+# Run the 5 cloud load-balancer cases by name.
+./bin/cluster-ingress-operator-tests-ext run-test \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-CLB IngressController sets the expected endpoint publishing strategy for the cluster platform [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-CLB Switching an AWS load balancer between Classic and NLB requires service recreation [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-CLB IngressController supports multiple CIDR blocks in one Azure NSG rule [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-CLB AWS NLB supports selecting subnets [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-CLB AWS NLB allocates and updates Elastic IP allocations [Suite:openshift/conformance/parallel]" \
+  --max-concurrency=1
+```
+
+Named selection bypasses the environment selectors, but the specs still have
+runtime platform guards. OCP-52837, OCP-75440, and OCP-75499 skip on non-AWS
+clusters; OCP-72126 skips on non-Azure clusters. OCP-75440 and OCP-75499 are
+excluded from hosted-cluster topology `External` by environment selectors; when
+running the named command directly on a hosted cluster, omit those two specs.
+
+### Cloud load-balancer case notes
+
+* OCP-21599 is read-only and checks the default IngressController endpoint
+  publishing strategy on every platform.
+* OCP-52837 changes a custom router between AWS Classic and Network load
+  balancers and recreates its LoadBalancer Service twice.
+* OCP-72126 creates an Azure load balancer with 3995 allowed source ranges,
+  then adds six more to verify the 4000-source-IP limit is reported. This case
+  is Azure-only and intentionally IPv4-specific; it uses IPv4 `/32` ranges and
+  does not apply to IPv6 clusters.
+* OCP-75440 discovers installer-created public subnets and configures them on
+  an AWS NLB. It uses the `auto-delete-load-balancer` annotation to replace the
+  Service.
+* OCP-75499 allocates two sets of AWS Elastic IPs, assigns each set in turn to
+  an NLB, and releases the addresses during cleanup. The number of Elastic IPs
+  matches the number of discovered public subnets.
+
+### Run only `tuning.go` cases
+
+```bash
+# Run the 9 tuning cases by name.
+./bin/cluster-ingress-operator-tests-ext run-test \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning IngressController tuningOptions configure HAProxy header buffers [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning The threadCount parameter controls HAProxy nbthread [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning TuningOptions configure TCP client and server timeouts [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning TuningOptions configure TLS inspect delay [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning TuningOptions configure router backend check interval [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning TuningOptions configure ROUTER_MAX_CONNECTIONS [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning TuningOptions configure HAProxy reload interval [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning Default HAProxy maxconn is 50000 [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router][apigroup:config.openshift.io][apigroup:operator.openshift.io] Network_Edge Component_Route-Tuning TuningOptions configure HTTP keep-alive timeout [Suite:openshift/conformance/parallel]" \
+  --max-concurrency=1
+```
+
+### Tuning case notes
+
+* OCP-40747 covers the source cases OCP-40747, OCP-40748, OCP-40821, and
+  OCP-40822. Both custom IngressController names are variables, and patches and
+  deployment lookups always use the matching variable.
+* OCP-41110 also covers OCP-41128 validation.
+* OCP-50662 also covers OCP-50663 validation.
+* OCP-50926 also covers OCP-50928 validation.
+* OCP-53605 also covers OCP-53608 validation.
+* OCP-43105 asserts `ROUTER_DEFAULT_SERVER_TIMEOUT=33s` with the unit included.
+* OCP-55367 compares the custom router deployment, not `router-default`, for
+  the null-update observation. It configures `maxConnections: 500000` and
+  asserts the exact `haproxy.config` line `maxconn 500000`; it no longer uses a
+  substring assertion that would also match `maxconn 50000`.
+* Every tuning case creates a NodePort IngressController, so the file has no
+  additional platform selector.
 
 ## Registration metadata and validation
 
@@ -265,7 +352,7 @@ refuses to regenerate it when a test has disappeared without being declared:
 
 ```text
 Missing Tests:
-  * [sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router <previous description>
+  * [sig-network-edge][OTP][Level0][Feature:Router] Network_Edge <component> <previous description>
 Error: missing tests, if you've renamed tests you must add their names to
        OriginalName, or mark them obsolete
 ```
@@ -285,7 +372,7 @@ Either way, run `make update-metadata` afterwards and commit the result.
 
 ## Lifecycle
 
-All 25 cases are **informing**: they report results but do not fail a payload.
+All 39 cases are **informing**: they report results but do not fail a payload.
 The integration guide sets a 99% pass bar for the conformance suites and allows
 a ported test to inform while it earns that. Before promoting any case to
 blocking, confirm clean runs on MicroShift, metal IPv6 disconnected,
@@ -294,10 +381,12 @@ IDs into Sippy.
 
 ## Test execution time
 
-* A single case normally takes 2-5 minutes. OCP-57089 and OCP-63832 provision
-  load balancers and can run longer, and OCP-51437 creates two routers and can
-  approach the parallel-suite budget.
-* The full `ingress-operator/all` suite takes roughly 30-50 minutes at
+* A single case normally takes 2-5 minutes. OCP-57089, OCP-63832, and the
+  cloud load-balancer cases provision load balancers and can run longer;
+  OCP-75499 also allocates Elastic IPs. OCP-51437 creates two routers and can
+  approach the parallel-suite budget. The tuning cases create one or two
+  NodePort routers and perform multiple rolling updates.
+* The full `ingress-operator/all` suite takes roughly 40-70 minutes at
   `--max-concurrency=1`.
 * The `ingress-operator/conformance/parallel` subset is the right default for
   presubmit coverage; run serial and disruptive cases separately.
@@ -318,6 +407,8 @@ tests-extension/
 │   └── qe/
 │       ├── ingress_operator.go             # 14 ingress operator test implementations
 │       ├── ingress.go                      # 11 Ingress-to-Route test implementations
+│       ├── cloud_load_balancer.go          # 5 cloud load-balancer test implementations
+│       ├── tuning.go                       # 9 HAProxy tuningOptions test implementations
 │       └── README.md                       # This file
 ├── Makefile                                # Build targets
 ├── go.mod                                  # Dependencies
