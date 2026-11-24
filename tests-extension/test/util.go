@@ -9,13 +9,20 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	g "github.com/onsi/ginkgo/v2"
+	o "github.com/onsi/gomega"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -24,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -57,8 +65,12 @@ var (
 	ClusterOperatorGVR   = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "clusteroperators"}
 	InfrastructureGVR    = schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "infrastructures"}
 	DnsRecordGVR         = schema.GroupVersionResource{Group: "ingress.operator.openshift.io", Version: "v1", Resource: "dnsrecords"}
+	MachineSetGVR        = schema.GroupVersionResource{Group: "machine.openshift.io", Version: "v1beta1", Resource: "machinesets"}
 	CredentialsReqGVR    = schema.GroupVersionResource{Group: "cloudcredential.openshift.io", Version: "v1", Resource: "credentialsrequests"}
 	ServicemonitorGVR    = schema.GroupVersionResource{Group: "monitoring.coreos.com", Version: "v1", Resource: "servicemonitors"}
+
+	privateSubnetPattern       = regexp.MustCompile(`.*-private-([a-z]+)-([a-z]+)-([0-9a-z]+)$`)
+	MaxAzureSourceRangePattern = regexp.MustCompile(`exceeds the maximum number of source IP addresses \(400[1-9] > 4000\)`)
 )
 
 // clients wraps a controller-runtime client for the API groups these tests use.
@@ -315,6 +327,44 @@ func WithCLB() ICOption {
 				},
 			},
 		}
+	}
+}
+
+func WithNLB() ICOption {
+	return func(spec map[string]interface{}) {
+		spec["endpointPublishingStrategy"] = map[string]interface{}{
+			"type": "LoadBalancerService",
+			"loadBalancer": map[string]interface{}{
+				"scope":               "External",
+				"DNSManagementPolicy": "Managed",
+				"providerParameters": map[string]interface{}{
+					"type": "AWS",
+					"aws": map[string]interface{}{
+						"type": "NLB",
+					},
+				},
+			},
+		}
+	}
+}
+
+func WithAllowedSourceRanges(cidrs []string) ICOption {
+	return func(spec map[string]interface{}) {
+		endpoint, ok := spec["endpointPublishingStrategy"].(map[string]interface{})
+		if !ok {
+			return
+		}
+		loadBalancer, ok := endpoint["loadBalancer"].(map[string]interface{})
+		if !ok {
+			return
+		}
+		loadBalancer["allowedSourceRanges"] = stringValues(cidrs)
+	}
+}
+
+func WithTuningOptions(options map[string]interface{}) ICOption {
+	return func(spec map[string]interface{}) {
+		spec["tuningOptions"] = options
 	}
 }
 
@@ -671,6 +721,47 @@ func ExecInRouterPod(ctx context.Context, restCfg *rest.Config, kc kubernetes.In
 	return stdout, err
 }
 
+func RouterPodEnvValue(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, name string) (string, bool, error) {
+	output, err := ExecInRouterPod(ctx, restCfg, kc, podName, "/usr/bin/env")
+	if err != nil {
+		return "", false, fmt.Errorf("failed to read router pod environment: %w", err)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if value, found := strings.CutPrefix(line, name+"="); found {
+			return value, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func HAProxyConfigHasLine(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, expected string) (bool, error) {
+	output, err := ExecInRouterPod(ctx, restCfg, kc, podName, "cat haproxy.config")
+	if err != nil {
+		return false, fmt.Errorf("failed to read haproxy.config: %w", err)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == expected {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func HAProxyConfigHasDirective(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, directive string) (bool, error) {
+	output, err := ExecInRouterPod(ctx, restCfg, kc, podName, "cat haproxy.config")
+	if err != nil {
+		return false, fmt.Errorf("failed to read haproxy.config: %w", err)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == directive || strings.HasPrefix(line, directive+" ") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // --- Cluster info helpers (dynamic client) ---
 
 func GetBaseDomain(ctx context.Context, dc dynamic.Interface) (string, error) {
@@ -718,6 +809,131 @@ func PatchICMerge(ctx context.Context, dc dynamic.Interface, name, patchJSON str
 	_, err := dc.Resource(IngressControllerGVR).Namespace(OperatorNamespace).Patch(
 		ctx, name, types.MergePatchType, []byte(patchJSON), metav1.PatchOptions{})
 	return err
+}
+
+func PatchICJSON(ctx context.Context, dc dynamic.Interface, name, patchJSON string) error {
+	_, err := dc.Resource(IngressControllerGVR).Namespace(OperatorNamespace).Patch(
+		ctx, name, types.JSONPatchType, []byte(patchJSON), metav1.PatchOptions{})
+	return err
+}
+
+func PatchICAndWaitForNewRouterPod(ctx context.Context, dc dynamic.Interface, kc kubernetes.Interface, icName, patchJSON string, generation int64, oldPod string) (string, error) {
+	if err := PatchICMerge(ctx, dc, icName, patchJSON); err != nil {
+		return "", fmt.Errorf("failed to patch ingresscontroller: %w", err)
+	}
+	if err := WaitForDeployGeneration(ctx, kc, icName, generation, LongTimeout); err != nil {
+		return "", err
+	}
+	return waitForNewRouterPodForCurrentReplicaSet(ctx, kc, icName, oldPod, LongTimeout)
+}
+
+// GetCurrentRouterPod waits for a running router pod owned by the current
+// ReplicaSet of the IngressController's Deployment.
+func GetCurrentRouterPod(ctx context.Context, kc kubernetes.Interface, icName string, timeout time.Duration) (string, error) {
+	return waitForNewRouterPodForCurrentReplicaSet(ctx, kc, icName, "", timeout)
+}
+
+// waitForNewRouterPodForCurrentReplicaSet waits for a running pod owned by the
+// Deployment's current ReplicaSet. During a rollout, older pods can remain
+// visible while the Deployment status has already converged, so comparing only
+// pod names or creation times can select a pod from an earlier generation.
+func waitForNewRouterPodForCurrentReplicaSet(ctx context.Context, kc kubernetes.Interface, icName, oldPod string, timeout time.Duration) (string, error) {
+	icLabel := "ingresscontroller.operator.openshift.io/deployment-ingresscontroller=" + icName
+	var podName string
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		deployment, err := kc.AppsV1().Deployments(IngressNamespace).Get(ctx, "router-"+icName, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		revision := deployment.Annotations["deployment.kubernetes.io/revision"]
+		if revision == "" {
+			return false, nil
+		}
+
+		replicaSets, err := kc.AppsV1().ReplicaSets(IngressNamespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return false, nil
+		}
+		podTemplateHash := ""
+		for i := range replicaSets.Items {
+			replicaSet := &replicaSets.Items[i]
+			if !metav1.IsControlledBy(replicaSet, deployment) {
+				continue
+			}
+			if replicaSet.Annotations["deployment.kubernetes.io/revision"] == revision {
+				podTemplateHash = replicaSet.Labels["pod-template-hash"]
+				if podTemplateHash == "" {
+					podTemplateHash = replicaSet.Spec.Template.Labels["pod-template-hash"]
+				}
+				break
+			}
+		}
+		if podTemplateHash == "" {
+			return false, nil
+		}
+
+		pods, err := kc.CoreV1().Pods(IngressNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: icLabel + ",pod-template-hash=" + podTemplateHash,
+		})
+		if err != nil {
+			return false, nil
+		}
+		for _, pod := range pods.Items {
+			if pod.Name != oldPod && pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp == nil {
+				podName = pod.Name
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	return podName, err
+}
+
+func CreateICAndWaitForRouterPod(ctx context.Context, dc dynamic.Interface, kc kubernetes.Interface, name string, opts ...ICOption) string {
+	domain, err := GetBaseDomain(ctx, dc)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to get base domain")
+	o.Expect(CreateIC(ctx, dc, name, name+"."+domain, opts...)).To(o.Succeed(), "failed to create ingresscontroller %s", name)
+	o.Expect(WaitForDeployGeneration(ctx, kc, name, 1, LongTimeout)).To(o.Succeed(), "failed to wait for ingresscontroller %s generation 1", name)
+	pod, err := GetRouterPodName(ctx, kc, name)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to get router pod for ingresscontroller %s", name)
+	return pod
+}
+
+func UpdateICAndWaitForNewRouterPod(ctx context.Context, dc dynamic.Interface, kc kubernetes.Interface, icName, patchJSON string, generation int64, oldPod string) string {
+	pod, err := PatchICAndWaitForNewRouterPod(ctx, dc, kc, icName, patchJSON, generation, oldPod)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to update ingresscontroller %s to generation %d", icName, generation)
+	return pod
+}
+
+func ExpectRouterPodEnv(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, name, value string) {
+	actual, found, err := RouterPodEnvValue(ctx, restCfg, kc, podName, name)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read %s from router pod %s", name, podName)
+	o.Expect(found).To(o.BeTrue(), "%s was not set in router pod %s", name, podName)
+	o.Expect(actual).To(o.Equal(value), "unexpected %s in router pod %s", name, podName)
+}
+
+func ExpectRouterPodEnvAbsent(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, name string) {
+	_, found, err := RouterPodEnvValue(ctx, restCfg, kc, podName, name)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read environment from router pod %s", podName)
+	o.Expect(found).To(o.BeFalse(), "%s was unexpectedly set in router pod %s", name, podName)
+}
+
+func ExpectHAProxyConfigLine(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, line string) {
+	found, err := HAProxyConfigHasLine(ctx, restCfg, kc, podName, line)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read haproxy.config from router pod %s", podName)
+	o.Expect(found).To(o.BeTrue(), "haproxy.config did not contain the exact line %q in router pod %s", line, podName)
+}
+
+func ExpectHAProxyConfigDirectiveAbsent(ctx context.Context, restCfg *rest.Config, kc kubernetes.Interface, podName, directive string) {
+	found, err := HAProxyConfigHasDirective(ctx, restCfg, kc, podName, directive)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read haproxy.config from router pod %s", podName)
+	o.Expect(found).To(o.BeFalse(), "haproxy.config unexpectedly contained directive %q in router pod %s", directive, podName)
+}
+
+func ExpectInvalidICPatch(ctx context.Context, dc dynamic.Interface, name, patchJSON, expectedError string) {
+	err := PatchICMerge(ctx, dc, name, patchJSON)
+	o.Expect(err).To(o.HaveOccurred(), "patch for ingresscontroller %s unexpectedly succeeded", name)
+	o.Expect(err.Error()).To(o.ContainSubstring(expectedError), "unexpected validation error for ingresscontroller %s", name)
 }
 
 func PatchResourceMerge(ctx context.Context, dc dynamic.Interface, gvr schema.GroupVersionResource, namespace, name, patchJSON string) error {
@@ -1426,6 +1642,12 @@ func CleanupIC(ctx context.Context, dc dynamic.Interface, name string, w io.Writ
 	}
 }
 
+func CleanupICWithTimeout(dc dynamic.Interface, name string, w io.Writer) {
+	ctx, cancel := context.WithTimeout(context.Background(), LongTimeout)
+	defer cancel()
+	CleanupIC(ctx, dc, name, w)
+}
+
 // CleanupTestNamespace deletes a namespace and reports a cleanup failure to w.
 func CleanupTestNamespace(ctx context.Context, kc kubernetes.Interface, name string, w io.Writer) {
 	if err := DeleteTestNamespace(ctx, kc, name); err != nil {
@@ -1594,4 +1816,389 @@ func WithoutComponentRoute(componentRoutes []interface{}, namespace, name string
 		restored = append(restored, original)
 	}
 	return restored
+}
+
+func stringValues(values []string) []interface{} {
+	converted := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		converted = append(converted, value)
+	}
+	return converted
+}
+
+// --- Cloud load balancer helpers ---
+
+func SkipUnlessPlatform(ctx context.Context, dc dynamic.Interface, platform string) {
+	actual, err := GetClusterPlatform(ctx, dc)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to get cluster platform")
+	if actual != platform {
+		g.Skip(fmt.Sprintf("test skipped on platform %q", actual))
+	}
+}
+
+func WaitForDefaultEndpointPublishingStrategy(ctx context.Context, dc dynamic.Interface) (string, error) {
+	var strategyType string
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, DefaultTimeout, true, func(ctx context.Context) (bool, error) {
+		ic, err := dc.Resource(IngressControllerGVR).Namespace(OperatorNamespace).Get(ctx, "default", metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		strategyType = NestedString(ic.Object, "status", "endpointPublishingStrategy", "type")
+		return strategyType != "", nil
+	})
+	return strategyType, err
+}
+
+func DefaultICHasExplicitEndpointPublishingStrategy(ctx context.Context, dc dynamic.Interface) (bool, error) {
+	ic, err := dc.Resource(IngressControllerGVR).Namespace(OperatorNamespace).Get(ctx, "default", metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to get default ingresscontroller: %w", err)
+	}
+	strategyType, found, err := unstructured.NestedString(ic.Object, "spec", "endpointPublishingStrategy", "type")
+	if err != nil {
+		return false, fmt.Errorf("failed to read default ingresscontroller endpointPublishingStrategy: %w", err)
+	}
+	return found && strategyType != "", nil
+}
+
+func WaitForICConditions(ctx context.Context, dc dynamic.Interface, name string, want map[string]string, timeout time.Duration) error {
+	started := time.Now()
+	var last map[string]string
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		ic, err := dc.Resource(IngressControllerGVR).Namespace(OperatorNamespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		conditions, _, err := unstructured.NestedSlice(ic.Object, "status", "conditions")
+		if err != nil {
+			return false, fmt.Errorf("failed to decode status.conditions for ingresscontroller %s: %w", name, err)
+		}
+		last = map[string]string{}
+		for _, condition := range conditions {
+			conditionMap, ok := condition.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			last[fmt.Sprint(conditionMap["type"])] = fmt.Sprint(conditionMap["status"])
+		}
+		for conditionType, status := range want {
+			if last[conditionType] != status {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("ingresscontroller %s did not reach conditions %v after %s; last conditions were %v: %w", name, want, time.Since(started).Round(time.Second), last, err)
+	}
+	return nil
+}
+
+func WaitForICProgressingMessage(ctx context.Context, dc dynamic.Interface, name string) error {
+	return wait.PollUntilContextTimeout(ctx, PollInterval, DefaultTimeout, true, func(ctx context.Context) (bool, error) {
+		ic, err := dc.Resource(IngressControllerGVR).Namespace(OperatorNamespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		conditions, _, err := unstructured.NestedSlice(ic.Object, "status", "conditions")
+		if err != nil {
+			return false, fmt.Errorf("failed to decode status.conditions for ingresscontroller %s: %w", name, err)
+		}
+		for _, condition := range conditions {
+			conditionMap, ok := condition.(map[string]interface{})
+			if !ok || fmt.Sprint(conditionMap["type"]) != "Progressing" {
+				continue
+			}
+			return fmt.Sprint(conditionMap["status"]) == "True" &&
+				strings.Contains(fmt.Sprint(conditionMap["message"]), "To effectuate this change, you must delete the service"), nil
+		}
+		return false, nil
+	})
+}
+
+func WaitForLBProvisioned(ctx context.Context, kc kubernetes.Interface, icName string, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, PollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		_, err := getLBIngress(ctx, kc, icName)
+		return err == nil, nil
+	})
+}
+
+func getLBIngress(ctx context.Context, kc kubernetes.Interface, icName string) (string, error) {
+	service, err := kc.CoreV1().Services(IngressNamespace).Get(ctx, "router-"+icName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		if ingress.Hostname != "" {
+			return ingress.Hostname, nil
+		}
+		if ingress.IP != "" {
+			return ingress.IP, nil
+		}
+	}
+	return "", fmt.Errorf("load balancer service %s/router-%s has no ingress hostname or IP", IngressNamespace, icName)
+}
+
+func GetLBHostname(ctx context.Context, kc kubernetes.Interface, icName string) (string, error) {
+	var hostname string
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, LongTimeout, true, func(ctx context.Context) (bool, error) {
+		value, err := getLBIngress(ctx, kc, icName)
+		if err != nil {
+			return false, nil
+		}
+		hostname = value
+		return strings.Contains(value, ".elb.") && strings.HasSuffix(value, ".amazonaws.com"), nil
+	})
+	return hostname, err
+}
+
+func WaitForLBAnnotation(ctx context.Context, kc kubernetes.Interface, icName, key string, wantExist bool, wantValue string, timeout time.Duration) error {
+	started := time.Now()
+	var last string
+	var found bool
+	err := wait.PollUntilContextTimeout(ctx, PollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		service, err := kc.CoreV1().Services(IngressNamespace).Get(ctx, "router-"+icName, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		last, found = service.Annotations[key]
+		if !wantExist {
+			return !found, nil
+		}
+		return found && last == wantValue, nil
+	})
+	if err != nil {
+		state := fmt.Sprintf("value %q (present=%t)", last, found)
+		return fmt.Errorf("load balancer service annotation %s did not converge after %s; last %s", key, time.Since(started).Round(time.Second), state)
+	}
+	return nil
+}
+
+func DeleteLBService(ctx context.Context, kc kubernetes.Interface, icName string) error {
+	service, err := kc.CoreV1().Services(IngressNamespace).Get(ctx, "router-"+icName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get load balancer service: %w", err)
+	}
+	oldUID := service.UID
+	if err := kc.CoreV1().Services(IngressNamespace).Delete(ctx, service.Name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("failed to delete load balancer service: %w", err)
+	}
+	return wait.PollUntilContextTimeout(ctx, PollInterval, LongTimeout, true, func(ctx context.Context) (bool, error) {
+		recreated, err := kc.CoreV1().Services(IngressNamespace).Get(ctx, service.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		return recreated.UID != oldUID, nil
+	})
+}
+
+func CleanupICAndWaitForLBService(ctx context.Context, dc dynamic.Interface, kc kubernetes.Interface, name string, w io.Writer) {
+	if err := DeleteIC(ctx, dc, name); err != nil {
+		_, _ = fmt.Fprintf(w, "failed to clean up ingresscontroller %s: %v\n", name, err)
+	}
+	if err := wait.PollUntilContextTimeout(ctx, PollInterval, LongTimeout, true, func(ctx context.Context) (bool, error) {
+		_, err := kc.CoreV1().Services(IngressNamespace).Get(ctx, "router-"+name, metav1.GetOptions{})
+		return apierrors.IsNotFound(err), nil
+	}); err != nil {
+		_, _ = fmt.Fprintf(w, "failed to wait for load balancer service router-%s to be removed: %v\n", name, err)
+	}
+}
+
+func serviceEventMessages(ctx context.Context, kc kubernetes.Interface, icName string) (string, error) {
+	service, err := kc.CoreV1().Services(IngressNamespace).Get(ctx, "router-"+icName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get load balancer service for events: %w", err)
+	}
+	selector := fields.Set{
+		"involvedObject.name": service.Name,
+		"involvedObject.uid":  string(service.UID),
+	}.AsSelector().String()
+	events, err := kc.CoreV1().Events(IngressNamespace).List(ctx, metav1.ListOptions{
+		FieldSelector: selector,
+	})
+	if err != nil {
+		return "", err
+	}
+	messages := make([]string, 0, len(events.Items))
+	for _, event := range events.Items {
+		if event.InvolvedObject.Kind == "Service" {
+			messages = append(messages, event.Message)
+		}
+	}
+	return strings.Join(messages, "\n"), nil
+}
+
+func WaitForServiceEvent(ctx context.Context, kc kubernetes.Interface, icName, substring string, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		messages, err := serviceEventMessages(ctx, kc, icName)
+		if err != nil {
+			return false, nil
+		}
+		return strings.Contains(messages, substring), nil
+	})
+}
+
+func WaitForServiceEventPattern(ctx context.Context, kc kubernetes.Interface, icName string, pattern *regexp.Regexp, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 3*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		messages, err := serviceEventMessages(ctx, kc, icName)
+		if err != nil {
+			return false, nil
+		}
+		return pattern.MatchString(messages), nil
+	})
+}
+
+func AzureMaximumSourceRanges(count int) []string {
+	cidrs := make([]string, 0, count)
+	for secondOctet := 1; secondOctet <= 32 && len(cidrs) < count; secondOctet++ {
+		for lastOctet := 2; lastOctet <= 254 && len(cidrs) < count; lastOctet += 2 {
+			cidrs = append(cidrs, fmt.Sprintf("1.1.%d.%d/32", secondOctet, lastOctet))
+		}
+	}
+	return cidrs
+}
+
+func PublicSubnetNames(ctx context.Context, dc dynamic.Interface) ([]string, error) {
+	machineSets, err := dc.Resource(MachineSetGVR).Namespace("openshift-machine-api").List(ctx, metav1.ListOptions{})
+	if err == nil && len(machineSets.Items) > 0 {
+		return publicSubnetNamesFromMAPI(machineSets)
+	}
+
+	capiGVR := schema.GroupVersionResource{Group: "cluster.x-k8s.io", Version: "v1beta2", Resource: "machinesets"}
+	capiMachineSets, err := dc.Resource(capiGVR).Namespace("openshift-cluster-api").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list MachineSets: %w", err)
+	}
+	if len(capiMachineSets.Items) == 0 {
+		return nil, fmt.Errorf("no MachineSets found")
+	}
+
+	infra, err := dc.Resource(InfrastructureGVR).Get(ctx, "cluster", metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get infrastructure config: %w", err)
+	}
+	infrastructureName := NestedString(infra.Object, "status", "infrastructureName")
+	if infrastructureName == "" {
+		return nil, fmt.Errorf("infrastructure name not found")
+	}
+
+	names := make([]string, 0, len(capiMachineSets.Items))
+	seen := map[string]bool{}
+	for _, machineSet := range capiMachineSets.Items {
+		availabilityZone, found, err := unstructured.NestedString(machineSet.Object, "spec", "template", "spec", "failureDomain")
+		if err != nil || !found || availabilityZone == "" {
+			return nil, fmt.Errorf("machineset %q has no failureDomain", machineSet.GetName())
+		}
+		name := infrastructureName + "-subnet-public-" + availabilityZone
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func publicSubnetNamesFromMAPI(machineSets *unstructured.UnstructuredList) ([]string, error) {
+	names := make([]string, 0, len(machineSets.Items))
+	seen := map[string]bool{}
+	for _, machineSet := range machineSets.Items {
+		subnets, err := machineSetSubnets(machineSet)
+		if err != nil {
+			return nil, err
+		}
+		for _, subnet := range subnets {
+			if !strings.Contains(subnet, "subnet-private") || !privateSubnetPattern.MatchString(subnet) {
+				continue
+			}
+			publicSubnet := strings.Replace(subnet, "subnet-private", "subnet-public", 1)
+			if !seen[publicSubnet] {
+				seen[publicSubnet] = true
+				names = append(names, publicSubnet)
+			}
+		}
+	}
+	return names, nil
+}
+
+func machineSetSubnets(machineSet unstructured.Unstructured) ([]string, error) {
+	subnet, found, err := unstructured.NestedString(machineSet.Object, "spec", "template", "spec", "providerSpec", "value", "subnet", "id")
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode subnet.id for machineset %s: %w", machineSet.GetName(), err)
+	}
+	if found && subnet != "" {
+		return []string{subnet}, nil
+	}
+
+	// Supported MAPI schemas use either a list of filter strings or a list of
+	// objects with a values field. Decode the generic list first so an object
+	// element is not rejected before the object form can be handled.
+	filters, found, err := unstructured.NestedSlice(machineSet.Object, "spec", "template", "spec", "providerSpec", "value", "subnet", "filters")
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode subnet.filters for machineset %s: %w", machineSet.GetName(), err)
+	}
+	if !found {
+		return nil, nil
+	}
+	values := make([]string, 0, len(filters))
+	for i, filter := range filters {
+		switch value := filter.(type) {
+		case string:
+			values = append(values, value)
+		case map[string]interface{}:
+			filterValues, _, err := unstructured.NestedStringSlice(value, "values")
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode subnet filter values for machineset %s: %w", machineSet.GetName(), err)
+			}
+			values = append(values, filterValues...)
+		default:
+			return nil, fmt.Errorf("unsupported subnet filter type %T at index %d for machineset %s", filter, i, machineSet.GetName())
+		}
+	}
+	return values, nil
+}
+
+func AllocateElasticIPs(ctx context.Context, client *ec2.Client, count int) ([]string, error) {
+	allocationIDs := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		result, err := client.AllocateAddress(ctx, &ec2.AllocateAddressInput{
+			Domain: ec2types.DomainTypeVpc,
+		})
+		if err != nil {
+			allocationErr := fmt.Errorf("failed to allocate Elastic IP %d of %d: %w", i+1, count, err)
+			rollbackErr := ReleaseElasticIPs(ctx, client, allocationIDs, io.Discard)
+			if rollbackErr != nil {
+				return allocationIDs, errors.Join(allocationErr, fmt.Errorf("failed to release partially allocated Elastic IPs: %w", rollbackErr))
+			}
+			return nil, allocationErr
+		}
+		allocationIDs = append(allocationIDs, aws.ToString(result.AllocationId))
+	}
+	return allocationIDs, nil
+}
+
+func ReleaseElasticIPs(ctx context.Context, client *ec2.Client, allocationIDs []string, w io.Writer) error {
+	var releaseErrors []error
+	for _, allocationID := range allocationIDs {
+		err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+			_, err := client.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: aws.String(allocationID)})
+			if err == nil || isAWSErrorCode(err, "InvalidAllocationID.NotFound") {
+				return true, nil
+			}
+			return false, nil
+		})
+		if err != nil {
+			releaseErr := fmt.Errorf("failed to release Elastic IP %s: %w", allocationID, err)
+			_, _ = fmt.Fprintln(w, releaseErr)
+			releaseErrors = append(releaseErrors, releaseErr)
+		}
+	}
+	return errors.Join(releaseErrors...)
+}
+
+func QuoteJoin(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", value))
+	}
+	return strings.Join(quoted, ",")
 }

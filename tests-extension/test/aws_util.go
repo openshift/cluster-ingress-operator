@@ -160,3 +160,20 @@ func isAWSErrorCode(err error, code string) bool {
 	}
 	return false
 }
+
+// NewEC2Client builds an EC2 client for use by extension test packages.
+func NewEC2Client(ctx context.Context) (*ec2.Client, error) {
+	c, err := newClients()
+	if err != nil {
+		return nil, err
+	}
+	infra, err := c.getInfrastructure(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get infrastructure config: %w", err)
+	}
+	client, err := c.createEC2Client(ctx, infra)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
+	}
+	return client, nil
+}

@@ -34,6 +34,8 @@ var hyperShiftUnsupported = []string{
 	"OCP-57370",
 	"OCP-63832",
 	"OCP-64611",
+	"OCP-75440",
+	"OCP-75499",
 	"OCP-75907",
 	"OCP-75908",
 	"OCP-75909",
@@ -72,6 +74,15 @@ var internalRegistryRequired = []string{
 // Selecting them on any other platform is a clean skip rather than a failure.
 var azureOnly = []string{
 	"OCP-57089",
+	"OCP-72126",
+}
+
+// awsOnly lists the specs that exercise AWS load balancer behaviour.
+// Selecting them on any other platform is a clean skip rather than a failure.
+var awsOnly = []string{
+	"OCP-52837",
+	"OCP-75440",
+	"OCP-75499",
 }
 
 // addEnvironmentSelectors restricts the environments in which the ported specs
@@ -135,6 +146,16 @@ func addEnvironmentSelectors(specs et.ExtensionTestSpecs) {
 	mustSelectLabels(specs, azureOnly, "azureOnly").
 		Exclude("!(" + et.PlatformEquals("azure") + ")").
 		AddLabel("[Skipped:NonAzurePlatform]")
+
+	// OCP-72126 exercises Azure's IPv4 source-address limit using IPv4 /32
+	// ranges. The limit is not expressed in IPv6 terms, so exclude IPv6 lanes.
+	mustSelectLabels(specs, []string{"OCP-72126"}, "azureIPv4Only").
+		Exclude(et.NetworkStackEquals("ipv6")).
+		AddLabel("[Skipped:IPv6]")
+
+	mustSelectLabels(specs, awsOnly, "awsOnly").
+		Exclude("!(" + et.PlatformEquals("aws") + ")").
+		AddLabel("[Skipped:NonAWSPlatform]")
 }
 
 // selectPorted returns the specs ported from openshift-tests-private.

@@ -252,7 +252,76 @@ func buildSpecs() (et.ExtensionTestSpecs, error) {
 	// for downstream systems (Sippy, CI test mapping) when tests are migrated
 	// from origin to OTE.
 	appendSuiteNames(specs)
+	preserveRenamedComponentOriginalNames(specs)
 	return specs, nil
+}
+
+// renamedRouterComponentCaseIDs lists the cases whose component prefix changed
+// from Component_Router after their names were first registered. OriginalName
+// preserves their identity for consumers that still know the first name.
+var renamedRouterComponentCaseIDs = []string{
+	"OCP-22633",
+	"OCP-22636",
+	"OCP-22637",
+	"OCP-26150",
+	"OCP-33960",
+	"OCP-41109",
+	"OCP-51148",
+	"OCP-51429",
+	"OCP-51437",
+	"OCP-56228",
+	"OCP-56772",
+	"OCP-57089",
+	"OCP-57370",
+	"OCP-60012",
+	"OCP-60013",
+	"OCP-62530",
+	"OCP-63832",
+	"OCP-64611",
+	"OCP-73619",
+	"OCP-75907",
+	"OCP-75908",
+	"OCP-75909",
+	"OCP-77283",
+	"OCP-85280",
+	"OCP-85950",
+}
+
+// preserveRenamedComponentOriginalNames records the first registered name for
+// the specs whose component prefix changed. It runs after suite names are
+// appended so OriginalName has the same complete shape as metadata names.
+func preserveRenamedComponentOriginalNames(specs et.ExtensionTestSpecs) {
+	renamed := make(map[string]bool, len(renamedRouterComponentCaseIDs))
+	for _, caseID := range renamedRouterComponentCaseIDs {
+		renamed[caseID] = true
+	}
+
+	specs.Walk(func(spec *et.ExtensionTestSpec) {
+		if spec.OriginalName != "" {
+			return
+		}
+		hasRenamedLabel := false
+		for label := range spec.Labels {
+			if renamed[label] {
+				hasRenamedLabel = true
+				break
+			}
+		}
+		if !hasRenamedLabel {
+			return
+		}
+
+		originalName := spec.Name
+		switch {
+		case strings.Contains(spec.Name, " Network_Edge Component_Ingress-Operator "):
+			originalName = strings.Replace(spec.Name, " Network_Edge Component_Ingress-Operator ", " Network_Edge Component_Router ", 1)
+		case strings.Contains(spec.Name, " Network_Edge Component_Ingress "):
+			originalName = strings.Replace(spec.Name, " Network_Edge Component_Ingress ", " Network_Edge Component_Router ", 1)
+		default:
+			return
+		}
+		spec.OriginalName = originalName
+	})
 }
 
 // moduleDirSegment is the path segment ending at this module's root, used to
