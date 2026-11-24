@@ -1,28 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-function verify_crd {
-  local SRC="$1"
-  local DST="$2"
-  if [[ -e "$SRC" ]]; then
-    if [[ -e "$DST" ]]; then
-      if ! diff -Naup "$SRC" "$DST"; then
-        echo "inconsistent CRD: $SRC => $DST"
-        exit 1
-      fi
-    else
-      echo "missing CRD: $SRC => $DST"
-      exit 1
-    fi
-  else
-    if [[ -e "$DST" ]]; then
-      echo "extra CRD: $DST"
-      exit 1
-    fi
-  fi
-}
-
-shopt -s extglob
 # openshift/api owns the CRDs listed in payloadCRDNames
 # (hack/verify-generated-crd/main.go) in the release payload.  Keep them out
 # of this component's payload to avoid applying two independently ordered
