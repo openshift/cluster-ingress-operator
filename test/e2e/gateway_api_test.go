@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"net/netip"
 	"strings"
 	"testing"
@@ -153,6 +154,12 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
+	t.Run("testGatewayAPIListenerSetSupport", testGatewayAPIListenerSetSupport)
+	t.Run("testGatewayAPIListenerSetAllowedListeners", testGatewayAPIListenerSetAllowedListeners)
+	t.Run("testGatewayAPIListenerSetAllowedRoutes", testGatewayAPIListenerSetAllowedRoutes)
+	t.Run("assertListenerSetDNSResolution", testGatewayAPIListenerSetDNSResolution)
+	t.Run("testGatewayAPIListenerSetLongestMatchingSNI", testGatewayAPIListenerSetLongestMatchingSNI)
+	t.Run("testGatewayAPIListenerSetConflictedConditions", testGatewayAPIListenerSetConflictedConditions)
 	if !gatewayAPIManagementModeFGEnabled {
 		t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	}
@@ -1695,6 +1702,391 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("The gateway %s, has failed to create an internal LoadBalancer service on the %s platform.", gatewayName, platform)
 	}
+}
+
+func testGatewayAPIListenerSetSupport(t *testing.T) {
+	listenerSetNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("listenerset-e2e-"))
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "gateway-listenerset"
+
+	gateway := createListenerSetGateway(t, gatewayClass, gatewayName, &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{
+			From: ptr.To(gatewayapiv1.NamespacesFromAll),
+		},
+	})
+
+	listenerSetHostname := fmt.Sprintf("listenerset.%s", dnsConfig.Spec.BaseDomain)
+	listenerSetSecretName := "listenerset-cert"
+	listenerSetSecret, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, listenerSetSecretName, listenerSetHostname)
+	if err != nil {
+		t.Fatalf("Failed to create ListenerSet certificate secret: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), listenerSetSecret); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("Failed to delete ListenerSet certificate secret %v: %v", listenerSetSecretName, err)
+			}
+		}
+	})
+
+	listenerSetName := "test-listenerset"
+	listenerSet := createListenerSet(t, gateway, listenerSetNamespace.Name, listenerSetName, listenerSetHostname, listenerSetSecretName, "https-app", nil)
+	assertListenerSetStatus(t, listenerSet, true)
+
+	createListenerSetBackend(t, listenerSetNamespace.Name, "listenerset-backend")
+
+	routeName := "listenerset-route"
+	httpRoute := createListenerSetHTTPRoute(t, routeName, listenerSetNamespace.Name, listenerSetName, listenerSetNamespace.Name, listenerSetHostname, "listenerset-backend", "https-app")
+
+	if httpRoute, err = assertHttpRouteSuccessful(t, listenerSetNamespace.Name, routeName, gateway); err != nil {
+		t.Fatalf("HTTPRoute attached to ListenerSet was not accepted: %v", err)
+	}
+	if len(httpRoute.Status.Parents) == 0 || httpRoute.Status.Parents[0].ParentRef.Name != gatewayapiv1.ObjectName(listenerSetName) {
+		t.Fatalf("HTTPRoute did not attach to ListenerSet %s: %+v", listenerSetName, httpRoute.Status.Parents)
+	}
+
+}
+
+func testGatewayAPIListenerSetAllowedListeners(t *testing.T) {
+	listenerSetNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("listenerset-allowed-"))
+	unmatchedNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("listenerset-unmatched-"))
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	labelNamespace(t, listenerSetNamespace, map[string]string{"listenerset": "allowed"})
+
+	noneGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-none", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromNone)},
+	})
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-none-cert", fmt.Sprintf("none.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+		t.Fatalf("Failed to create ListenerSet certificate secret for None: %v", err)
+	}
+	noneListenerSet := createListenerSet(t, noneGateway, listenerSetNamespace.Name, "listenerset-none", fmt.Sprintf("none.%s", dnsConfig.Spec.BaseDomain), "listenerset-none-cert", "https-app", nil)
+	assertListenerSetStatus(t, noneListenerSet, false)
+
+	sameGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-same", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromSame)},
+	})
+	if _, err := ensureGatewayTLSSecret(t, operatorcontroller.DefaultOperandNamespace, "listenerset-same-cert", fmt.Sprintf("same.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+		t.Fatalf("Failed to create ListenerSet certificate secret for Same: %v", err)
+	}
+	sameListenerSet := createListenerSet(t, sameGateway, operatorcontroller.DefaultOperandNamespace, "listenerset-same", fmt.Sprintf("same.%s", dnsConfig.Spec.BaseDomain), "listenerset-same-cert", "https-app", nil)
+	assertListenerSetStatus(t, sameListenerSet, true)
+
+	selectorGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-selector", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{
+			From: ptr.To(gatewayapiv1.NamespacesFromSelector),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"listenerset": "allowed"},
+			},
+		},
+	})
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-selector-cert", fmt.Sprintf("selector.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+		t.Fatalf("Failed to create ListenerSet certificate secret for Selector: %v", err)
+	}
+	selectorListenerSet := createListenerSet(t, selectorGateway, listenerSetNamespace.Name, "listenerset-selector", fmt.Sprintf("selector.%s", dnsConfig.Spec.BaseDomain), "listenerset-selector-cert", "https-app", nil)
+	assertListenerSetStatus(t, selectorListenerSet, true)
+
+	if _, err := ensureGatewayTLSSecret(t, unmatchedNamespace.Name, "listenerset-unmatched-cert", fmt.Sprintf("unmatched.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+		t.Fatalf("Failed to create ListenerSet certificate secret for unmatched Selector case: %v", err)
+	}
+	unmatchedListenerSet := createListenerSet(t, selectorGateway, unmatchedNamespace.Name, "listenerset-unmatched", fmt.Sprintf("unmatched.%s", dnsConfig.Spec.BaseDomain), "listenerset-unmatched-cert", "https-app", nil)
+	assertListenerSetStatus(t, unmatchedListenerSet, false)
+
+	allGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-all", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromAll)},
+	})
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-all-cert", fmt.Sprintf("all.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+		t.Fatalf("Failed to create ListenerSet certificate secret for All: %v", err)
+	}
+	allListenerSet := createListenerSet(t, allGateway, listenerSetNamespace.Name, "listenerset-all", fmt.Sprintf("all.%s", dnsConfig.Spec.BaseDomain), "listenerset-all-cert", "https-app", nil)
+	assertListenerSetStatus(t, allListenerSet, true)
+}
+
+func testGatewayAPIListenerSetAllowedRoutes(t *testing.T) {
+	listenerSetNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("allowed-routes-listenerset-"))
+	selectorRouteNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("allowed-routes-selector-"))
+	unmatchedRouteNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("allowed-routes-unmatched-"))
+	allRouteNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("allowed-routes-all-"))
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	labelNamespace(t, selectorRouteNamespace, map[string]string{"allowed-routes": "selector"})
+	gateway := createListenerSetGateway(t, gatewayClass, "gateway-allowed-routes", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{
+			From: ptr.To(gatewayapiv1.NamespacesFromAll),
+		},
+	})
+
+	createListenerSetBackend(t, listenerSetNamespace.Name, "allowed-routes-backend")
+	createListenerSetBackend(t, selectorRouteNamespace.Name, "allowed-routes-backend")
+	createListenerSetBackend(t, unmatchedRouteNamespace.Name, "allowed-routes-backend")
+	createListenerSetBackend(t, allRouteNamespace.Name, "allowed-routes-backend")
+
+	tests := []struct {
+		name           string
+		allowedRoutes  *gatewayapiv1.AllowedRoutes
+		routeNamespace string
+		expectAccepted bool
+	}{
+		{
+			name: "Same",
+			allowedRoutes: &gatewayapiv1.AllowedRoutes{
+				Namespaces: &gatewayapiv1.RouteNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromSame)},
+			},
+			routeNamespace: listenerSetNamespace.Name,
+			expectAccepted: true,
+		},
+		{
+			name: "Selector match",
+			allowedRoutes: &gatewayapiv1.AllowedRoutes{
+				Namespaces: &gatewayapiv1.RouteNamespaces{
+					From: ptr.To(gatewayapiv1.NamespacesFromSelector),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"allowed-routes": "selector"},
+					},
+				},
+			},
+			routeNamespace: selectorRouteNamespace.Name,
+			expectAccepted: true,
+		},
+		{
+			name: "Selector doesn't match",
+			allowedRoutes: &gatewayapiv1.AllowedRoutes{
+				Namespaces: &gatewayapiv1.RouteNamespaces{
+					From: ptr.To(gatewayapiv1.NamespacesFromSelector),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"allowed-routes": "selector"},
+					},
+				},
+			},
+			routeNamespace: unmatchedRouteNamespace.Name,
+			expectAccepted: false,
+		},
+		{
+			name: "All",
+			allowedRoutes: &gatewayapiv1.AllowedRoutes{
+				Namespaces: &gatewayapiv1.RouteNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromAll)},
+			},
+			routeNamespace: allRouteNamespace.Name,
+			expectAccepted: true,
+		},
+		{
+			name: "Empty defaults to Same namespaces",
+			allowedRoutes: &gatewayapiv1.AllowedRoutes{
+				Namespaces: &gatewayapiv1.RouteNamespaces{},
+			},
+			routeNamespace: allRouteNamespace.Name,
+			expectAccepted: false, // Empty RouteNamespace.From defaults to Same, not All.
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			listenerSetName := "listenerset-" + strings.ToLower(strings.ReplaceAll(test.name, " ", "-"))
+			routeName := "route-" + strings.ToLower(strings.ReplaceAll(test.name, " ", "-"))
+			hostname := fmt.Sprintf("%s.%s", strings.ToLower(strings.ReplaceAll(test.name, " ", "-")), dnsConfig.Spec.BaseDomain)
+			listenerSetSecretName := "listenerset-" + strings.ToLower(strings.ReplaceAll(test.name, " ", "-")) + "-cert"
+			if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, listenerSetSecretName, hostname); err != nil {
+				t.Fatalf("Failed to create ListenerSet certificate secret: %v", err)
+			}
+
+			listenerSet := createListenerSet(t, gateway, listenerSetNamespace.Name, listenerSetName, hostname, listenerSetSecretName, "https", test.allowedRoutes)
+			assertListenerSetStatus(t, listenerSet, true)
+			httpRoute := createListenerSetHTTPRoute(t, routeName, test.routeNamespace, listenerSetName, listenerSetNamespace.Name, hostname, "allowed-routes-backend", "https")
+			assertListenerSetHTTPRouteAccepted(t, httpRoute, listenerSetName, test.expectAccepted)
+		})
+	}
+}
+
+// Test that the wildcard DNS name for a Gateway inline listener resolves a
+// specific hostname covered by that wildcard to the Gateway load balancer and
+// that a connection to a ListenerSet listener reaches that load balancer.
+// Certificate management is not tested here, as it is handled elsewhere.
+func testGatewayAPIListenerSetDNSResolution(t *testing.T) {
+	if !isDNSManagementSupported(t) {
+		t.Skip("this test can only be executed on platforms that support managed DNS")
+	}
+
+	listenerSetNamespace := createNamespace(t, "test-adopted-dns")
+	// This label is used later to identify the namespace selected by AllowedListeners.
+	labelNamespace(t, listenerSetNamespace, map[string]string{"name": "test-adopted-dns"})
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "gateway-listenerset-dns"
+	wildcardHostname := fmt.Sprintf("*.%s", dnsConfig.Spec.BaseDomain)
+	listenerSetHostname := fmt.Sprintf("test-adopted-dns.%s", dnsConfig.Spec.BaseDomain)
+
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			AllowedListeners: &gatewayapiv1.AllowedListeners{
+				Namespaces: &gatewayapiv1.ListenerNamespaces{
+					From: ptr.To(gatewayapiv1.NamespacesFromSelector),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"name": "test-adopted-dns"},
+					},
+				},
+			},
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "tls",
+				Hostname: ptr.To(gatewayapiv1.Hostname(wildcardHostname)),
+				Port:     443,
+				Protocol: gatewayapiv1.TLSProtocolType,
+				TLS: &gatewayapiv1.ListenerTLSConfig{
+					Mode: ptr.To(gatewayapiv1.TLSModePassthrough),
+				},
+			}},
+		},
+	}
+	if err := createWithRetryOnError(t, context.Background(), gateway, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create Gateway %s: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gateway); err != nil && !kerrors.IsNotFound(err) {
+			t.Logf("Failed to delete Gateway %s: %v", gatewayName, err)
+		}
+	})
+	if _, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to program Gateway %s: %v", gatewayName, err)
+	}
+
+	listenerSet := buildListenerSetWithListeners(gateway, listenerSetNamespace.Name, "test-adopted-dns", []gatewayapiv1.ListenerEntry{{
+		Name:     "tls",
+		Hostname: ptr.To(gatewayapiv1.Hostname(listenerSetHostname)),
+		Port:     443,
+		Protocol: gatewayapiv1.TLSProtocolType,
+		TLS: &gatewayapiv1.ListenerTLSConfig{
+			Mode: ptr.To(gatewayapiv1.TLSModePassthrough),
+		},
+	}})
+	listenerSet = createListenerSetObject(t, listenerSet)
+	assertListenerSetStatus(t, listenerSet, true)
+
+	gatewayAddress := waitForGatewayLoadBalancerAddress(t, gateway)
+	assertDNSResolution(t, gatewayAddress)
+	assertDNSResolution(t, listenerSetHostname)
+
+	// Validate that the Gateway LB address is the same as
+	// the listenerSetHostname address.
+	gatewayAddresses, err := net.LookupHost(gatewayAddress)
+	require.NoError(t, err, "failed to resolve Gateway load-balancer address %q", gatewayAddress)
+	listenerSetAddresses, err := net.LookupHost(listenerSetHostname)
+	require.NoError(t, err, "failed to resolve ListenerSet hostname %q", listenerSetHostname)
+	require.ElementsMatch(t, gatewayAddresses, listenerSetAddresses, "ListenerSet hostname must resolve to the Gateway load balancer")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	// Validate that a connection to the listenerSetHostname succeeds.
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(listenerSetHostname, "443"))
+	require.NoError(t, err, "failed to connect to ListenerSet listener %q", listenerSetHostname)
+	defer func() {
+		require.NoError(t, conn.Close(), "failed to close connection to ListenerSet listener %q", listenerSetHostname)
+	}()
+
+	// Prove the listener reaches the GW LB, by
+	// confirming that the connection's remote address
+	// matches one of the Gateway LB addresses.
+	remoteHost, _, err := net.SplitHostPort(conn.RemoteAddr().String())
+	require.NoError(t, err)
+	require.Contains(t, gatewayAddresses, remoteHost)
+}
+
+func testGatewayAPIListenerSetLongestMatchingSNI(t *testing.T) {
+	listenerSetNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("listenerset-sni-"))
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-sni", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{
+			From: ptr.To(gatewayapiv1.NamespacesFromAll),
+		},
+	})
+
+	domain := fmt.Sprintf("longest-sni.%s", dnsConfig.Spec.BaseDomain)
+	wildcardHostname := fmt.Sprintf("*.%s", domain)
+	exactHostname := fmt.Sprintf("app.%s", domain)
+
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-wildcard-sni-cert", wildcardHostname); err != nil {
+		t.Fatalf("Failed to create wildcard ListenerSet certificate secret: %v", err)
+	}
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-exact-sni-cert", exactHostname); err != nil {
+		t.Fatalf("Failed to create exact-hostname ListenerSet certificate secret: %v", err)
+	}
+
+	wildcardListenerSet := createListenerSet(t, gateway, listenerSetNamespace.Name, "listenerset-wildcard-sni", wildcardHostname, "listenerset-wildcard-sni-cert", "https", nil)
+	assertListenerSetStatus(t, wildcardListenerSet, true)
+
+	exactListenerSet := createListenerSet(t, gateway, listenerSetNamespace.Name, "listenerset-exact-sni", exactHostname, "listenerset-exact-sni-cert", "https", nil)
+	assertListenerSetStatus(t, exactListenerSet, true)
+
+	address := waitForGatewayLoadBalancerAddress(t, gateway)
+	assertDNSResolution(t, address)
+	assertListenerSetTLSCertificate(t, address, exactHostname, exactHostname)
+	assertListenerSetTLSCertificate(t, address, fmt.Sprintf("other.%s", domain), wildcardHostname)
+}
+
+func testGatewayAPIListenerSetConflictedConditions(t *testing.T) {
+	listenerSetNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("listenerset-conflict-"))
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-conflict", &gatewayapiv1.AllowedListeners{
+		Namespaces: &gatewayapiv1.ListenerNamespaces{
+			From: ptr.To(gatewayapiv1.NamespacesFromAll),
+		},
+	})
+
+	hostnameConflict := fmt.Sprintf("hostname-conflict.%s", dnsConfig.Spec.BaseDomain)
+	hostnameConflictSecret := "listenerset-hostname-conflict-cert"
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, hostnameConflictSecret, hostnameConflict); err != nil {
+		t.Fatalf("Failed to create hostname-conflict certificate secret: %v", err)
+	}
+	createListenerSetWithListeners(t, gateway, listenerSetNamespace.Name, "listenerset-hostname-conflict-first", []gatewayapiv1.ListenerEntry{
+		buildHTTPSListenerEntry("https-first", hostnameConflict, hostnameConflictSecret, 8081, nil),
+	})
+	secondHostnameListenerSet := createListenerSetWithListeners(t, gateway, listenerSetNamespace.Name, "listenerset-hostname-conflict-second", []gatewayapiv1.ListenerEntry{
+		buildHTTPSListenerEntry("https-second", hostnameConflict, hostnameConflictSecret, 8081, nil),
+	})
+	assertListenerSetConflictedReason(t, secondHostnameListenerSet, gatewayapiv1.ListenerEntryReasonHostnameConflict)
+
+	protocolConflictHostname := fmt.Sprintf("protocol-conflict.%s", dnsConfig.Spec.BaseDomain)
+	protocolConflictSecret := "listenerset-protocol-conflict-cert"
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, protocolConflictSecret, protocolConflictHostname); err != nil {
+		t.Fatalf("Failed to create protocol-conflict certificate secret: %v", err)
+	}
+	protocolConflictListenerSet := createListenerSetWithListeners(t, gateway, listenerSetNamespace.Name, "listenerset-protocol-conflict", []gatewayapiv1.ListenerEntry{
+		buildHTTPListenerEntry("http", protocolConflictHostname, 8082),
+		buildHTTPSListenerEntry("https", protocolConflictHostname, protocolConflictSecret, 8082, nil),
+	})
+	assertListenerSetConflictedReason(t, protocolConflictListenerSet, gatewayapiv1.ListenerEntryReasonProtocolConflict)
+	// Istio does not currently implement the ListenerConflict reason.
 }
 
 // testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect
