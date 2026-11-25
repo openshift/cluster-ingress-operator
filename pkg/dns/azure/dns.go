@@ -104,11 +104,11 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
+	recordName, err := getRecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
-	recordSets, err := recordSetsForTargets(ARecordName, record.Spec.Targets, record.Spec.RecordTTL, m.config.InfraID)
+	recordSets, err := recordSetsForTargets(recordName, record.Spec.Targets, record.Spec.RecordTTL, m.config.InfraID)
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	recordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
+	recordName, err := getRecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
@@ -162,10 +162,10 @@ func (m *provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error 
 	return m.Ensure(record, zone)
 }
 
-// getARecordName extracts the ARecord subdomain name from the full domain string.
-// Azure defines the ARecord Name as the subdomain name only.
+// getRecordName extracts the record subdomain name from the full domain string.
+// Azure defines the record Name as the subdomain name only.
 // This function logs a message if recordDomain is not a subdomain of zoneName.
-func getARecordName(recordDomain string, zoneName string) (string, error) {
+func getRecordName(recordDomain string, zoneName string) (string, error) {
 	trimmedDomain := strings.TrimSuffix(recordDomain, ".")
 	if !strings.HasSuffix(trimmedDomain, "."+zoneName) {
 		log.Info("domain is not a subdomain of zone. The DNS provider may still succeed in updating the record, "+

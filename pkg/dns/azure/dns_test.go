@@ -33,7 +33,7 @@ func Test_Ensure(t *testing.T) {
 	}
 	rg := "test-rg"
 	zone := "dnszone.io"
-	ARecordName := "subdomain"
+	recordName := "subdomain"
 	record := iov1.DNSRecord{
 		Spec: iov1.DNSRecordSpec{
 			DNSName:    "subdomain.dnszone.io.",
@@ -51,7 +51,7 @@ func Test_Ensure(t *testing.T) {
 		return
 	}
 
-	recordedCall, _ := fc.RecordedCall(rg, zone, ARecordName, client.RecordTypeA)
+	recordedCall, _ := fc.RecordedCall(rg, zone, recordName, client.RecordTypeA)
 
 	if recordedCall != "PUT" {
 		t.Fatalf("expected the dns client 'Delete' func to be called, but found %s instead", recordedCall)
@@ -75,7 +75,7 @@ func Test_Delete(t *testing.T) {
 
 	rg := "test-rg"
 	zone := "dnszone.io"
-	ARecordName := "subdomain"
+	recordName := "subdomain"
 	record := iov1.DNSRecord{
 		Spec: iov1.DNSRecordSpec{
 			DNSName:    "subdomain.dnszone.io.",
@@ -92,7 +92,7 @@ func Test_Delete(t *testing.T) {
 		return
 	}
 
-	recordedCall, _ := fc.RecordedCall(rg, zone, ARecordName, client.RecordTypeA)
+	recordedCall, _ := fc.RecordedCall(rg, zone, recordName, client.RecordTypeA)
 
 	if recordedCall != "DELETE" {
 		t.Fatalf("expected the dns client 'Delete' func to be called, but found %s instead", recordedCall)
