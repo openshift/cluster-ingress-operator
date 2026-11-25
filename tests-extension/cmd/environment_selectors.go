@@ -26,11 +26,17 @@ const (
 // enabled it reads the ingress-operator pod to collect its logs, and that pod
 // lives on the management cluster. 51429, 51437, and 57370 carried the
 // NonHyperShiftHOST token in openshift-tests-private for the same reason: they
-// read the router pods and their HAProxy configurations.
+// read the router pods and their HAProxy configurations. The TLS and
+// destination-CA cases added later inspect custom or default router
+// deployments and pods, so they require the same exclusion.
 var hyperShiftUnsupported = []string{
 	"OCP-22633",
+	"OCP-25702",
+	"OCP-43284",
+	"OCP-50842",
 	"OCP-51429",
 	"OCP-51437",
+	"OCP-51980",
 	"OCP-57370",
 	"OCP-63832",
 	"OCP-64611",
@@ -39,6 +45,7 @@ var hyperShiftUnsupported = []string{
 	"OCP-75907",
 	"OCP-75908",
 	"OCP-75909",
+	"OCP-88875",
 }
 
 // privateLBUnverified lists the specs whose internal LoadBalancerService does
@@ -60,9 +67,11 @@ var internalRegistryRequired = []string{
 	"OCP-22637",
 	"OCP-33960",
 	"OCP-41109",
+	"OCP-50842",
 	"OCP-51148",
 	"OCP-51429",
 	"OCP-51437",
+	"OCP-51980",
 	"OCP-57089",
 	"OCP-60012",
 	"OCP-60013",

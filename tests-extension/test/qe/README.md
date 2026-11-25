@@ -1,17 +1,21 @@
 # cluster-ingress-operator OTE Test Extension — Ingress QE Tests
 
-The QE package carries 39 test cases migrated from openshift-tests-private:
+The QE package carries 44 test cases migrated from openshift-tests-private:
 
 * 14 IngressController lifecycle, router deployment, routing, and certificate
   cases in `ingress_operator.go`.
-* 11 Ingress-to-Route conversion, sharding, service recovery, capability, and
-  label cases in `ingress.go`, migrated from
+* 13 Ingress-to-Route conversion, sharding, service recovery, capability,
+  destination-CA, and label cases in `ingress.go`, migrated from
   `openshift-tests-private/test/extended/router/ingress.go`. TC41117 is
   intentionally omitted because equivalent IngressClass lifecycle coverage
   already exists in the operator e2e suite.
 * 5 cloud load-balancer cases in `cloud_load_balancer.go`, migrated from
   `openshift-tests-private/test/extended/router/cloud_load_balancer.go`.
   OCP-36891, OCP-75439, and OCP-75617 are intentionally omitted.
+* 3 TLS cases in `tls.go`, migrated from
+  `openshift-tests-private/test/extended/router/tls.go`. OCP-43300 and
+  OCP-43301 are intentionally omitted because equivalent clientTLS coverage
+  already exists in the operator e2e suite.
 * 9 tuning cases in `tuning.go`, migrated from
   `openshift-tests-private/test/extended/router/tuning.go`. OCP-43112 is
   intentionally omitted; because the omitted source spec also carried
@@ -22,7 +26,8 @@ These files follow the same structure: a single component describe block, one
 and cleanup through `defer`. `ingress_operator.go` uses
 `Network_Edge Component_Ingress-Operator`, `ingress.go` uses
 `Network_Edge Component_Ingress`, `cloud_load_balancer.go` uses
-`Network_Edge Component_Route-CLB`, and `tuning.go` uses
+`Network_Edge Component_Route-CLB`, `tls.go` uses
+`Network_Edge Component_Route-TLS`, and `tuning.go` uses
 `Network_Edge Component_Route-Tunning`. They are registered
 together through the `ingress-operator/*` suites; there is no separate router
 suite family.
@@ -32,8 +37,9 @@ suite family.
 | File | Tests | Description |
 |------|-------|-------------|
 | `ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
-| `ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
+| `ingress.go` | 13 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, destination-CA, and label propagation |
 | `cloud_load_balancer.go` | 5 | Default endpoint publishing and AWS/Azure load-balancer configuration tests |
+| `tls.go` | 3 | IngressController TLS security profiles and post-quantum curve settings |
 | `tuning.go` | 9 | HAProxy tuningOptions configuration and validation tests |
 
 ## Test naming and registration
@@ -50,26 +56,28 @@ Priorities and platform tokens are omitted from titles. `[Serial]` and
 `[Disruptive]` remain execution tags, and `appendSuiteNames` in
 `../../cmd/main.go` appends the conformance suite suffix.
 
-The 11 cases in `ingress.go` were first registered as
-`Network_Edge Component_Router` cases. The existing `ingress_operator.go` and
-`ingress.go` cases now use component-specific prefixes, and `OriginalName`
-records their first `Component_Router` names for downstream continuity. All
-`[OTP]` specs are **informing** while they build a reliability record.
+The original 11 cases in `ingress.go` were first registered as
+`Network_Edge Component_Router` cases. Those cases and the existing
+`ingress_operator.go` cases now use component-specific prefixes, and
+`OriginalName` records their first `Component_Router` names for downstream
+continuity. The two destination-CA cases added with the TLS migration are new
+`Component_Ingress` names. All `[OTP]` specs are **informing** while they build
+a reliability record.
 
 `[Level0]` gates entry to the conformance suites. Confirm the classification
 against the QE-approved Level0 plan before promotion.
 
 ## Test Suites
 
-All 39 `[OTP]` cases are selected by the existing `ingress-operator/*` suites:
+All 44 `[OTP]` cases are selected by the existing `ingress-operator/*` suites:
 
 | Suite | Cases before environment filtering | Conformance parent |
 |-------|------------------------------------|--------------------|
-| `ingress-operator/conformance/parallel` | 31 | `openshift/conformance/parallel` |
+| `ingress-operator/conformance/parallel` | 36 | `openshift/conformance/parallel` |
 | `ingress-operator/conformance/serial` | 4: OCP-56772, OCP-62530, OCP-57370, OCP-85280 | `openshift/conformance/serial` |
 | `ingress-operator/disruptive` | 4: OCP-75907, OCP-75908, OCP-75909, OCP-56228 | None |
-| `ingress-operator/non-disruptive` | 35 | None |
-| `ingress-operator/all` | 39 (`--max-concurrency=1`) | None |
+| `ingress-operator/non-disruptive` | 40 | None |
+| `ingress-operator/all` | 44 (`--max-concurrency=1`) | None |
 
 The disruptive cases have no conformance parent and require explicit
 selection. 56228 deletes the default router service, and 75907, 75908, and
@@ -91,10 +99,10 @@ selector there when a new case is platform-limited.
 
 | Restriction | Applied cases |
 |-------------|---------------|
-| Require `config.openshift.io` API group, excluding MicroShift | All 39 |
-| Exclude hosted-cluster topology `External` | OCP-22633, OCP-51429, OCP-51437, OCP-57370, OCP-63832, OCP-64611, OCP-75440, OCP-75499, OCP-75907, OCP-75908, OCP-75909 |
+| Require `config.openshift.io` API group, excluding MicroShift | All 44 |
+| Exclude hosted-cluster topology `External` | OCP-22633, OCP-51429, OCP-51437, OCP-57370, OCP-63832, OCP-64611, OCP-25702, OCP-43284, OCP-50842, OCP-51980, OCP-75440, OCP-75499, OCP-75907, OCP-75908, OCP-75909, OCP-88875 |
 | Exclude `externalConnectivity == "Disconnected"` | OCP-63832 |
-| Require the `ImageRegistry` capability | OCP-22636, OCP-22637, OCP-33960, OCP-41109, OCP-51148, OCP-51429, OCP-51437, OCP-57089, OCP-60012, OCP-60013, OCP-85280, OCP-85950 |
+| Require the `ImageRegistry` capability | OCP-22636, OCP-22637, OCP-33960, OCP-41109, OCP-51148, OCP-51429, OCP-51437, OCP-57089, OCP-50842, OCP-51980, OCP-60012, OCP-60013, OCP-85280, OCP-85950 |
 | Require platform `azure` | OCP-57089, OCP-72126 |
 | Exclude IPv6 network stack | OCP-72126 |
 | Require platform `aws` | OCP-52837, OCP-75440, OCP-75499 |
@@ -221,7 +229,7 @@ applies the cluster selectors. Case IDs appear in labels rather than names.
 ### Run only `ingress.go` cases
 
 ```bash
-# Run the 11 Ingress-to-Route cases by name.
+# Run the 13 Ingress-to-Route cases by name.
 ./bin/cluster-ingress-operator-tests-ext run-test \
   -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]" \
   -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress use IngressClass controller for ingress-to-route [Suite:openshift/conformance/parallel]" \
@@ -234,13 +242,27 @@ applies the cluster selectors. Case IDs appear in labels rather than names.
   -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Ingress operator is enabled as an optional component [Suite:openshift/conformance/parallel]" \
   -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress router rejects invalid certificate content on ingress [Serial] [Suite:openshift/conformance/serial]" \
   -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress Propagate ingress labels to generated routes [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress destination-ca-certificate-secret annotation uses an Opaque destination CA certificate [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress destination-ca-certificate-secret annotation uses a TLS destination CA certificate [Suite:openshift/conformance/parallel]" \
+  --max-concurrency=1
+```
+
+### Run only `tls.go` cases
+
+```sh
+# Run the three TLS cases by name.
+./bin/cluster-ingress-operator-tests-ext run-test \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Route-TLS IngressController tlsSecurityProfile can be updated [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Route-TLS IngressController tlsSecurityProfile can be set to Modern TLSv1.3 [Suite:openshift/conformance/parallel]" \
+  -n "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Route-TLS ROUTER_CURVES configures post-quantum cryptography curves [Suite:openshift/conformance/parallel]" \
   --max-concurrency=1
 ```
 
 Named `run-test` selection bypasses the environment selectors. On HyperShift
-(`topology=External`) or clusters without the `ImageRegistry` capability, omit
-OCP-51429 and OCP-51437 from this command; both read router pods and both
-create the web server.
+(`topology=External`), omit the router-pod cases listed in the support matrix,
+including the TLS and destination-CA cases above. On clusters without the
+`ImageRegistry` capability, omit OCP-50842 and OCP-51980; both create pods from
+the payload tools image.
 
 ### Run only `cloud_load_balancer.go` cases
 
@@ -406,8 +428,9 @@ tests-extension/
 │   ├── README.md                           # Gateway API & LB security groups documentation
 │   └── qe/
 │       ├── ingress_operator.go             # 14 ingress operator test implementations
-│       ├── ingress.go                      # 11 Ingress-to-Route test implementations
+│       ├── ingress.go                      # 13 Ingress-to-Route test implementations
 │       ├── cloud_load_balancer.go          # 5 cloud load-balancer test implementations
+│       ├── tls.go                          # 3 TLS security-profile test implementations
 │       ├── tuning.go                       # 9 HAProxy tuningOptions test implementations
 │       └── README.md                       # This file
 ├── Makefile                                # Build targets

@@ -277,9 +277,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:96"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:97"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -299,9 +299,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:161"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:162"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -321,9 +321,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:191"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:192"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -344,9 +344,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:252"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:253"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -367,9 +367,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:292"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:293"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -388,9 +388,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:351"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:352"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -410,9 +410,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:380"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:381"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -432,9 +432,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:434"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:435"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -453,9 +453,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:509"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:510"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -474,9 +474,9 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:528"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:529"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
@@ -496,14 +496,58 @@
     },
     "source": "openshift:payload:cluster-ingress-operator",
     "codeLocations": [
-      "test/qe/ingress.go:48",
-      "test/qe/ingress.go:56",
-      "test/qe/ingress.go:555"
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:556"
     ],
     "lifecycle": "informing",
     "environmentSelector": {
       "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
       "exclude": "!optionalCapabilities.exists(oc, oc==\"ImageRegistry\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress destination-ca-certificate-secret annotation uses an Opaque destination CA certificate [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-50842": {},
+      "[Skipped:HyperShift]": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:613"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(topology==\"External\") || (!optionalCapabilities.exists(oc, oc==\"ImageRegistry\"))"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress destination-ca-certificate-secret annotation uses a TLS destination CA certificate [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-51980": {},
+      "[Skipped:HyperShift]": {},
+      "[Skipped:NoImageRegistry]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/ingress.go:49",
+      "test/qe/ingress.go:57",
+      "test/qe/ingress.go:620"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "(topology==\"External\") || (!optionalCapabilities.exists(oc, oc==\"ImageRegistry\"))"
     }
   },
   {
@@ -807,6 +851,69 @@
     "lifecycle": "informing",
     "environmentSelector": {
       "include": "apiGroups.exists(api, api==\"config.openshift.io\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Route-TLS IngressController tlsSecurityProfile can be updated [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-25702": {},
+      "[Skipped:HyperShift]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/tls.go:20",
+      "test/qe/tls.go:28",
+      "test/qe/tls.go:48"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "topology==\"External\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Route-TLS IngressController tlsSecurityProfile can be set to Modern TLSv1.3 [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-43284": {},
+      "[Skipped:HyperShift]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/tls.go:20",
+      "test/qe/tls.go:28",
+      "test/qe/tls.go:98"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "topology==\"External\""
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Route-TLS ROUTER_CURVES configures post-quantum cryptography curves [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-88875": {},
+      "[Skipped:HyperShift]": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/tls.go:20",
+      "test/qe/tls.go:28",
+      "test/qe/tls.go:125"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")",
+      "exclude": "topology==\"External\""
     }
   },
   {

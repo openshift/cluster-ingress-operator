@@ -1,6 +1,6 @@
 # cluster-ingress-operator OTE Test Extension — Gateway API, LB Security Groups & Ingress QE Tests
 
-All 35 test cases cover Gateway API CRD lifecycle, AWS NLB security group management, and ported Ingress QE coverage, split across four test files.
+All 54 test cases cover Gateway API CRD lifecycle, AWS NLB security group management, and ported Ingress QE coverage, split across seven test files.
 
 ## Test Files
 
@@ -9,7 +9,10 @@ All 35 test cases cover Gateway API CRD lifecycle, AWS NLB security group manage
 | `gatewayapi.go` | 5 | Gateway API CRD lifecycle tests (installation, deletion protection, update protection) |
 | `lb_security_groups.go` | 5 | AWS NLB security group management tests (managed, unmanaged, reconciliation) |
 | `qe/ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
-| `qe/ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
+| `qe/ingress.go` | 13 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, destination-CA, and label propagation |
+| `qe/cloud_load_balancer.go` | 5 | Default endpoint publishing and cloud load-balancer configuration tests |
+| `qe/tls.go` | 3 | IngressController TLS security profiles and post-quantum curve settings |
+| `qe/tuning.go` | 9 | HAProxy tuningOptions configuration and validation tests |
 
 ## Test Suites
 
@@ -20,8 +23,8 @@ feature-gate tag. The families are disjoint, and together they cover every test:
 |--------|-----------|-------|
 | `gateway-api/*` | `[OCPFeatureGate:GatewayAPI]` | 5 |
 | `lb-security-groups/*` | `[OCPFeatureGate:IngressControllerLBSecurityGroupsAWS]` | 5 |
-| `ingress-operator/*` | `[OTP]` | 25 |
-| `ingress/*` | everything (all three families combined) | 35 |
+| `ingress-operator/*` | `[OTP]` | 44 |
+| `ingress/*` | everything (all three families combined) | 54 |
 
 ### gateway-api/parallel
 Gateway API CRD tests (5) — non-Serial, non-Disruptive, non-Slow. Read-only/DryRun, fully independent.
@@ -165,7 +168,7 @@ The Gateway API CRD tests carry the `[OCPFeatureGate:GatewayAPI]` tag and only r
 - Gateway API suite: 2-5 minutes
 - LB Security Groups suite: 10-15 minutes (NLB provisioning)
 - QE ingress suite (`ingress-operator/all`, `--max-concurrency=1`): 30-50 minutes
-- All 35 tests: 45-70 minutes
+- All 54 tests: 50-85 minutes
 
 ## Files
 
@@ -182,7 +185,10 @@ tests-extension/
 │   ├── README.md                           # This file
 │   └── qe/
 │       ├── ingress_operator.go             # 14 ingress operator test implementations
-│       ├── ingress.go                      # 11 Ingress-to-Route test implementations
+│       ├── ingress.go                      # 13 Ingress-to-Route test implementations
+│       ├── cloud_load_balancer.go         # 5 cloud load-balancer test implementations
+│       ├── tls.go                          # 3 TLS security-profile test implementations
+│       ├── tuning.go                       # 9 HAProxy tuningOptions test implementations
 │       └── README.md                       # Ingress QE test documentation
 ├── Makefile                                # Build targets
 ├── go.mod                                  # Dependencies

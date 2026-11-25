@@ -1648,10 +1648,25 @@ func CleanupICWithTimeout(dc dynamic.Interface, name string, w io.Writer) {
 	CleanupIC(ctx, dc, name, w)
 }
 
-// CleanupTestNamespace deletes a namespace and reports a cleanup failure to w.
+// CleanupTestNamespace deletes a namespace, waits for it to disappear, and
+// reports a cleanup failure to w. Waiting matters because a namespace can
+// remain in Terminating state after the API accepts the delete request.
 func CleanupTestNamespace(ctx context.Context, kc kubernetes.Interface, name string, w io.Writer) {
 	if err := DeleteTestNamespace(ctx, kc, name); err != nil {
 		_, _ = fmt.Fprintf(w, "failed to clean up namespace %s: %v\n", name, err)
+		return
+	}
+	if err := wait.PollUntilContextTimeout(ctx, PollInterval, LongTimeout, true, func(ctx context.Context) (bool, error) {
+		_, err := kc.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return false, nil
+	}); err != nil {
+		_, _ = fmt.Fprintf(w, "failed to wait for namespace %s to be removed: %v\n", name, err)
 	}
 }
 
@@ -1673,9 +1688,18 @@ func CleanupConfigMap(ctx context.Context, kc kubernetes.Interface, namespace, n
 // certificate signed by it. The returned PEM slices are the CA certificate,
 // the leaf certificate, and the leaf private key.
 func MakeTestCAAndCertificate(commonName string, hosts ...string) ([]byte, []byte, []byte, error) {
+	caPEM, _, certPEM, keyPEM, err := MakeTestCAAndCertificateWithKey(commonName, hosts...)
+	return caPEM, certPEM, keyPEM, err
+}
+
+// MakeTestCAAndCertificateWithKey creates a short-lived test CA and a leaf
+// certificate signed by it. Unlike MakeTestCAAndCertificate, it also returns
+// the CA private key so callers can construct a valid TLS secret whose
+// certificate is the CA.
+func MakeTestCAAndCertificateWithKey(commonName string, hosts ...string) ([]byte, []byte, []byte, []byte, error) {
 	caKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	caTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
@@ -1688,16 +1712,16 @@ func MakeTestCAAndCertificate(commonName string, hosts ...string) ([]byte, []byt
 	}
 	caDER, err := x509.CreateCertificate(cryptorand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	caCert, err := x509.ParseCertificate(caDER)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	leafKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	leafTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(2),
@@ -1711,13 +1735,14 @@ func MakeTestCAAndCertificate(commonName string, hosts ...string) ([]byte, []byt
 	}
 	leafDER, err := x509.CreateCertificate(cryptorand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(caKey)})
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)})
-	return caPEM, certPEM, keyPEM, nil
+	return caPEM, caKeyPEM, certPEM, keyPEM, nil
 }
 
 // ComponentRouteEntry returns the spec.componentRoutes entry for the given
