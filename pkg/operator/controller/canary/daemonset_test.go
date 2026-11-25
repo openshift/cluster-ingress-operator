@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -20,7 +21,7 @@ import (
 func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
-	daemonset := desiredCanaryDaemonSet(canaryImageName, "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
+	daemonset := desiredCanaryDaemonSet(canaryImageName, "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType], nil)
 
 	expectedDaemonSetName := controller.CanaryDaemonSetName()
 
@@ -257,7 +258,7 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			original := desiredCanaryDaemonSet("", "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
+			original := desiredCanaryDaemonSet("", "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType], nil)
 			mutated := original.DeepCopy()
 			tc.mutate(mutated)
 			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
@@ -350,7 +351,7 @@ func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := desiredCanaryDaemonSet(canaryImageName, "", tc.tlsProfile)
+			ds := desiredCanaryDaemonSet(canaryImageName, "", tc.tlsProfile, nil)
 
 			actualCiphers := getEnvVar(ds, "TLS_CIPHERS")
 			if diff := cmp.Diff(tc.expectCiphers, actualCiphers); diff != "" {
@@ -369,6 +370,126 @@ func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
 			} else {
 				actualGroups := getEnvVar(ds, "TLS_GROUPS")
 				assert.Equal(t, tc.expectGroups, actualGroups, "TLS_GROUPS mismatch (-want +got):\n%s", cmp.Diff(tc.expectGroups, actualGroups))
+			}
+		})
+	}
+}
+
+func Test_desiredCanaryDaemonSet_canaryTolerations(t *testing.T) {
+	infraToleration := corev1.Toleration{
+		Key:      "node-role.kubernetes.io/infra",
+		Operator: corev1.TolerationOpExists,
+	}
+	tolerationSeconds := int64(300)
+	customToleration := operatorv1.CanaryToleration{
+		Key:               "example.com/gpu",
+		Operator:          operatorv1.CanaryTolerationOperatorEqual,
+		Value:             "present",
+		Effect:            operatorv1.CanaryTolerationEffectNoExecute,
+		TolerationSeconds: &tolerationSeconds,
+	}
+	expectedCustomToleration := corev1.Toleration{
+		Key:               "example.com/gpu",
+		Operator:          corev1.TolerationOpEqual,
+		Value:             "present",
+		Effect:            corev1.TaintEffectNoExecute,
+		TolerationSeconds: &tolerationSeconds,
+	}
+
+	testCases := []struct {
+		description string
+		tolerations []operatorv1.CanaryToleration
+		expect      []corev1.Toleration
+	}{
+		{
+			description: "no canary tolerations keeps the default only",
+			tolerations: nil,
+			expect:      []corev1.Toleration{infraToleration},
+		},
+		{
+			description: "canary tolerations are appended to the default",
+			tolerations: []operatorv1.CanaryToleration{customToleration},
+			expect:      []corev1.Toleration{infraToleration, expectedCustomToleration},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ds := desiredCanaryDaemonSet("test-image", "", nil, tc.tolerations)
+			if diff := cmp.Diff(tc.expect, ds.Spec.Template.Spec.Tolerations); diff != "" {
+				t.Errorf("tolerations mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// Test_canaryDaemonSetChanged_tolerationOrdering verifies that the toleration
+// comparison in canaryDaemonSetChanged is order-insensitive and does not panic
+// on duplicate tolerations.
+func Test_canaryDaemonSetChanged_tolerationOrdering(t *testing.T) {
+	infra := corev1.Toleration{
+		Key:      "node-role.kubernetes.io/infra",
+		Operator: corev1.TolerationOpExists,
+	}
+	gpu := corev1.Toleration{
+		Key:      "gpu.io/type",
+		Operator: corev1.TolerationOpExists,
+	}
+
+	testCases := []struct {
+		description     string
+		current         []corev1.Toleration
+		expected        []corev1.Toleration
+		expectedChanged bool
+	}{
+		{
+			description:     "identical tolerations are unchanged",
+			current:         []corev1.Toleration{infra, gpu},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: false,
+		},
+		{
+			description:     "reordered tolerations are unchanged",
+			current:         []corev1.Toleration{gpu, infra},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: false,
+		},
+		{
+			description:     "duplicate toleration in current is reconciled away",
+			current:         []corev1.Toleration{infra, gpu, gpu},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: true,
+		},
+		{
+			description:     "added toleration is detected",
+			current:         []corev1.Toleration{infra},
+			expected:        []corev1.Toleration{infra, gpu},
+			expectedChanged: true,
+		},
+		{
+			description:     "removed toleration is detected",
+			current:         []corev1.Toleration{infra, gpu},
+			expected:        []corev1.Toleration{infra},
+			expectedChanged: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			current := desiredCanaryDaemonSet("test-image", "", nil, nil)
+			current.Spec.Template.Spec.Tolerations = tc.current
+			expected := desiredCanaryDaemonSet("test-image", "", nil, nil)
+			expected.Spec.Template.Spec.Tolerations = tc.expected
+
+			changed, updated := canaryDaemonSetChanged(current, expected)
+			if changed != tc.expectedChanged {
+				t.Fatalf("expected changed to be %t, got %t", tc.expectedChanged, changed)
+			}
+			if !changed {
+				return
+			}
+			if diff := cmp.Diff(tc.expected, updated.Spec.Template.Spec.Tolerations); diff != "" {
+				t.Errorf("tolerations mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
