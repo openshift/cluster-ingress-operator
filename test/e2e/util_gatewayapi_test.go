@@ -337,7 +337,7 @@ func buildListenerSetWithListeners(gateway *gatewayapiv1.Gateway, namespace, nam
 		Spec: gatewayapiv1.ListenerSetSpec{
 			ParentRef: gatewayapiv1.ParentGatewayReference{
 				Name:      gatewayapiv1.ObjectName(gateway.Name),
-				Namespace: ptr.To(gatewayapiv1.Namespace(operatorcontroller.DefaultOperandNamespace)),
+				Namespace: ptr.To(gatewayapiv1.Namespace(gateway.Namespace)),
 			},
 			Listeners: listeners,
 		},
@@ -394,15 +394,18 @@ func createListenerSetObject(t *testing.T, listenerSet *gatewayapiv1.ListenerSet
 	return listenerSet
 }
 
-func assertListenerSetConflictedReason(t *testing.T, listenerSet *gatewayapiv1.ListenerSet, reason gatewayapiv1.ListenerEntryConditionReason) {
+func assertListenerSetConflictedReason(t *testing.T, listenerSet *gatewayapiv1.ListenerSet, listenerName gatewayapiv1.SectionName, reason gatewayapiv1.ListenerEntryConditionReason) {
 	t.Helper()
 	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
-	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
 			t.Logf("Failed to get ListenerSet %v: %v; retrying...", nsName, err)
 			return false, nil
 		}
 		for _, listenerStatus := range listenerSet.Status.Listeners {
+			if listenerStatus.Name != listenerName {
+				continue
+			}
 			condition := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionConflicted))
 			if condition == nil {
 				continue
@@ -411,10 +414,37 @@ func assertListenerSetConflictedReason(t *testing.T, listenerSet *gatewayapiv1.L
 				return true, nil
 			}
 		}
-		t.Logf("ListenerSet %v has no Conflicted=True condition with reason %q yet; status: %+v", nsName, reason, listenerSet.Status.Listeners)
+		t.Logf("ListenerSet %v listener %q has no Conflicted=True condition with reason %q yet; status: %+v", nsName, listenerName, reason, listenerSet.Status.Listeners)
 		return false, nil
 	}); err != nil {
-		t.Fatalf("ListenerSet %v did not report Conflicted=True with reason %q: %v", nsName, reason, err)
+		t.Fatalf("ListenerSet %v listener %q did not report Conflicted=True with reason %q: %v", nsName, listenerName, reason, err)
+	}
+}
+
+func assertListenerSetNotConflicted(t *testing.T, listenerSet *gatewayapiv1.ListenerSet, listenerName gatewayapiv1.SectionName) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
+			t.Logf("Failed to get ListenerSet %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		for _, listenerStatus := range listenerSet.Status.Listeners {
+			if listenerStatus.Name != listenerName {
+				continue
+			}
+			condition := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionConflicted))
+			if condition == nil {
+				continue
+			}
+			if condition.Status == metav1.ConditionFalse && condition.Reason == string(gatewayapiv1.ListenerReasonNoConflicts) {
+				return true, nil
+			}
+		}
+		t.Logf("ListenerSet %v listener %q has no Conflicted=False condition with reason %q yet; status: %+v", nsName, listenerName, gatewayapiv1.ListenerReasonNoConflicts, listenerSet.Status.Listeners)
+		return false, nil
+	}); err != nil {
+		t.Fatalf("ListenerSet %v listener %q did not report Conflicted=False with reason %q: %v", nsName, listenerName, gatewayapiv1.ListenerReasonNoConflicts, err)
 	}
 }
 
@@ -562,73 +592,142 @@ func conditionStatusForExpected(expected bool) metav1.ConditionStatus {
 	return metav1.ConditionFalse
 }
 
-func waitForGatewayLoadBalancerAddress(t *testing.T, gateway *gatewayapiv1.Gateway) string {
+// waitForGatewayLoadBalancerAddresses returns every address published by the
+// Gateway's LoadBalancer Service. It waits until the same non-empty address
+// set has been observed on two consecutive polls, because providers may
+// publish additional addresses asynchronously.
+func waitForGatewayLoadBalancerAddresses(t *testing.T, gateway *gatewayapiv1.Gateway) []string {
 	t.Helper()
-	var address string
+	var (
+		addresses []string
+		previous  []string
+	)
 	service := &corev1.Service{}
-	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, operatorcontroller.LoadBalancerServiceNameFromGatewayName(gateway.Name), service); err != nil {
 			t.Logf("Failed to get gateway LoadBalancer Service %v: %v; retrying...", operatorcontroller.LoadBalancerServiceNameFromGatewayName(gateway.Name), err)
 			return false, nil
 		}
-		if len(service.Status.LoadBalancer.Ingress) == 0 {
-			t.Logf("Gateway LoadBalancer Service %s/%s has no ingress address yet", service.Namespace, service.Name)
+
+		current := make([]string, 0, len(service.Status.LoadBalancer.Ingress))
+		for _, ingress := range service.Status.LoadBalancer.Ingress {
+			address := ingress.Hostname
+			if address == "" {
+				address = ingress.IP
+			}
+			if address != "" {
+				current = append(current, address)
+			}
+		}
+		slices.Sort(current)
+		if len(current) == 0 {
+			previous = nil
+			t.Logf("Gateway LoadBalancer Service %s/%s has no ingress addresses yet", service.Namespace, service.Name)
 			return false, nil
 		}
-		address = service.Status.LoadBalancer.Ingress[0].Hostname
-		if address == "" {
-			address = service.Status.LoadBalancer.Ingress[0].IP
+		if !slices.Equal(current, previous) {
+			previous = current
+			t.Logf("Gateway LoadBalancer Service %s/%s published addresses %v; waiting for them to stabilize", service.Namespace, service.Name, current)
+			return false, nil
 		}
-		if address == "" {
-			t.Logf("Gateway LoadBalancer Service %s/%s has an empty ingress address", service.Namespace, service.Name)
+		addresses = current
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Failed to get addresses for gateway LoadBalancer Service: %v", err)
+	}
+	return addresses
+}
+
+// assertListenerSetTLSCertificate performs a TLS handshake against every
+// Gateway load-balancer address until one returns the expected certificate.
+func assertListenerSetTLSCertificate(t *testing.T, addresses []string, serverName, expectedCommonName string) error {
+	t.Helper()
+
+	// Istio can report ListenerSet Programmed=True before every Gateway
+	// endpoint has the updated certificate configuration, so retry the
+	// handshake until it returns the expected certificate.
+	var lastErr error
+	if err := wait.PollUntilContextTimeout(t.Context(), 2*time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		for _, address := range addresses {
+			dialer := &tls.Dialer{
+				NetDialer: &net.Dialer{Timeout: 10 * time.Second},
+				Config: &tls.Config{
+					ServerName: serverName,
+					// Certificate trust is intentionally not checked here;
+					// the certificate identity is verified below.
+					InsecureSkipVerify: true,
+				},
+			}
+			conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, "443"))
+			if err != nil {
+				lastErr = fmt.Errorf("failed TLS handshake for SNI %q through %q: %w", serverName, address, err)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+
+			tlsConn, ok := conn.(*tls.Conn)
+			if !ok {
+				closeErr := conn.Close()
+				lastErr = fmt.Errorf("TLS handshake for SNI %q through %q returned connection type %T", serverName, address, conn)
+				if closeErr != nil {
+					lastErr = fmt.Errorf("%v; failed to close connection: %w", lastErr, closeErr)
+				}
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			defer func() {
+				if err := tlsConn.Close(); err != nil {
+					t.Logf("Failed to close TLS connection for SNI %q through %q: %v", serverName, address, err)
+				}
+			}()
+
+			peerCertificates := tlsConn.ConnectionState().PeerCertificates
+			if len(peerCertificates) == 0 {
+				lastErr = fmt.Errorf("TLS handshake for SNI %q through %q returned no peer certificate", serverName, address)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			if err := peerCertificates[0].VerifyHostname(serverName); err != nil {
+				lastErr = fmt.Errorf("certificate selected for SNI %q through %q does not match that hostname: %w", serverName, address, err)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			if peerCertificates[0].Subject.CommonName != expectedCommonName {
+				lastErr = fmt.Errorf("TLS handshake for SNI %q through %q selected certificate %q; expected %q", serverName, address, peerCertificates[0].Subject.CommonName, expectedCommonName)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			return true, nil
+		}
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("failed to observe expected certificate for SNI %q: %w; last error: %v", serverName, err, lastErr)
+	}
+	return nil
+}
+
+// assertGatewayAttachedListenerSets waits until the Gateway reports the
+// expected number of successfully attached ListenerSets.
+func assertGatewayAttachedListenerSets(t *testing.T, gateway *gatewayapiv1.Gateway, expected int32) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: gateway.Namespace, Name: gateway.Name}
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		currentGateway := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(ctx, nsName, currentGateway); err != nil {
+			t.Logf("Failed to get Gateway %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		if currentGateway.Status.AttachedListenerSets == nil {
+			t.Logf("Gateway %v has no attachedListenerSets status yet", nsName)
+			return false, nil
+		}
+		if *currentGateway.Status.AttachedListenerSets != expected {
+			t.Logf("Gateway %v has %d attached ListenerSets; expected %d", nsName, *currentGateway.Status.AttachedListenerSets, expected)
 			return false, nil
 		}
 		return true, nil
 	}); err != nil {
-		t.Fatalf("Failed to get address for gateway LoadBalancer Service: %v", err)
-	}
-	return address
-}
-
-func assertListenerSetTLSCertificate(t *testing.T, address, serverName, expectedCommonName string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	dialer := &tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: 30 * time.Second},
-		Config: &tls.Config{
-			ServerName: serverName,
-			// Ok to skip verify here because the test doesn't care about the chain trust.
-			InsecureSkipVerify: true,
-		},
-	}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, "443"))
-	if err != nil {
-		t.Fatalf("Failed TLS handshake for SNI %q through %q: %v", serverName, address, err)
-	}
-	tlsConn, ok := conn.(*tls.Conn)
-	if !ok {
-		if err := conn.Close(); err != nil {
-			t.Errorf("Failed to close TLS connection for SNI %q: %v", serverName, err)
-		}
-		t.Fatalf("TLS handshake for SNI %q returned an unexpected connection type %T", serverName, conn)
-	}
-	defer func() {
-		if err := tlsConn.Close(); err != nil {
-			t.Errorf("Failed to close TLS connection for SNI %q: %v", serverName, err)
-		}
-	}()
-
-	peerCertificates := tlsConn.ConnectionState().PeerCertificates
-	if len(peerCertificates) == 0 {
-		t.Fatalf("TLS handshake for SNI %q returned no peer certificate", serverName)
-	}
-	certificate := peerCertificates[0]
-	if err := certificate.VerifyHostname(serverName); err != nil {
-		t.Fatalf("Certificate selected for SNI %q does not match that hostname: %v", serverName, err)
-	}
-	if certificate.Subject.CommonName != expectedCommonName {
-		t.Fatalf("TLS handshake for SNI %q selected certificate %q; expected %q", serverName, certificate.Subject.CommonName, expectedCommonName)
+		t.Fatalf("Gateway %v did not report %d attached ListenerSets: %v", nsName, expected, err)
 	}
 }
 
@@ -1759,23 +1858,110 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 	return nil
 }
 
-// Wait and check that the dns name resolves first.
-// dnsResolutionTimeout is 10 minutes.
-func assertDNSResolution(t *testing.T, hostname string) {
-	// Takes a long time, so if the hostname is actually an IP address, skip this.
-	if net.ParseIP(hostname) == nil {
-		t.Logf("Attempting to resolve %s...", hostname)
-		if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
-			_, err := net.DefaultResolver.LookupHost(ctx, hostname)
+// assertHttpRouteListenerSetConnection checks that an HTTPS request for the
+// ListenerSet hostname reaches the parent Gateway load balancer and returns
+// successfully from the HTTPRoute backend.
+func assertHttpRouteListenerSetConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
+	t.Helper()
+
+	loadBalancerAddresses := waitForGatewayLoadBalancerAddresses(t, gateway)
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			ServerName:         hostname,
+			InsecureSkipVerify: true,
+		},
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
 			if err != nil {
-				t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
-				return false, nil
+				return nil, err
 			}
-			return true, nil
-		}); err != nil {
-			t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
+			var lastErr error
+			for _, loadBalancerAddress := range loadBalancerAddresses {
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(loadBalancerAddress, port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			return nil, lastErr
+		},
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	var (
+		statusCode int
+		body       string
+	)
+	t.Logf("Probing ListenerSet HTTPRoute %s...", hostname)
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname, nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Logf("GET https://%s failed: %v; retrying...", hostname, err)
+			return false, nil
+		}
+		responseBody, err := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if err != nil {
+			return false, fmt.Errorf("failed to read response from https://%s: %w", hostname, err)
+		}
+		if closeErr != nil {
+			return false, fmt.Errorf("failed to close response from https://%s: %w", hostname, closeErr)
+		}
+
+		statusCode = response.StatusCode
+		body = string(responseBody)
+		if statusCode != http.StatusOK {
+			t.Logf("GET https://%s failed: status %v, expected %v; retrying...", hostname, statusCode, http.StatusOK)
+			return false, nil
+		}
+		t.Logf("Request to ListenerSet HTTPRoute %s was successful", hostname)
+		return true, nil
+	}); err != nil {
+		if statusCode != 0 {
+			t.Log("Response body for most recent request:", body)
+		}
+		return fmt.Errorf("failed to connect to ListenerSet HTTPRoute %s: %w", hostname, err)
+	}
+	return nil
+}
+
+// Wait and check that the dns name resolves first, and return its addresses.
+// dnsResolutionTimeout is 10 minutes.
+func assertDNSResolution(t *testing.T, hostname string) []string {
+	if net.ParseIP(hostname) != nil {
+		return []string{hostname}
+	}
+
+	var addrs []string
+	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
+		var err error
+		addrs, err = net.DefaultResolver.LookupHost(ctx, hostname)
+		if err != nil {
+			t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
+			return false, nil
+		}
+		return len(addrs) > 0, nil
+	}); err != nil {
+		t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
+	}
+	return addrs
+}
+
+func containsAny(candidates, values []string) bool {
+	for _, candidate := range candidates {
+		if slices.Contains(values, candidate) {
+			return true
 		}
 	}
+	return false
 }
 
 func getHTTPResponse(client *http.Client, name string) (int, http.Header, string, error) {
@@ -2034,7 +2220,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, recordName, dnsRecord); err != nil {
 			t.Logf("[%s] Failed to get DNSRecord %v: %v; retrying...", time.Now().Format(time.DateTime), recordName, err)
 			return false, nil

@@ -157,7 +157,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIListenerSetSupport", testGatewayAPIListenerSetSupport)
 	t.Run("testGatewayAPIListenerSetAllowedListeners", testGatewayAPIListenerSetAllowedListeners)
 	t.Run("testGatewayAPIListenerSetAllowedRoutes", testGatewayAPIListenerSetAllowedRoutes)
-	t.Run("assertListenerSetDNSResolution", testGatewayAPIListenerSetDNSResolution)
+	t.Run("testGatewayAPIListenerSetDNSResolution", testGatewayAPIListenerSetDNSResolution)
 	t.Run("testGatewayAPIListenerSetLongestMatchingSNI", testGatewayAPIListenerSetLongestMatchingSNI)
 	t.Run("testGatewayAPIListenerSetConflictedConditions", testGatewayAPIListenerSetConflictedConditions)
 	if !gatewayAPIManagementModeFGEnabled {
@@ -1719,20 +1719,13 @@ func testGatewayAPIListenerSetSupport(t *testing.T) {
 			From: ptr.To(gatewayapiv1.NamespacesFromAll),
 		},
 	})
+	domain := "gws." + dnsConfig.Spec.BaseDomain
 
-	listenerSetHostname := fmt.Sprintf("listenerset.%s", dnsConfig.Spec.BaseDomain)
+	listenerSetHostname := fmt.Sprintf("listenerset.%s", domain)
 	listenerSetSecretName := "listenerset-cert"
-	listenerSetSecret, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, listenerSetSecretName, listenerSetHostname)
-	if err != nil {
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, listenerSetSecretName, listenerSetHostname); err != nil {
 		t.Fatalf("Failed to create ListenerSet certificate secret: %v", err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), listenerSetSecret); err != nil {
-			if !errors.IsNotFound(err) {
-				t.Logf("Failed to delete ListenerSet certificate secret %v: %v", listenerSetSecretName, err)
-			}
-		}
-	})
 
 	listenerSetName := "test-listenerset"
 	listenerSet := createListenerSet(t, gateway, listenerSetNamespace.Name, listenerSetName, listenerSetHostname, listenerSetSecretName, "https-app", nil)
@@ -1746,8 +1739,11 @@ func testGatewayAPIListenerSetSupport(t *testing.T) {
 	if httpRoute, err = assertHttpRouteSuccessful(t, listenerSetNamespace.Name, routeName, gateway); err != nil {
 		t.Fatalf("HTTPRoute attached to ListenerSet was not accepted: %v", err)
 	}
-	if len(httpRoute.Status.Parents) == 0 || httpRoute.Status.Parents[0].ParentRef.Name != gatewayapiv1.ObjectName(listenerSetName) {
+	if httpRoute.Status.Parents[0].ParentRef.Name != gatewayapiv1.ObjectName(listenerSetName) {
 		t.Fatalf("HTTPRoute did not attach to ListenerSet %s: %+v", listenerSetName, httpRoute.Status.Parents)
+	}
+	if err := assertHttpRouteListenerSetConnection(t, listenerSetHostname, gateway); err != nil {
+		t.Fatalf("HTTPRoute attached to ListenerSet did not connect: %v", err)
 	}
 
 }
@@ -1762,23 +1758,30 @@ func testGatewayAPIListenerSetAllowedListeners(t *testing.T) {
 	}
 
 	labelNamespace(t, listenerSetNamespace, map[string]string{"listenerset": "allowed"})
+	domain := "gws." + dnsConfig.Spec.BaseDomain
 
 	noneGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-none", &gatewayapiv1.AllowedListeners{
 		Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromNone)},
 	})
-	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-none-cert", fmt.Sprintf("none.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-none-cert", fmt.Sprintf("none.%s", domain)); err != nil {
 		t.Fatalf("Failed to create ListenerSet certificate secret for None: %v", err)
 	}
-	noneListenerSet := createListenerSet(t, noneGateway, listenerSetNamespace.Name, "listenerset-none", fmt.Sprintf("none.%s", dnsConfig.Spec.BaseDomain), "listenerset-none-cert", "https-app", nil)
+	noneListenerSet := createListenerSet(t, noneGateway, listenerSetNamespace.Name, "listenerset-none", fmt.Sprintf("none.%s", domain), "listenerset-none-cert", "https-app", nil)
 	assertListenerSetStatus(t, noneListenerSet, false)
 
 	sameGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-same", &gatewayapiv1.AllowedListeners{
 		Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromSame)},
 	})
-	if _, err := ensureGatewayTLSSecret(t, operatorcontroller.DefaultOperandNamespace, "listenerset-same-cert", fmt.Sprintf("same.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+	sameSecret, err := ensureGatewayTLSSecret(t, operatorcontroller.DefaultOperandNamespace, "listenerset-same-cert", fmt.Sprintf("same.%s", domain))
+	if err != nil {
 		t.Fatalf("Failed to create ListenerSet certificate secret for Same: %v", err)
 	}
-	sameListenerSet := createListenerSet(t, sameGateway, operatorcontroller.DefaultOperandNamespace, "listenerset-same", fmt.Sprintf("same.%s", dnsConfig.Spec.BaseDomain), "listenerset-same-cert", "https-app", nil)
+	// This secret requires explicit cleanup because it is not
+	// in a namespace that is automatically cleaned up.
+	t.Cleanup(func() {
+		deleteWithRetryOnError(t, context.Background(), sameSecret, DefaultRetryTimeout)
+	})
+	sameListenerSet := createListenerSet(t, sameGateway, operatorcontroller.DefaultOperandNamespace, "listenerset-same", fmt.Sprintf("same.%s", domain), "listenerset-same-cert", "https-app", nil)
 	assertListenerSetStatus(t, sameListenerSet, true)
 
 	selectorGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-selector", &gatewayapiv1.AllowedListeners{
@@ -1789,25 +1792,25 @@ func testGatewayAPIListenerSetAllowedListeners(t *testing.T) {
 			},
 		},
 	})
-	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-selector-cert", fmt.Sprintf("selector.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-selector-cert", fmt.Sprintf("selector.%s", domain)); err != nil {
 		t.Fatalf("Failed to create ListenerSet certificate secret for Selector: %v", err)
 	}
-	selectorListenerSet := createListenerSet(t, selectorGateway, listenerSetNamespace.Name, "listenerset-selector", fmt.Sprintf("selector.%s", dnsConfig.Spec.BaseDomain), "listenerset-selector-cert", "https-app", nil)
+	selectorListenerSet := createListenerSet(t, selectorGateway, listenerSetNamespace.Name, "listenerset-selector", fmt.Sprintf("selector.%s", domain), "listenerset-selector-cert", "https-app", nil)
 	assertListenerSetStatus(t, selectorListenerSet, true)
 
-	if _, err := ensureGatewayTLSSecret(t, unmatchedNamespace.Name, "listenerset-unmatched-cert", fmt.Sprintf("unmatched.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+	if _, err := ensureGatewayTLSSecret(t, unmatchedNamespace.Name, "listenerset-unmatched-cert", fmt.Sprintf("unmatched.%s", domain)); err != nil {
 		t.Fatalf("Failed to create ListenerSet certificate secret for unmatched Selector case: %v", err)
 	}
-	unmatchedListenerSet := createListenerSet(t, selectorGateway, unmatchedNamespace.Name, "listenerset-unmatched", fmt.Sprintf("unmatched.%s", dnsConfig.Spec.BaseDomain), "listenerset-unmatched-cert", "https-app", nil)
+	unmatchedListenerSet := createListenerSet(t, selectorGateway, unmatchedNamespace.Name, "listenerset-unmatched", fmt.Sprintf("unmatched.%s", domain), "listenerset-unmatched-cert", "https-app", nil)
 	assertListenerSetStatus(t, unmatchedListenerSet, false)
 
 	allGateway := createListenerSetGateway(t, gatewayClass, "gateway-listenerset-all", &gatewayapiv1.AllowedListeners{
 		Namespaces: &gatewayapiv1.ListenerNamespaces{From: ptr.To(gatewayapiv1.NamespacesFromAll)},
 	})
-	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-all-cert", fmt.Sprintf("all.%s", dnsConfig.Spec.BaseDomain)); err != nil {
+	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, "listenerset-all-cert", fmt.Sprintf("all.%s", domain)); err != nil {
 		t.Fatalf("Failed to create ListenerSet certificate secret for All: %v", err)
 	}
-	allListenerSet := createListenerSet(t, allGateway, listenerSetNamespace.Name, "listenerset-all", fmt.Sprintf("all.%s", dnsConfig.Spec.BaseDomain), "listenerset-all-cert", "https-app", nil)
+	allListenerSet := createListenerSet(t, allGateway, listenerSetNamespace.Name, "listenerset-all", fmt.Sprintf("all.%s", domain), "listenerset-all-cert", "https-app", nil)
 	assertListenerSetStatus(t, allListenerSet, true)
 }
 
@@ -1828,7 +1831,7 @@ func testGatewayAPIListenerSetAllowedRoutes(t *testing.T) {
 			From: ptr.To(gatewayapiv1.NamespacesFromAll),
 		},
 	})
-
+	domain := "gws." + dnsConfig.Spec.BaseDomain
 	createListenerSetBackend(t, listenerSetNamespace.Name, "allowed-routes-backend")
 	createListenerSetBackend(t, selectorRouteNamespace.Name, "allowed-routes-backend")
 	createListenerSetBackend(t, unmatchedRouteNamespace.Name, "allowed-routes-backend")
@@ -1862,7 +1865,7 @@ func testGatewayAPIListenerSetAllowedRoutes(t *testing.T) {
 			expectAccepted: true,
 		},
 		{
-			name: "Selector doesn't match",
+			name: "Selector does not match",
 			allowedRoutes: &gatewayapiv1.AllowedRoutes{
 				Namespaces: &gatewayapiv1.RouteNamespaces{
 					From: ptr.To(gatewayapiv1.NamespacesFromSelector),
@@ -1896,7 +1899,7 @@ func testGatewayAPIListenerSetAllowedRoutes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			listenerSetName := "listenerset-" + strings.ToLower(strings.ReplaceAll(test.name, " ", "-"))
 			routeName := "route-" + strings.ToLower(strings.ReplaceAll(test.name, " ", "-"))
-			hostname := fmt.Sprintf("%s.%s", strings.ToLower(strings.ReplaceAll(test.name, " ", "-")), dnsConfig.Spec.BaseDomain)
+			hostname := fmt.Sprintf("%s.%s", strings.ToLower(strings.ReplaceAll(test.name, " ", "-")), domain)
 			listenerSetSecretName := "listenerset-" + strings.ToLower(strings.ReplaceAll(test.name, " ", "-")) + "-cert"
 			if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, listenerSetSecretName, hostname); err != nil {
 				t.Fatalf("Failed to create ListenerSet certificate secret: %v", err)
@@ -1910,16 +1913,16 @@ func testGatewayAPIListenerSetAllowedRoutes(t *testing.T) {
 	}
 }
 
-// Test that the wildcard DNS name for a Gateway inline listener resolves a
-// specific hostname covered by that wildcard to the Gateway load balancer and
-// that a connection to a ListenerSet listener reaches that load balancer.
+// testGatewayAPIListenerSetDNSResolution verifies that a ListenerSet hostname
+// is covered by its parent Gateway's wildcard DNS and that a connection to the
+// resolved address reaches the Gateway load balancer.
 // Certificate management is not tested here, as it is handled elsewhere.
 func testGatewayAPIListenerSetDNSResolution(t *testing.T) {
 	if !isDNSManagementSupported(t) {
 		t.Skip("this test can only be executed on platforms that support managed DNS")
 	}
 
-	listenerSetNamespace := createNamespace(t, "test-adopted-dns")
+	listenerSetNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-adopted-dns-"))
 	// This label is used later to identify the namespace selected by AllowedListeners.
 	labelNamespace(t, listenerSetNamespace, map[string]string{"name": "test-adopted-dns"})
 
@@ -1929,8 +1932,11 @@ func testGatewayAPIListenerSetDNSResolution(t *testing.T) {
 	}
 
 	gatewayName := "gateway-listenerset-dns"
-	wildcardHostname := fmt.Sprintf("*.%s", dnsConfig.Spec.BaseDomain)
-	listenerSetHostname := fmt.Sprintf("test-adopted-dns.%s", dnsConfig.Spec.BaseDomain)
+	// Use a dedicated subdomain so this wildcard does not overlap the
+	// suite-scoped test-gateway (*.gws.<baseDomain>).
+	domain := "listenerset-dns." + dnsConfig.Spec.BaseDomain
+	gatewayWildcardHostname := fmt.Sprintf("*.%s", domain)
+	listenerSetHostname := fmt.Sprintf("test-adopted-dns.%s", domain)
 
 	gateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1949,7 +1955,7 @@ func testGatewayAPIListenerSetDNSResolution(t *testing.T) {
 			},
 			Listeners: []gatewayapiv1.Listener{{
 				Name:     "tls",
-				Hostname: ptr.To(gatewayapiv1.Hostname(wildcardHostname)),
+				Hostname: ptr.To(gatewayapiv1.Hostname(gatewayWildcardHostname)),
 				Port:     443,
 				Protocol: gatewayapiv1.TLSProtocolType,
 				TLS: &gatewayapiv1.ListenerTLSConfig{
@@ -1982,34 +1988,74 @@ func testGatewayAPIListenerSetDNSResolution(t *testing.T) {
 	listenerSet = createListenerSetObject(t, listenerSet)
 	assertListenerSetStatus(t, listenerSet, true)
 
-	gatewayAddress := waitForGatewayLoadBalancerAddress(t, gateway)
-	assertDNSResolution(t, gatewayAddress)
-	assertDNSResolution(t, listenerSetHostname)
+	gatewayAddresses := waitForGatewayLoadBalancerAddresses(t, gateway)
+	isAWS := infraConfig.Status.PlatformStatus != nil &&
+		infraConfig.Status.PlatformStatus.Type == configv1.AWSPlatformType
+	var gatewayIPs []string
+	if !isAWS {
+		for _, gatewayAddress := range gatewayAddresses {
+			gatewayIPs = append(gatewayIPs, assertDNSResolution(t, gatewayAddress)...)
+		}
+		require.NotEmpty(t, gatewayIPs, "failed to resolve Gateway load-balancer addresses %v", gatewayAddresses)
+	}
 
-	// Validate that the Gateway LB address is the same as
-	// the listenerSetHostname address.
-	gatewayAddresses, err := net.LookupHost(gatewayAddress)
-	require.NoError(t, err, "failed to resolve Gateway load-balancer address %q", gatewayAddress)
-	listenerSetAddresses, err := net.LookupHost(listenerSetHostname)
-	require.NoError(t, err, "failed to resolve ListenerSet hostname %q", listenerSetHostname)
-	require.ElementsMatch(t, gatewayAddresses, listenerSetAddresses, "ListenerSet hostname must resolve to the Gateway load balancer")
+	// ListenerSet hostnames are covered by the parent Gateway's wildcard
+	// DNS record; they do not yet get their own DNSRecord.
+	gatewayWildcardDNSName := gatewayWildcardHostname + "."
+	gatewayWildcardDNSRecordName := operatorcontroller.GatewayDNSRecordName(gateway, gatewayWildcardDNSName)
+	require.NoError(t, assertDNSRecord(t, gatewayWildcardDNSRecordName), "failed to ensure wildcard DNSRecord for Gateway listener")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	gatewayWildcardDNSRecord := &iov1.DNSRecord{}
+	require.NoError(t, kclient.Get(t.Context(), gatewayWildcardDNSRecordName, gatewayWildcardDNSRecord), "failed to get wildcard DNSRecord for Gateway listener")
+	require.NotEmpty(t, gatewayWildcardDNSRecord.Spec.Targets, "wildcard DNSRecord for Gateway listener has no targets")
+	// The wildcard DNSRecord must target the Gateway load balancer. On AWS,
+	// this is the primary ownership check because separate ELB hostname
+	// resolutions can return different A-record subsets; on other platforms,
+	// the connected remote IP is also checked before this function returns.
+	require.Truef(
+		t,
+		containsAny(gatewayWildcardDNSRecord.Spec.Targets, gatewayAddresses),
+		"Gateway wildcard DNSRecord must target the Gateway load balancer; dnsRecordTargets=%v gatewayAddresses=%v",
+		gatewayWildcardDNSRecord.Spec.Targets,
+		gatewayAddresses,
+	)
+
+	lsAddrs := assertDNSResolution(t, listenerSetHostname)
+	require.NotEmpty(t, lsAddrs, "failed to resolve ListenerSet hostname %q", listenerSetHostname)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	// Validate that a connection to the listenerSetHostname succeeds.
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(listenerSetHostname, "443"))
-	require.NoError(t, err, "failed to connect to ListenerSet listener %q", listenerSetHostname)
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	// Istio may report Programmed=True while a managed Gateway's endpoints are
+	// still syncing, so retry until port 443 accepts a connection.
+	var conn net.Conn
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		// Dial a resolved address to avoid a second DNS lookup; AWS ELB hostnames
+		// can return different A-record subsets across separate resolutions.
+		for _, addr := range lsAddrs {
+			candidate, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(addr, "443"))
+			if err == nil {
+				conn = candidate
+				return true, nil
+			}
+			t.Logf("Waiting for ListenerSet listener %q to accept a connection through %q: %v", listenerSetHostname, addr, err)
+		}
+		return false, nil
+	}); err != nil {
+		require.NoError(t, err, "failed to connect to ListenerSet listener %q through any resolved address %v", listenerSetHostname, lsAddrs)
+	}
 	defer func() {
 		require.NoError(t, conn.Close(), "failed to close connection to ListenerSet listener %q", listenerSetHostname)
 	}()
 
-	// Prove the listener reaches the GW LB, by
-	// confirming that the connection's remote address
-	// matches one of the Gateway LB addresses.
-	remoteHost, _, err := net.SplitHostPort(conn.RemoteAddr().String())
-	require.NoError(t, err)
-	require.Contains(t, gatewayAddresses, remoteHost)
+	// On AWS, resolving the same ELB hostname at different times can return
+	// different A-record subsets, so comparing the connected IP to a separate
+	// resolution would be flaky.
+	if !isAWS {
+		remoteHost, _, err := net.SplitHostPort(conn.RemoteAddr().String())
+		require.NoError(t, err)
+		require.Contains(t, gatewayIPs, remoteHost, "ListenerSet listener must reach a Gateway load-balancer address")
+	}
 }
 
 func testGatewayAPIListenerSetLongestMatchingSNI(t *testing.T) {
@@ -2026,7 +2072,9 @@ func testGatewayAPIListenerSetLongestMatchingSNI(t *testing.T) {
 		},
 	})
 
-	domain := fmt.Sprintf("longest-sni.%s", dnsConfig.Spec.BaseDomain)
+	// Use a dedicated subdomain so this wildcard does not overlap the
+	// suite-scoped test-gateway (*.gws.<baseDomain>).
+	domain := fmt.Sprintf("listenerset-sni.%s", dnsConfig.Spec.BaseDomain)
 	wildcardHostname := fmt.Sprintf("*.%s", domain)
 	exactHostname := fmt.Sprintf("app.%s", domain)
 
@@ -2043,10 +2091,19 @@ func testGatewayAPIListenerSetLongestMatchingSNI(t *testing.T) {
 	exactListenerSet := createListenerSet(t, gateway, listenerSetNamespace.Name, "listenerset-exact-sni", exactHostname, "listenerset-exact-sni-cert", "https", nil)
 	assertListenerSetStatus(t, exactListenerSet, true)
 
-	address := waitForGatewayLoadBalancerAddress(t, gateway)
-	assertDNSResolution(t, address)
-	assertListenerSetTLSCertificate(t, address, exactHostname, exactHostname)
-	assertListenerSetTLSCertificate(t, address, fmt.Sprintf("other.%s", domain), wildcardHostname)
+	// Both ListenerSets attach to the same parent Gateway. The Gateway merges
+	// their listeners, and certificate selection must prefer the exact
+	// hostname over the wildcard hostname during a TLS handshake.
+	assertGatewayAttachedListenerSets(t, gateway, 2)
+
+	gatewayAddresses := waitForGatewayLoadBalancerAddresses(t, gateway)
+	var resolvedAddresses []string
+	for _, gatewayAddress := range gatewayAddresses {
+		resolvedAddresses = append(resolvedAddresses, assertDNSResolution(t, gatewayAddress)...)
+	}
+	require.NotEmpty(t, resolvedAddresses, "failed to resolve Gateway load-balancer addresses %v", gatewayAddresses)
+	require.NoError(t, assertListenerSetTLSCertificate(t, resolvedAddresses, exactHostname, exactHostname))
+	require.NoError(t, assertListenerSetTLSCertificate(t, resolvedAddresses, fmt.Sprintf("other.%s", domain), wildcardHostname))
 }
 
 func testGatewayAPIListenerSetConflictedConditions(t *testing.T) {
@@ -2062,21 +2119,23 @@ func testGatewayAPIListenerSetConflictedConditions(t *testing.T) {
 			From: ptr.To(gatewayapiv1.NamespacesFromAll),
 		},
 	})
-
-	hostnameConflict := fmt.Sprintf("hostname-conflict.%s", dnsConfig.Spec.BaseDomain)
+	domain := "gws." + dnsConfig.Spec.BaseDomain
+	hostnameConflict := fmt.Sprintf("hostname-conflict.%s", domain)
 	hostnameConflictSecret := "listenerset-hostname-conflict-cert"
 	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, hostnameConflictSecret, hostnameConflict); err != nil {
 		t.Fatalf("Failed to create hostname-conflict certificate secret: %v", err)
 	}
-	createListenerSetWithListeners(t, gateway, listenerSetNamespace.Name, "listenerset-hostname-conflict-first", []gatewayapiv1.ListenerEntry{
+	firstHostnameListenerSet := createListenerSetWithListeners(t, gateway, listenerSetNamespace.Name, "listenerset-hostname-conflict-first", []gatewayapiv1.ListenerEntry{
 		buildHTTPSListenerEntry("https-first", hostnameConflict, hostnameConflictSecret, 8081, nil),
 	})
 	secondHostnameListenerSet := createListenerSetWithListeners(t, gateway, listenerSetNamespace.Name, "listenerset-hostname-conflict-second", []gatewayapiv1.ListenerEntry{
 		buildHTTPSListenerEntry("https-second", hostnameConflict, hostnameConflictSecret, 8081, nil),
 	})
-	assertListenerSetConflictedReason(t, secondHostnameListenerSet, gatewayapiv1.ListenerEntryReasonHostnameConflict)
+	// The first should not be conflicted, but the second should be conflicted.
+	assertListenerSetNotConflicted(t, firstHostnameListenerSet, "https-first")
+	assertListenerSetConflictedReason(t, secondHostnameListenerSet, "https-second", gatewayapiv1.ListenerEntryReasonHostnameConflict)
 
-	protocolConflictHostname := fmt.Sprintf("protocol-conflict.%s", dnsConfig.Spec.BaseDomain)
+	protocolConflictHostname := fmt.Sprintf("protocol-conflict.%s", domain)
 	protocolConflictSecret := "listenerset-protocol-conflict-cert"
 	if _, err := ensureGatewayTLSSecret(t, listenerSetNamespace.Name, protocolConflictSecret, protocolConflictHostname); err != nil {
 		t.Fatalf("Failed to create protocol-conflict certificate secret: %v", err)
@@ -2085,7 +2144,10 @@ func testGatewayAPIListenerSetConflictedConditions(t *testing.T) {
 		buildHTTPListenerEntry("http", protocolConflictHostname, 8082),
 		buildHTTPSListenerEntry("https", protocolConflictHostname, protocolConflictSecret, 8082, nil),
 	})
-	assertListenerSetConflictedReason(t, protocolConflictListenerSet, gatewayapiv1.ListenerEntryReasonProtocolConflict)
+	// The listener with protocol http should not be conflicted,
+	// but the one with protocol https should be conflicted.
+	assertListenerSetNotConflicted(t, protocolConflictListenerSet, "http")
+	assertListenerSetConflictedReason(t, protocolConflictListenerSet, "https", gatewayapiv1.ListenerEntryReasonProtocolConflict)
 	// Istio does not currently implement the ListenerConflict reason.
 }
 
