@@ -137,6 +137,7 @@ func TestGatewayAPI(t *testing.T) {
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
+	t.Run("testGatewayAPIGatewayClassNameChangeVAPProtection", testGatewayAPIGatewayClassNameChangeVAPProtection)
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	if gatewayAPIWithoutOLMEnabled {
@@ -582,6 +583,35 @@ func testGatewayAPIManagedProfileVAPProtection(t *testing.T) {
 	}
 	require.NoError(t, kclient.Create(t.Context(), exception, client.DryRunAll),
 		"GatewayClass %s must remain user-creatable", exception.Name)
+}
+
+// testGatewayAPIGatewayClassNameChangeVAPProtection verifies the class-change VAP
+// blocks changes to OpenShift-managed classes unless the Gateway is annotated.
+func testGatewayAPIGatewayClassNameChangeVAPProtection(t *testing.T) {
+	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("vap-class-change-"))
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gateway", Namespace: ns.Name},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: "vap-class-change-test",
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Port:     80,
+				Protocol: gatewayapiv1.HTTPProtocolType,
+			}},
+		},
+	}
+	require.NoError(t, createWithRetryOnError(t, context.Background(), gateway, DefaultRetryTimeout))
+
+	// Blocked without the annotation.
+	denied := gateway.DeepCopy()
+	denied.Spec.GatewayClassName = operatorcontroller.OpenShiftClusterIPGatewayClassName
+	assertGatewayClassNameChangeDenied(t, kclient.Update(t.Context(), denied, client.DryRunAll))
+
+	// Unlocked with the annotation.
+	allowed := gateway.DeepCopy()
+	allowed.Spec.GatewayClassName = operatorcontroller.OpenShiftClusterIPGatewayClassName
+	allowed.Annotations = map[string]string{"ingress.operator.openshift.io/allow-gateway-class-change": "true"}
+	require.NoError(t, kclient.Update(t.Context(), allowed, client.DryRunAll), "the annotation must unlock the class change")
 }
 
 // testGatewayAPIManagedProfilesLifecycle verifies class is always recreated and Sail defaults regeneration.

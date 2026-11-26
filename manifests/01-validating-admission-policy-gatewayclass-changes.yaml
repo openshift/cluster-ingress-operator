@@ -1,0 +1,52 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openshift-ingress-operator-gatewayclass-changes
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+    - apiGroups:
+      - gateway.networking.k8s.io
+      apiVersions:
+      - v1
+      operations:
+      - UPDATE
+      resources:
+      - gateways
+      scope: Namespaced
+  matchConditions:
+  # Only evaluate actual gatewayClassName changes.
+  - name: class-changed
+    expression: object.spec.gatewayClassName != oldObject.spec.gatewayClassName
+  # Per-Gateway escape hatch: setting this annotation on the Gateway skips the block.
+  - name: not-overridden
+    expression: >-
+      !(has(object.metadata.annotations) &&
+      'ingress.operator.openshift.io/allow-gateway-class-change' in object.metadata.annotations &&
+      object.metadata.annotations['ingress.operator.openshift.io/allow-gateway-class-change'] == 'true')
+  variables:
+  - name: involvesOpenShiftClass
+    expression: >-
+      oldObject.spec.gatewayClassName.startsWith('openshift-') ||
+      object.spec.gatewayClassName.startsWith('openshift-')
+  - name: previousClassResources
+    expression: oldObject.metadata.name + '-' + oldObject.spec.gatewayClassName
+  validations:
+  - expression: '!variables.involvesOpenShiftClass'
+    messageExpression: >-
+      'Changing gatewayClassName to or from an OpenShift-managed class is
+      blocked because Istio does not garbage-collect the previous GatewayClass
+      resources on a class change
+      (https://github.com/istio/istio/issues/62498). To unlock, run: oc annotate
+      gateway ' + object.metadata.name + ' -n ' + object.metadata.namespace + '
+      ingress.operator.openshift.io/allow-gateway-class-change=true, then
+      re-apply the change and delete any leftover resources named ' +
+      variables.previousClassResources + '.'
+    reason: Forbidden

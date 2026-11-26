@@ -952,6 +952,14 @@ func assertManagedProfileAdmissionDenied(t *testing.T, err error) {
 	require.ErrorContains(t, err, "Only openshift-default may be created by users; all other openshift-* GatewayClass names are reserved for the Ingress Operator")
 }
 
+// assertGatewayClassNameChangeDenied distinguishes the class-change policy from RBAC or schema errors.
+func assertGatewayClassNameChangeDenied(t *testing.T, err error) {
+	t.Helper()
+	require.True(t, kerrors.IsForbidden(err), "expected policy rejection, got %v", err)
+	require.ErrorContains(t, err, "openshift-ingress-operator-gatewayclass-changes")
+	require.ErrorContains(t, err, "allow-gateway-class-change=true")
+}
+
 // assertManagedProfileRecreated verifies direct deletion and a configured replacement with a new UID.
 func assertManagedProfileRecreated(t *testing.T, profile *gatewayapiv1.GatewayClass) {
 	t.Helper()
