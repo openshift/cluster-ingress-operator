@@ -1,6 +1,6 @@
 # cluster-ingress-operator OTE Test Extension — Gateway API, LB Security Groups & Ingress QE Tests
 
-All 35 test cases cover Gateway API CRD lifecycle, AWS NLB security group management, and ported Ingress QE coverage, split across four test files.
+All 38 test cases cover Gateway API CRD lifecycle, AWS NLB security group management, and ported Ingress QE coverage, split across five test files.
 
 ## Test Files
 
@@ -10,6 +10,7 @@ All 35 test cases cover Gateway API CRD lifecycle, AWS NLB security group manage
 | `lb_security_groups.go` | 5 | AWS NLB security group management tests (managed, unmanaged, reconciliation) |
 | `qe/ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
 | `qe/ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
+| `qe/gatewayapicontroller.go` | 3 | Gateway API RBAC, usage metrics, and HPA coverage |
 
 ## Test Suites
 
@@ -20,8 +21,8 @@ feature-gate tag. The families are disjoint, and together they cover every test:
 |--------|-----------|-------|
 | `gateway-api/*` | `[OCPFeatureGate:GatewayAPI]` | 5 |
 | `lb-security-groups/*` | `[OCPFeatureGate:IngressControllerLBSecurityGroupsAWS]` | 5 |
-| `ingress-operator/*` | `[OTP]` | 25 |
-| `ingress/*` | everything (all three families combined) | 35 |
+| `ingress-operator/*` | `[OTP]` | 28 |
+| `ingress/*` | everything (all three families combined) | 38 |
 
 ### gateway-api/parallel
 Gateway API CRD tests (5) — non-Serial, non-Disruptive, non-Slow. Read-only/DryRun, fully independent.

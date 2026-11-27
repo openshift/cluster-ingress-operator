@@ -1,6 +1,6 @@
 # cluster-ingress-operator OTE Test Extension — Ingress QE Tests
 
-The QE package carries 25 test cases migrated from openshift-tests-private:
+The QE package carries 28 test cases migrated from openshift-tests-private:
 
 * 14 IngressController lifecycle, router deployment, routing, and certificate
   cases in `ingress_operator.go`.
@@ -9,9 +9,12 @@ The QE package carries 25 test cases migrated from openshift-tests-private:
   `openshift-tests-private/test/extended/router/ingress.go`. TC41117 is
   intentionally omitted because equivalent IngressClass lifecycle coverage
   already exists in the operator e2e suite.
+* 3 Gateway API RBAC, usage-metric, and HPA cases in
+  `gatewayapicontroller.go`, migrated from
+  `openshift-tests-private/test/extended/router/gatewayapi.go`.
 
-Both files follow the same structure: a single `Network_Edge Component_Router`
-describe block, one `g.It` per case, numbered `g.By` steps, a test-owned
+These files follow the same structure: a single component describe block,
+one `g.It` per case, numbered `g.By` steps, a test-owned
 namespace and fixtures, and cleanup through `defer`. They are registered
 together through the `ingress-operator/*` suites; there is no separate router
 suite family.
@@ -22,6 +25,7 @@ suite family.
 |------|-------|-------------|
 | `ingress_operator.go` | 14 | IngressController lifecycle, router deployment, routing, and certificate tests |
 | `ingress.go` | 11 | Ingress-to-Route conversion, subdomain and shard routing, service recovery, capability, and label propagation |
+| `gatewayapicontroller.go` | 3 | Gateway API RBAC, usage metrics, and HPA coverage |
 
 ## Test naming and registration
 
