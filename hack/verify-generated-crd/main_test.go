@@ -65,6 +65,15 @@ metadata: {name: ingresses.operator.openshift.io}
 			matches: true,
 		},
 		{
+			name: "dnsrecords CRD",
+			manifest: `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: dnsrecords.ingress.operator.openshift.io
+`,
+			matches: true,
+		},
+		{
 			name: "nested name",
 			manifest: `apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition

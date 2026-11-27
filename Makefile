@@ -44,10 +44,10 @@ update: crd sail-rbac
 sail-rbac:
 	hack/update-sail-rbac.sh
 
-# Generate CRDs from vendored and internal API specs.
+# Generate profile-specific manifests.  The ingresses, ingresscontrollers and
+# DNSRecord CRDs are delivered in the release payload by openshift/api.
 .PHONY: crd
 crd:
-	hack/update-generated-crd.sh
 	hack/update-profile-manifests.sh
 
 .PHONY: manifests
