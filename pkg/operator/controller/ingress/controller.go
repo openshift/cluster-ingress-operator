@@ -1096,7 +1096,11 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *con
 		}
 
 		if len(spec.Ciphers) == 0 {
-			errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
+			// APIServer requires an empty cipher list for TLS 1.3-only custom
+			// profiles, so accept an empty list when the minimum is TLS 1.3.
+			if spec.MinTLSVersion != configv1.VersionTLS13 {
+				errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
+			}
 		} else {
 			invalidCiphers := []string{}
 			for _, cipher := range spec.Ciphers {
