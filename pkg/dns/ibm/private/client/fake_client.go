@@ -13,6 +13,13 @@ type FakeDnsClient struct {
 	ListAllDnsRecordsInputOutput ListAllDnsRecordsInputOutput
 	UpdateDnsRecordInputOutput   UpdateDnsRecordInputOutput
 	CreateDnsRecordInputOutput   CreateDnsRecordInputOutput
+
+	// ListResourceRecordsPages allows returning different results per
+	// call to ListResourceRecords. When non-nil, each successive call
+	// returns the next element; ListAllDnsRecordsInputOutput is
+	// ignored.
+	ListResourceRecordsPages []ListAllDnsRecordsInputOutput
+	listCallIndex            int
 }
 
 type DeleteDnsRecordInputOutput struct {
@@ -54,8 +61,16 @@ func (c *FakeDnsClient) ClearCallHistory() {
 func (FakeDnsClient) NewListResourceRecordsOptions(instanceID string, dnszoneID string) *dnssvcsv1.ListResourceRecordsOptions {
 	return &dnssvcsv1.ListResourceRecordsOptions{}
 }
-func (fdc FakeDnsClient) ListResourceRecords(listResourceRecordsOptions *dnssvcsv1.ListResourceRecordsOptions) (result *dnssvcsv1.ListResourceRecords, response *core.DetailedResponse, err error) {
-	// Return the fields in ListAllDnsRecordsInputOutput which will be populated in each of the unit test cases.
+func (fdc *FakeDnsClient) ListResourceRecords(listResourceRecordsOptions *dnssvcsv1.ListResourceRecordsOptions) (result *dnssvcsv1.ListResourceRecords, response *core.DetailedResponse, err error) {
+	if len(fdc.ListResourceRecordsPages) > 0 {
+		idx := fdc.listCallIndex
+		if idx >= len(fdc.ListResourceRecordsPages) {
+			idx = len(fdc.ListResourceRecordsPages) - 1
+		}
+		page := fdc.ListResourceRecordsPages[idx]
+		fdc.listCallIndex++
+		return page.OutputResult, page.OutputResponse, page.OutputError
+	}
 	return fdc.ListAllDnsRecordsInputOutput.OutputResult, fdc.ListAllDnsRecordsInputOutput.OutputResponse, fdc.ListAllDnsRecordsInputOutput.OutputError
 }
 func (FakeDnsClient) NewDeleteResourceRecordOptions(instanceID string, dnszoneID string, recordID string) *dnssvcsv1.DeleteResourceRecordOptions {
