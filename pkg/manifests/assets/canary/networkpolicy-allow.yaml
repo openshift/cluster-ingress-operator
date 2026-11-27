@@ -1,6 +1,14 @@
 # Canary Pods
 #  No egress
 #  Ingress to http on port 8888 and https on port 8443 (TCP)
+#
+# Intentionally omit the ingress "from" clause. Standard Kubernetes NetworkPolicy
+# cannot select hostNetwork sources. OpenShift SDN/OVN-Kubernetes map hostNetwork
+# traffic via policy-group.network.openshift.io/host-network, but other CNIs
+# (for example Calico and Cilium) do not. Omitting "from" allows TCP 8888/8443
+# from any source so canary checks work across supported CNIs. This is less
+# restrictive than ideal; revisit if upstream NetworkPolicy gains better
+# hostNetwork source selection.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 # name, namespace, labels and annotations are set at runtime
@@ -14,14 +22,5 @@ spec:
       port: 8888
     - protocol: TCP
       port: 8443
-    from:
-    # depending on topology, valid canary checks will either appear to come from
-    # the router's namespace or the host network.
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: openshift-ingress
-    - namespaceSelector:
-        matchLabels:
-          policy-group.network.openshift.io/host-network: ""
   policyTypes:
   - Ingress

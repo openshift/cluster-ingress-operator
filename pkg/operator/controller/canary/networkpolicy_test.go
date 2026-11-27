@@ -22,10 +22,14 @@ func Test_desiredCanaryNetworkPolicy(t *testing.T) {
 	if np.Spec.PodSelector.MatchLabels == nil {
 		t.Fatalf("pod selector should be set")
 	}
-	// Ensure ingress rules include ports 8888 and 8443.
+	// Ensure ingress rules include ports 8888 and 8443 and do not restrict
+	// sources via "from" (standard NetworkPolicy cannot select hostNetwork).
 	want := map[int32]struct{}{8888: {}, 8443: {}}
 	got := map[int32]struct{}{}
 	for _, r := range np.Spec.Ingress {
+		if len(r.From) != 0 {
+			t.Fatalf("expected no ingress from peers, got %#v", r.From)
+		}
 		for _, p := range r.Ports {
 			if p.Protocol != nil && *p.Protocol == corev1.ProtocolTCP && p.Port != nil && p.Port.IntVal != 0 {
 				got[p.Port.IntVal] = struct{}{}
