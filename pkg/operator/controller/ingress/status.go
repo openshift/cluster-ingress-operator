@@ -675,6 +675,38 @@ func computeDeploymentRollingOutReason(deployment *appsv1.Deployment) string {
 		}
 	}
 
+	// Like the deployment controller, treat the latest rollout as complete
+	// while "NewReplicaSetAvailable" is set and every counted pod belongs to
+	// the new replica set. Terminating pods are not counted, so an eviction
+	// or a scale-up shows as a shortfall of updated replicas.  Require that
+	// the current generation is observed and that some updated pods exist
+	// and are all ready, as the remaining pods normally are after an
+	// eviction that the pod disruption budget allows.  Requiring ready pods
+	// excludes a rollout whose stale "NewReplicaSetAvailable" condition
+	// (kept after a revert to an existing replica set or a failed status
+	// update) survived the loss of all old pods: the new replica set's pods
+	// are counted before they are ready, and the old replica set's
+	// replacement pods are normally counted before the new pods become
+	// ready.  If they are not, the deployment status cannot distinguish the
+	// two cases.  Report replica failures (failed pod creation or deletion)
+	// as a rollout so that they stay visible.
+	hasReplicaFailure := false
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentReplicaFailure && cond.Status == corev1.ConditionTrue {
+			hasReplicaFailure = true
+			break
+		}
+	}
+	if hasNewReplicaSetAvailable &&
+		!hasReplicaFailure &&
+		currentGen == observedGen &&
+		updatedReplicas > 0 &&
+		updatedReplicas < wantReplicas &&
+		haveReplicas == updatedReplicas &&
+		deployment.Status.ReadyReplicas == updatedReplicas {
+		return ReasonReplicasStabilizing
+	}
+
 	// If rollout was previously completed and now only availability is lagging,
 	// treat it as infrastructure-driven pod startup.
 	if hasNewReplicaSetAvailable &&

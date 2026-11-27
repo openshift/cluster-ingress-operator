@@ -726,9 +726,43 @@ func Test_resetIngressStartupConditionTransitionTimes(t *testing.T) {
 	}
 }
 
+// These are reasons for Deployment conditions that the deployment controller
+// sets.
+const (
+	deploymentNewRSCreatedReason             = "NewReplicaSetCreated"
+	deploymentRSUpdatedReason                = "ReplicaSetUpdated"
+	deploymentProgressDeadlineExceededReason = "ProgressDeadlineExceeded"
+	deploymentFailedCreateReason             = "FailedCreate"
+)
+
 // Test_computeDeploymentRollingOutCondition verifies that
 // computeDeploymentRollingOutCondition returns the expected status condition.
 func Test_computeDeploymentRollingOutCondition(t *testing.T) {
+	// These are Deployment conditions that the deployment controller sets
+	// while a rollout is in progress, when a rollout fails, or when it cannot
+	// create pods.
+	var (
+		newReplicaSetCreated = appsv1.DeploymentCondition{
+			Type:   appsv1.DeploymentProgressing,
+			Status: corev1.ConditionTrue,
+			Reason: deploymentNewRSCreatedReason,
+		}
+		replicaSetUpdated = appsv1.DeploymentCondition{
+			Type:   appsv1.DeploymentProgressing,
+			Status: corev1.ConditionTrue,
+			Reason: deploymentRSUpdatedReason,
+		}
+		progressDeadlineExceeded = appsv1.DeploymentCondition{
+			Type:   appsv1.DeploymentProgressing,
+			Status: corev1.ConditionFalse,
+			Reason: deploymentProgressDeadlineExceededReason,
+		}
+		replicaFailure = appsv1.DeploymentCondition{
+			Type:   appsv1.DeploymentReplicaFailure,
+			Status: corev1.ConditionTrue,
+			Reason: deploymentFailedCreateReason,
+		}
+	)
 	tests := []struct {
 		name                  string
 		replicasWanted        *int32
@@ -740,6 +774,13 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 		expectReasonContains  string
 		differentGeneration   bool
 		hasNewReplicaSet      bool
+		// deploymentConditions are added to the deployment's status
+		// conditions, after the NewReplicaSetAvailable condition if
+		// hasNewReplicaSet is true.
+		deploymentConditions []appsv1.DeploymentCondition
+		// replicasReady defaults to replicasAvailable because available
+		// pods are ready.
+		replicasReady *int32
 	}{
 		{
 			name:                  "Router pod replicas not rolling out",
@@ -826,7 +867,7 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			hasNewReplicaSet:      true,
 		},
 		{
-			name:                  "Router pod replicas have/updated < replicasWanted, generation is equal to observedGeneration and NewReplicaSet created",
+			name:                  "Router pod replicas available < updated, generation is equal to observedGeneration and NewReplicaSet created",
 			expectStatus:          operatorv1.ConditionTrue,
 			replicasHave:          pointer.Int32(4),
 			replicasWanted:        pointer.Int32(4),
@@ -873,6 +914,266 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			differentGeneration:   true,
 			hasNewReplicaSet:      true,
 		},
+		// The following cases cover replica deficits (fewer updated
+		// replicas than desired replicas), rollouts with similar replica
+		// counts, and zero replicas.  The replica set controller does not
+		// count terminating pods, so evicting a pod lowers replicas and
+		// updatedReplicas until its replacement is counted.
+		{
+			name:                  "Router pod evicted after completed rollout, replacement not yet counted",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonReplicasStabilizing,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Two router pods deleted after completed rollout, replacements not yet counted",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "2 out of 4 new replica(s) have been updated",
+			expectReasonContains:  ReasonReplicasStabilizing,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Scale up without pod template change, new pods not yet counted",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(3),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "2 out of 3 new replica(s) have been updated",
+			expectReasonContains:  ReasonReplicasStabilizing,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Replacement pod creation failing after completed rollout",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+			deploymentConditions:  []appsv1.DeploymentCondition{replicaFailure},
+		},
+		{
+			name:                  "Replica deficit with unobserved generation and NewReplicaSetAvailable from previous rollout",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			differentGeneration:   true,
+			hasNewReplicaSet:      true,
+		},
+		{
+			// For example, all pods were deleted, or the deployment was
+			// scaled up from zero together with a pod template change and
+			// the deployment controller has not yet created the new
+			// replica set.
+			name:                  "Replica deficit with no updated replicas and NewReplicaSetAvailable",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(0),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(0),
+			replicasAvailable:     pointer.Int32(0),
+			expectMessageContains: "0 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Pod template rollout with new ReplicaSet created and old replicas remaining",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(0),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "0 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			deploymentConditions:  []appsv1.DeploymentCondition{newReplicaSetCreated},
+		},
+		{
+			name:                  "Pod template rollout with old and updated replicas",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			deploymentConditions:  []appsv1.DeploymentCondition{replicaSetUpdated},
+		},
+		{
+			name:                  "Pod template rollout with last old pod terminating and new pods not all counted",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			deploymentConditions:  []appsv1.DeploymentCondition{replicaSetUpdated},
+		},
+		{
+			// For example, the pod template reverted to that of an
+			// existing replica set, or a scale event and a pod template
+			// change happened together and the deployment controller has
+			// not yet created the new replica set.
+			name:                  "Pod template rollout with old replicas and stale NewReplicaSetAvailable, no updated replicas",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(0),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "0 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Pod template rollout with old replicas and stale NewReplicaSetAvailable, some updated replicas",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Pod template rollout with old replicas and stale NewReplicaSetAvailable, as many ready as updated replicas",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Pod template rollout exceeded its progress deadline without old replicas counted",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			deploymentConditions:  []appsv1.DeploymentCondition{progressDeadlineExceeded},
+		},
+		{
+			name:                  "Pod template rollout exceeded its progress deadline with old replicas remaining",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			deploymentConditions:  []appsv1.DeploymentCondition{progressDeadlineExceeded, replicaFailure},
+		},
+		{
+			name:                  "Replica deficit without Progressing condition",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+		},
+		{
+			name:                  "Deployment scaled to zero replicas",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(0),
+			replicasWanted:        pointer.Int32(0),
+			replicasUpdated:       pointer.Int32(0),
+			replicasAvailable:     pointer.Int32(0),
+			expectMessageContains: "Deployment is not actively rolling out",
+			expectReasonContains:  ReasonNotRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Deployment scaling down to zero replicas",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(0),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "Deployment is not actively rolling out",
+			expectReasonContains:  ReasonNotRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			// The pod template reverted to that of an existing replica
+			// set, which keeps the stale NewReplicaSetAvailable condition,
+			// and the remaining old pods were lost (for example, to a node
+			// failure) before the deployment controller observed rollout
+			// progress.  The new replica set's pod is counted before the
+			// old replica set's replacement pod, while it is still pending.
+			name:                  "Pod template rollout with stale NewReplicaSetAvailable after old pods were lost, new pod not yet ready",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(0),
+			replicasReady:         pointer.Int32(0),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			// For example, a router pod was deleted, or the deployment was
+			// scaled up, while another pod was not ready.
+			name:                  "Replica deficit while an updated pod is not ready",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(3),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(1),
+			replicasReady:         pointer.Int32(1),
+			expectMessageContains: "2 out of 3 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Scale up with generation not yet observed",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(3),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "2 out of 3 new replica(s) have been updated",
+			expectReasonContains:  ReasonDeploymentRollingOut,
+			differentGeneration:   true,
+			hasNewReplicaSet:      true,
+		},
+		{
+			// The router's pod disruption budget counts ready pods as
+			// healthy, so a drain can evict a pod while the other pod is
+			// ready but not yet available (minReadySeconds).
+			name:                  "Router pod evicted while the remaining pod is ready but not yet available",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(0),
+			replicasReady:         pointer.Int32(1),
+			expectMessageContains: "1 out of 2 new replica(s) have been updated",
+			expectReasonContains:  ReasonReplicasStabilizing,
+			hasNewReplicaSet:      true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -883,8 +1184,12 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 				Status: appsv1.DeploymentStatus{
 					Replicas:          *test.replicasHave,
 					AvailableReplicas: *test.replicasAvailable,
+					ReadyReplicas:     *test.replicasAvailable,
 					UpdatedReplicas:   *test.replicasUpdated,
 				},
+			}
+			if test.replicasReady != nil {
+				routerDeploy.Status.ReadyReplicas = *test.replicasReady
 			}
 			if test.differentGeneration {
 				routerDeploy.ObjectMeta.Generation = 2
@@ -902,6 +1207,7 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 					},
 				}
 			}
+			routerDeploy.Status.Conditions = append(routerDeploy.Status.Conditions, test.deploymentConditions...)
 			actual := computeDeploymentRollingOutCondition(routerDeploy)
 			if actual.Status != test.expectStatus {
 				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
@@ -911,6 +1217,307 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			}
 			if len(test.expectReasonContains) != 0 && !strings.Contains(actual.Reason, test.expectReasonContains) {
 				t.Errorf("expected reason to include %q, got %q", test.expectReasonContains, actual.Reason)
+			}
+		})
+	}
+}
+
+// TestComputeIngressProgressingConditionDeploymentSequences verifies the
+// IngressController's Progressing status condition for sequences of router
+// deployment statuses that the deployment controller reports when a node drain
+// evicts a router pod and when the router's pod template changes.  Each step's
+// status reflects the deployment's current generation.
+func TestComputeIngressProgressingConditionDeploymentSequences(t *testing.T) {
+	type step struct {
+		description       string
+		replicas          int32
+		updatedReplicas   int32
+		availableReplicas int32
+		readyReplicas     int32
+		progressingReason string
+		expectProgressing operatorv1.ConditionStatus
+	}
+	testCases := []struct {
+		description     string
+		desiredReplicas int32
+		steps           []step
+	}{
+		{
+			description:     "node drain evicts one of two router pods after a completed rollout",
+			desiredReplicas: 2,
+			steps: []step{{
+				description:       "rollout complete",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "pod evicted, replacement not yet counted",
+				replicas:          1,
+				updatedReplicas:   1,
+				availableReplicas: 1,
+				readyReplicas:     1,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "replacement counted, not yet available",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 1,
+				readyReplicas:     1,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "replacement available",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}},
+		},
+		{
+			// Router deployments for the HostNetwork endpoint publishing
+			// strategy use maxSurge=0 and maxUnavailable=25%, which the
+			// deployment controller raises to 1 when both round down to
+			// 0, so it replaces two pods one at a time.
+			description:     "pod template rollout replaces two router pods one at a time",
+			desiredReplicas: 2,
+			steps: []step{{
+				description:       "new replica set created",
+				replicas:          2,
+				updatedReplicas:   0,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSCreatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "old pod terminating",
+				replicas:          1,
+				updatedReplicas:   0,
+				availableReplicas: 1,
+				readyReplicas:     1,
+				progressingReason: deploymentRSUpdatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "first new pod counted",
+				replicas:          2,
+				updatedReplicas:   1,
+				availableReplicas: 1,
+				readyReplicas:     1,
+				progressingReason: deploymentRSUpdatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "last old pod terminating, second new pod not yet counted",
+				replicas:          1,
+				updatedReplicas:   1,
+				availableReplicas: 1,
+				readyReplicas:     1,
+				progressingReason: deploymentRSUpdatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "second new pod counted, not yet available",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 1,
+				readyReplicas:     1,
+				progressingReason: deploymentRSUpdatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "rollout complete",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}},
+		},
+		{
+			// When the pod template reverts to that of an existing
+			// replica set, the deployment controller keeps the previous
+			// NewReplicaSetAvailable condition until it observes progress
+			// while replicas differs from updatedReplicas.  This sequence
+			// uses a strategy that allows a surge pod, as router
+			// deployments for the LoadBalancerService endpoint publishing
+			// strategy do.
+			description:     "pod template reverts to an existing replica set",
+			desiredReplicas: 2,
+			steps: []step{{
+				description:       "existing replica set scaled up, pod not yet counted",
+				replicas:          2,
+				updatedReplicas:   0,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "first pod counted",
+				replicas:          3,
+				updatedReplicas:   1,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentRSUpdatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}},
+		},
+		{
+			// As in the previous sequence, the deployment controller keeps
+			// the stale NewReplicaSetAvailable condition, but here the
+			// remaining old pod is lost (for example, to a node failure)
+			// before the deployment controller observes progress.  While
+			// replicas equals updatedReplicas, the deployment controller
+			// skips progress estimation, so the condition stays stale until
+			// it next observes progress after the old replica set's
+			// replacement pod is counted.  This sequence uses the
+			// HostNetwork strategy described above.
+			description:     "pod template reverts to an existing replica set while the old pods are lost",
+			desiredReplicas: 2,
+			steps: []step{{
+				description:       "old replica set scaled down, new replica set not yet scaled up",
+				replicas:          2,
+				updatedReplicas:   0,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "remaining old pod lost",
+				replicas:          0,
+				updatedReplicas:   0,
+				availableReplicas: 0,
+				readyReplicas:     0,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "new pod counted before the old replica set's replacement pod",
+				replicas:          1,
+				updatedReplicas:   1,
+				availableReplicas: 0,
+				readyReplicas:     0,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "old replica set's replacement pod counted",
+				replicas:          2,
+				updatedReplicas:   1,
+				availableReplicas: 0,
+				readyReplicas:     0,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}, {
+				description:       "new pod ready",
+				replicas:          2,
+				updatedReplicas:   1,
+				availableReplicas: 0,
+				readyReplicas:     1,
+				progressingReason: deploymentRSUpdatedReason,
+				expectProgressing: operatorv1.ConditionTrue,
+			}},
+		},
+		{
+			// The router's pod disruption budget counts ready pods as
+			// healthy.  If only two nodes can run router pods, the
+			// replacement for a pod that a drain evicted can become ready
+			// on the first node after it returns, shortly before the drain
+			// of the second node evicts the other pod.
+			description:     "drains of two nodes evict both router pods in succession",
+			desiredReplicas: 2,
+			steps: []step{{
+				description:       "first replacement ready, not yet available",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 1,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "second pod evicted, replacement not yet counted",
+				replicas:          1,
+				updatedReplicas:   1,
+				availableReplicas: 0,
+				readyReplicas:     1,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "second replacement counted, not yet ready",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 0,
+				readyReplicas:     1,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "both replacements available",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}},
+		},
+		{
+			// Before these steps, the deployment briefly reports the new
+			// generation as not yet observed, which is reported as a
+			// rollout (see "Scale up with generation not yet observed" in
+			// Test_computeDeploymentRollingOutCondition).
+			description:     "ingresscontroller scaled up from two to three replicas",
+			desiredReplicas: 3,
+			steps: []step{{
+				description:       "new pod not yet counted",
+				replicas:          2,
+				updatedReplicas:   2,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "new pod counted, not yet available",
+				replicas:          3,
+				updatedReplicas:   3,
+				availableReplicas: 2,
+				readyReplicas:     2,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}, {
+				description:       "new pod available",
+				replicas:          3,
+				updatedReplicas:   3,
+				availableReplicas: 3,
+				readyReplicas:     3,
+				progressingReason: deploymentNewRSAvailableReason,
+				expectProgressing: operatorv1.ConditionFalse,
+			}},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			for _, s := range tc.steps {
+				deployment := &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Generation: 1},
+					Spec:       appsv1.DeploymentSpec{Replicas: pointer.Int32(tc.desiredReplicas)},
+					Status: appsv1.DeploymentStatus{
+						ObservedGeneration: 1,
+						Replicas:           s.replicas,
+						UpdatedReplicas:    s.updatedReplicas,
+						AvailableReplicas:  s.availableReplicas,
+						ReadyReplicas:      s.readyReplicas,
+						Conditions: []appsv1.DeploymentCondition{{
+							Type:   appsv1.DeploymentProgressing,
+							Status: corev1.ConditionTrue,
+							Reason: s.progressingReason,
+						}},
+					},
+				}
+				rollingOut := computeDeploymentRollingOutCondition(deployment)
+				progressing := computeIngressProgressingCondition([]operatorv1.OperatorCondition{rollingOut})
+				if progressing.Status != s.expectProgressing {
+					t.Errorf("%s: expected Progressing=%s, got Progressing=%s with DeploymentRollingOut=%s (reason %q, message %q)", s.description, s.expectProgressing, progressing.Status, rollingOut.Status, rollingOut.Reason, rollingOut.Message)
+				}
 			}
 		})
 	}
