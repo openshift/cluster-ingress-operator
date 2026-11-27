@@ -160,6 +160,63 @@
     "environmentSelector": {}
   },
   {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_GatewayAPI Ensure that RBAC works correctly for gatewayAPI resources for unprivileged users [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-81976": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/gatewayapicontroller.go:46",
+      "test/qe/gatewayapicontroller.go:54",
+      "test/qe/gatewayapicontroller.go:68"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_GatewayAPI View metrics showing who is using Gateway API [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-86110": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/gatewayapicontroller.go:46",
+      "test/qe/gatewayapicontroller.go:54",
+      "test/qe/gatewayapicontroller.go:129"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")"
+    }
+  },
+  {
+    "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_GatewayAPI Verify HorizontalPodAutoscaler is configured correctly for Gateway API based on infrastructure topology [Suite:openshift/conformance/parallel]",
+    "labels": {
+      "OCP-88574": {}
+    },
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "codeLocations": [
+      "test/qe/gatewayapicontroller.go:46",
+      "test/qe/gatewayapicontroller.go:54",
+      "test/qe/gatewayapicontroller.go:184"
+    ],
+    "lifecycle": "informing",
+    "environmentSelector": {
+      "include": "apiGroups.exists(api, api==\"config.openshift.io\")"
+    }
+  },
+  {
     "name": "[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router Setting route.openshift.io/termination annotation to Edge/Passthrough/Reencrypt in ingress resource [Suite:openshift/conformance/parallel]",
     "labels": {
       "OCP-33960": {},
