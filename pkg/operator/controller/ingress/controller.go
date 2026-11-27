@@ -1202,9 +1202,9 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	haveRec, _, err := dnsrecord.CurrentDNSRecord(r.client, dnsRecordName)
 	switch {
 	case err != nil:
-		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	case haveRec:
-		errs = append(errs, fmt.Errorf("wildcard dnsrecord exists for ingress %s/%s", ingress.Namespace, ingress.Name))
+		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v. Treating it as present", ingress.Namespace, ingress.Name, err))
+	case err == nil && haveRec:
+		errs = append(errs, fmt.Errorf("found wildcard dnsrecord after delete for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	default:
 		// The router deployment manages the load-balancer service
 		// which is used to find the hosted zone id. Delete the deployment
@@ -1373,7 +1373,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		dnsRecordLabels := map[string]string{
 			manifests.OwningIngressControllerLabel: ci.Name,
 		}
-		if _, record, err := dnsrecord.EnsureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
+		if _, record, err := dnsrecord.EnsureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB, platformStatus); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

@@ -943,6 +943,94 @@ func TestConflictingDNSRecords(t *testing.T) {
 			}},
 		},
 		{
+			name:       "A and AAAA records for the same name should not conflict",
+			recordName: "foo.com",
+			recordType: iov1.AAAARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "foo", "record-foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, earlier),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "True",
+					},
+				},
+			}},
+		},
+		{
+			name:       "CNAME and A records for the same name should conflict",
+			recordName: "foo.com",
+			recordType: iov1.ARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "foo", "record-foo.com", iov1.CNAMERecordType, "lb.example.com", iov1.ManagedDNS, earlier),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "False",
+					},
+				},
+			}},
+		},
+		{
+			name:       "CNAME and AAAA records for the same name should conflict",
+			recordName: "foo.com",
+			recordType: iov1.AAAARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "foo", "record-foo.com", iov1.CNAMERecordType, "lb.example.com", iov1.ManagedDNS, earlier),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "False",
+					},
+				},
+			}},
+		},
+		{
+			name:       "A and CNAME records for the same name should conflict",
+			recordName: "foo.com",
+			recordType: iov1.CNAMERecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "foo", "record-foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, earlier),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "False",
+					},
+				},
+			}},
+		},
+		{
 			name:       "unmanaged record should conflict",
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
@@ -1046,6 +1134,43 @@ func Test_isOldestRecordForDomain(t *testing.T) {
 				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "2.2.2.2", iov1.ManagedDNS, later),
 			},
 			expectOldest: true,
+		},
+		{
+			// The A and AAAA records for a name are independent.
+			name:   "older record of a different address type does not block",
+			record: dnsRecord("foo.com", "ns-a", "record-a-aaaa", iov1.AAAARecordType, "::1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+				dnsRecord("foo.com", "ns-a", "record-a-aaaa", iov1.AAAARecordType, "::1", iov1.ManagedDNS, now),
+			},
+			expectOldest: true,
+		},
+		{
+			name:   "older CNAME blocks a newer A record",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.CNAMERecordType, "lb.example.com", iov1.ManagedDNS, earlier),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "older CNAME blocks a newer AAAA record",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.AAAARecordType, "::1", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.CNAMERecordType, "lb.example.com", iov1.ManagedDNS, earlier),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.AAAARecordType, "::1", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
+		},
+		{
+			name:   "older A record blocks a newer CNAME",
+			record: dnsRecord("foo.com", "ns-b", "record-b", iov1.CNAMERecordType, "lb.example.com", iov1.ManagedDNS, now),
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", "ns-a", "record-a", iov1.ARecordType, "1.1.1.1", iov1.ManagedDNS, earlier),
+				dnsRecord("foo.com", "ns-b", "record-b", iov1.CNAMERecordType, "lb.example.com", iov1.ManagedDNS, now),
+			},
+			expectOldest: false,
 		},
 		{
 			name:   "equal timestamp prefers lexicographically earlier namespace",
