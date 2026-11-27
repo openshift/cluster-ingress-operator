@@ -91,6 +91,29 @@ func TestManifests(t *testing.T) {
 	CanaryServiceAccount()
 }
 
+func TestGatewayAPIEditAggregateRoleIncludesListenerSets(t *testing.T) {
+	adminClusterRole := GatewayAPIAdminClusterRole()
+	if adminClusterRole.Labels["rbac.authorization.k8s.io/aggregate-to-edit"] != "true" {
+		t.Fatalf("expected Gateway API admin ClusterRole %s to aggregate to edit", adminClusterRole.Name)
+	}
+
+	requiredVerbs := []string{"get", "list", "watch", "create", "update", "patch", "delete"}
+	for _, rule := range adminClusterRole.Rules {
+		if !slices.Contains(rule.APIGroups, "gateway.networking.k8s.io") ||
+			!slices.Contains(rule.Resources, "listenersets") {
+			continue
+		}
+		for _, verb := range requiredVerbs {
+			if !slices.Contains(rule.Verbs, verb) {
+				t.Errorf("Gateway API edit aggregation is missing verb %q for listenersets", verb)
+			}
+		}
+		return
+	}
+
+	t.Fatal("Gateway API edit aggregation does not grant permissions for listenersets")
+}
+
 // TestNoWildcardsInOperatorRBAC verifies that the CVO-managed ClusterRole
 // and Role manifests do not use wildcard apiGroups, resources, or verbs.
 // This prevents re-introduction of overly broad RBAC permissions after the

@@ -33,7 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	listenersetstatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/listenerset-status"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -131,6 +130,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectDelete:    []client.Object{},
 			expectStartCtrl: true,
+			expectRequeue:   false,
 		},
 		{
 			name:               "GatewayAPI enabled, GatewayAPIController enabled, marketplace and OLM capabilities disabled",
@@ -311,7 +311,7 @@ func Test_Reconcile(t *testing.T) {
 			res, err := reconciler.Reconcile(context.Background(), req)
 			assert.NoError(t, err)
 			if tc.expectRequeue {
-				assert.Equal(t, reconcile.Result{RequeueAfter: 10 * time.Second}, res, "expected requeue after 10s")
+				assert.Equal(t, reconcile.Result{RequeueAfter: 10 * time.Second}, res)
 			} else {
 				assert.Equal(t, reconcile.Result{}, res)
 			}
@@ -419,7 +419,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 
 func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T) {
 	indexer := newRetryingFakeIndexer()
-	indexer.failures[listenersetstatuscontroller.ListenerSetParentGatewayIndex] = 1
+	indexer.failures[operatorcontroller.GatewayClassIndexFieldName] = 1
 	startCh := make(chan struct{}, 1)
 	ctrl := &testutil.FakeController{T: t, StartNotificationChan: startCh}
 	reconciler := &reconciler{
@@ -430,19 +430,15 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 	}
 
 	err := reconciler.ensureDependentControllers(context.Background())
-	assert.ErrorContains(t, err, "failed to add ListenerSet field indexer")
-	assert.True(t, reconciler.gatewayClassIndexed)
-	assert.False(t, reconciler.listenerSetIndexed)
+	assert.ErrorContains(t, err, "failed to add field indexer")
+	assert.False(t, reconciler.gatewayClassIndexed)
 	assert.False(t, reconciler.controllersStarted)
 	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 1, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
 
 	assert.NoError(t, reconciler.ensureDependentControllers(context.Background()))
 	assert.True(t, reconciler.gatewayClassIndexed)
-	assert.True(t, reconciler.listenerSetIndexed)
 	assert.True(t, reconciler.controllersStarted)
-	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 2, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 2, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
 	select {
 	case <-startCh:
 	case <-time.After(time.Second):
@@ -450,8 +446,7 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 	}
 
 	assert.NoError(t, reconciler.ensureDependentControllers(context.Background()))
-	assert.Equal(t, 1, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
-	assert.Equal(t, 2, indexer.calls[listenersetstatuscontroller.ListenerSetParentGatewayIndex])
+	assert.Equal(t, 2, indexer.calls[operatorcontroller.GatewayClassIndexFieldName])
 	select {
 	case <-startCh:
 		t.Fatal("controller was started more than once")
@@ -460,71 +455,49 @@ func TestEnsureDependentControllersRetriesPartialIndexRegistration(t *testing.T)
 }
 
 func TestEnsureDependentControllersPropagatesCancellation(t *testing.T) {
-	tests := []struct {
-		name                      string
-		waitOnCall                int
-		expectGatewayClassIndexed bool
-		expectListenerSetIndexed  bool
-	}{
-		{
-			name:       "GatewayClass index registration",
-			waitOnCall: 1,
+	indexer := &waitingFakeIndexer{
+		waitOnCall: 1,
+		started:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	startCh := make(chan struct{}, 1)
+	ctrl := &testutil.FakeController{T: t, StartNotificationChan: startCh}
+	reconciler := &reconciler{
+		config: Config{
+			DependentControllers: []controller.Controller{ctrl},
 		},
-		{
-			name:                      "ListenerSet index registration",
-			waitOnCall:                2,
-			expectGatewayClassIndexed: true,
-		},
+		fieldIndexer: indexer,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- reconciler.ensureDependentControllers(ctx)
+	}()
+
+	select {
+	case <-indexer.started:
+	case <-time.After(time.Second):
+		cancel()
+		close(indexer.release)
+		t.Fatal("index registration did not begin waiting")
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			indexer := &waitingFakeIndexer{
-				waitOnCall: tc.waitOnCall,
-				started:    make(chan struct{}),
-				release:    make(chan struct{}),
-			}
-			startCh := make(chan struct{}, 1)
-			ctrl := &testutil.FakeController{T: t, StartNotificationChan: startCh}
-			reconciler := &reconciler{
-				config: Config{
-					DependentControllers: []controller.Controller{ctrl},
-				},
-				fieldIndexer: indexer,
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			errCh := make(chan error, 1)
-			go func() {
-				errCh <- reconciler.ensureDependentControllers(ctx)
-			}()
+	cancel()
+	select {
+	case err := <-errCh:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		close(indexer.release)
+		err := <-errCh
+		t.Fatalf("index registration did not observe cancellation: %v", err)
+	}
 
-			select {
-			case <-indexer.started:
-			case <-time.After(time.Second):
-				cancel()
-				close(indexer.release)
-				t.Fatal("index registration did not begin waiting")
-			}
-
-			cancel()
-			select {
-			case err := <-errCh:
-				assert.ErrorIs(t, err, context.Canceled)
-			case <-time.After(time.Second):
-				close(indexer.release)
-				err := <-errCh
-				t.Fatalf("index registration did not observe cancellation: %v", err)
-			}
-
-			assert.Equal(t, tc.expectGatewayClassIndexed, reconciler.gatewayClassIndexed)
-			assert.Equal(t, tc.expectListenerSetIndexed, reconciler.listenerSetIndexed)
-			assert.False(t, reconciler.controllersStarted)
-			select {
-			case <-startCh:
-				t.Fatal("controller was started after index registration was canceled")
-			default:
-			}
-		})
+	assert.False(t, reconciler.gatewayClassIndexed)
+	assert.False(t, reconciler.controllersStarted)
+	select {
+	case <-startCh:
+		t.Fatal("controller was started after index registration was canceled")
+	default:
 	}
 }
 
@@ -1272,7 +1245,7 @@ func TestReconcile_ManagedAndAbsent_InstallsCRDs(t *testing.T) {
 	res, err := r.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
 	assert.Equal(t, reconcile.Result{RequeueAfter: 10 * time.Second}, res,
-		"gate-ON Managed reconciliation must requeue until the newly created CRDs are established")
+		"newly created CRDs must establish before dependent controllers start")
 
 	assert.True(t, modeAccessor.ShouldManageCRDs(), "Managed + absent must allow CRD management")
 	var crdCount, rbacCount int
