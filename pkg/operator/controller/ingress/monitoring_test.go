@@ -4,8 +4,10 @@ import (
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -48,5 +50,32 @@ func Test_serviceMonitorChanged(t *testing.T) {
 		if changedAgain, _ := serviceMonitorChanged(sm2, sm3); changedAgain {
 			t.Fatal("serviceMonitorChanged does not behave as a fixed-point function")
 		}
+	}
+
+	// Verify that changing serviceDiscoveryRole is detected as a change.
+	sm4 := desiredServiceMonitor(ic, svc, deploymentRef)
+	if err := unstructured.SetNestedField(sm4.Object, "Endpoints", "spec", "serviceDiscoveryRole"); err != nil {
+		t.Fatalf("failed to mutate servicemonitor: %v", err)
+	}
+	if changed, _ := serviceMonitorChanged(sm1, sm4); !changed {
+		t.Fatal("expected changed to be true after mutating serviceDiscoveryRole")
+	}
+}
+
+func Test_metricsRoleChanged(t *testing.T) {
+	role1 := manifests.MetricsRole()
+	role2 := manifests.MetricsRole()
+	if changed, _ := metricsRoleChanged(role1, role2); changed {
+		t.Fatal("expected changed to be false for two roles with identical rules")
+	}
+	role2.Rules = append(role2.Rules, rbacv1.PolicyRule{
+		APIGroups: []string{"example.io"},
+		Resources: []string{"foos"},
+		Verbs:     []string{"get"},
+	})
+	if changed, updated := metricsRoleChanged(role1, role2); !changed {
+		t.Fatal("expected changed to be true after adding a rule")
+	} else if changedAgain, _ := metricsRoleChanged(role2, updated); changedAgain {
+		t.Fatal("metricsRoleChanged does not behave as a fixed-point function")
 	}
 }
