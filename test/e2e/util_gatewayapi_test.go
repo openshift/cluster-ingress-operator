@@ -1045,6 +1045,34 @@ func gatewayListenerConditionMap(conditions ...metav1.Condition) map[string]stri
 	return conds
 }
 
+// waitForGatewayCondition waits for a Gateway condition to report the given
+// status and reason for the Gateway's current generation.
+func waitForGatewayCondition(t *testing.T, gatewayName types.NamespacedName, condition metav1.Condition) error {
+	t.Helper()
+
+	var current *metav1.Condition
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		gateway := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(ctx, gatewayName, gateway); err != nil {
+			t.Logf("failed to get gateway %s, retrying...", gatewayName.Name)
+			return false, nil
+		}
+		current = meta.FindStatusCondition(gateway.Status.Conditions, condition.Type)
+		if current == nil ||
+			current.Status != condition.Status ||
+			current.Reason != condition.Reason ||
+			current.ObservedGeneration != gateway.Generation {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("gateway %s condition %s did not reach %s/%s (last observed: %+v): %w",
+			gatewayName.Name, condition.Type, condition.Status, condition.Reason, current, err)
+	}
+	return nil
+}
+
 // waitForGatewayConditionAbsent waits for the given condition type to be
 // removed from the Gateway's status.
 func waitForGatewayConditionAbsent(t *testing.T, gatewayName types.NamespacedName, conditionType string) error {
@@ -2196,6 +2224,54 @@ func gatewayClassService(t *testing.T, gateway *gatewayapiv1.Gateway, gatewayCla
 		return true, nil
 	})
 	return current, err
+}
+
+// gatewayClassDeployment waits for a Deployment labeled with the given
+// gateway name and gateway class name to appear in the Gateway's namespace.
+func gatewayClassDeployment(t *testing.T, gateway *gatewayapiv1.Gateway, gatewayClassName string) (*appsv1.Deployment, error) {
+	t.Helper()
+	var current *appsv1.Deployment
+	err := wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
+		var deploys appsv1.DeploymentList
+		if err := kclient.List(ctx, &deploys, client.InNamespace(gateway.Namespace), client.MatchingLabels{
+			operatorcontroller.GatewayNameLabelKey:         gateway.Name,
+			"gateway.networking.k8s.io/gateway-class-name": gatewayClassName,
+		}); err != nil {
+			t.Logf("waiting for Deployments for Gateway %s with GatewayClass %s: %v", client.ObjectKeyFromObject(gateway), gatewayClassName, err)
+			return false, nil
+		}
+		if len(deploys.Items) == 0 {
+			t.Logf("waiting for Gateway %s Deployment with GatewayClass %s", client.ObjectKeyFromObject(gateway), gatewayClassName)
+			return false, nil
+		}
+		current = deploys.Items[0].DeepCopy()
+		return true, nil
+	})
+	return current, err
+}
+
+// deleteGatewayDeployment deletes the Deployment and waits for that UID to be
+// gone so it cannot be mistaken for a replacement created under the same name.
+func deleteGatewayDeployment(t *testing.T, deploy *appsv1.Deployment) {
+	t.Helper()
+	key := client.ObjectKeyFromObject(deploy)
+	require.NoError(t, client.IgnoreNotFound(kclient.Delete(t.Context(), deploy, client.Preconditions{UID: &deploy.UID})))
+
+	var current appsv1.Deployment
+	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, key, &current); err != nil {
+			if kerrors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("waiting for Deployment %s to be deleted: %v", key, err)
+			return false, nil
+		}
+		if current.UID != deploy.UID {
+			return true, nil
+		}
+		t.Logf("waiting for Deployment %s (UID %s) to be deleted", key, deploy.UID)
+		return false, nil
+	}))
 }
 
 // deleteGatewayService deletes the Service and waits for that UID to be gone so

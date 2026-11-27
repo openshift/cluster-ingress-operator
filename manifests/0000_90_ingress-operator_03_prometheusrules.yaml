@@ -98,6 +98,15 @@ spec:
           summary: Unmanaged Gateway API CRD detected
           description: "This alert fires when a Custom Resource Definition in the gateway.networking.k8s.io group exists on the cluster that the Cluster Ingress Operator does not manage (for example, a third-party or unexpected CRD). This does not block the operator's own Gateway API CRDs from functioning, but blocks taking over management of Gateway API CRDs (TakeoverBlocked) until resolved, and the CRD is not protected by the operator's ValidatingAdmissionPolicy."
           message: "The Gateway API CRD {{ $labels.name }} is not managed by the Cluster Ingress Operator."
+      - alert: GatewayStaleResources
+        expr: ingress_controller_gateway_api_stale_resources == 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Gateway has stale resources from a previous GatewayClass
+          description: "This alert fires when a Gateway's gatewayClassName changed and resources from the previous GatewayClass were left running. The orphaned resources may keep a cloud load balancer provisioned. See the openshift.io/StaleResources condition on the Gateway for more information: `oc -n {{ $labels.gateway_namespace }} get gateway {{ $labels.gateway_name }} -o yaml`."
+          message: "Gateway {{ $labels.gateway_namespace }}/{{ $labels.gateway_name }} has resources left from a previous GatewayClass."
       # Recording rules related to route metrics for sending via telemetry
       - expr: min(route_metrics_controller_routes_per_shard)
         record: cluster:route_metrics_controller_routes_per_shard:min

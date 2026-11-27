@@ -94,6 +94,10 @@ const (
 	// gateway.
 	GatewayNameLabelKey = "gateway.networking.k8s.io/gateway-name"
 
+	// GatewayClassLabelKey is the key of a label that Istio adds to resources
+	// that it creates for gateways, identifying the gateway's GatewayClass.
+	GatewayClassLabelKey = "gateway.networking.k8s.io/gateway-class-name"
+
 	// ManagedByIstioLabelKey is the key of a label that Istio adds to
 	// resources that it manages.
 	ManagedByIstioLabelKey = "gateway.istio.io/managed"

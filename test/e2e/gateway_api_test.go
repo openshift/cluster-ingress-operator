@@ -143,6 +143,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIManagedProfileClusterIP", testGatewayAPIManagedProfileClusterIP)
 		t.Run("testGatewayAPIManagedProfileVAPProtection", testGatewayAPIManagedProfileVAPProtection)
 		t.Run("testGatewayAPIManagedProfilesLifecycle", testGatewayAPIManagedProfilesLifecycle)
+		t.Run("testGatewayAPIStaleResources", testGatewayAPIStaleResources)
 	} else {
 		t.Run("testGatewayAPIIstioInstallationOLM", testGatewayAPIIstioInstallationOLM)
 	}
@@ -594,6 +595,84 @@ func testGatewayAPIManagedProfilesLifecycle(t *testing.T) {
 	// Defaults replacement must recover association and current profile status.
 	assertManagedProfileDefaultsReplacement(t, profile)
 	require.NoError(t, assertManagedGatewayClassProfiles(t))
+}
+
+// testGatewayAPIStaleResources verifies that changing a Gateway's
+// gatewayClassName surfaces an openshift.io/StaleResources condition and a
+// corresponding Prometheus metric, and that both are cleared when the stale
+// resources or the Gateway itself are deleted.
+func testGatewayAPIStaleResources(t *testing.T) {
+	// Set up two GatewayClasses.
+	clusterIPClass, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftClusterIPGatewayClassName)
+	require.NoError(t, err)
+	defaultClass, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
+	require.NoError(t, err)
+
+	// Create a Gateway with the ClusterIP profile.
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("stale-resources-"))
+	domain := namespace.Name + ".gws." + dnsConfig.Spec.BaseDomain
+	gateway, err := createGateway(t, clusterIPClass, namespace.Name, operatorcontroller.DefaultOperandNamespace, domain)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		deleteWithRetryOnError(t, context.Background(), gateway, DefaultRetryTimeout)
+	})
+
+	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
+	require.NoError(t, err)
+	gatewayKey := client.ObjectKeyFromObject(gateway)
+
+	// Verify no StaleResources condition before any class change.
+	require.NoError(t, waitForGatewayConditionAbsent(t, gatewayKey, "openshift.io/StaleResources"))
+
+	// Record the ClusterIP Service and Deployment so we can verify and clean
+	// them up after the class change.
+	clusterIPService, err := gatewayClassService(t, gateway, clusterIPClass.Name, corev1.ServiceTypeClusterIP)
+	require.NoError(t, err)
+	clusterIPDeploy, err := gatewayClassDeployment(t, gateway, clusterIPClass.Name)
+	require.NoError(t, err)
+
+	// Change the GatewayClass to openshift-default.
+	require.NoError(t, updateGatewaySpecWithRetry(t, gatewayKey, DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.GatewayClassName = gatewayapiv1.ObjectName(defaultClass.Name)
+	}))
+	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
+	require.NoError(t, err)
+
+	// Verify the StaleResources condition appears.
+	require.NoError(t, waitForGatewayCondition(t, gatewayKey, metav1.Condition{
+		Type:   "openshift.io/StaleResources",
+		Status: metav1.ConditionTrue,
+		Reason: "PreviousGatewayClassResourcesFound",
+	}))
+
+	// Verify the stale-resources metric is set.
+	prometheusClient := createPrometheusClient(t)
+	metricQuery := fmt.Sprintf(`ingress_controller_gateway_api_stale_resources{gateway_namespace="%s",gateway_name="%s"}`,
+		gateway.Namespace, gateway.Name)
+	assertMetricValue(t, prometheusClient, metricQuery, 1, "stale-resources metric was not set after GatewayClass change")
+
+	// Delete the stale ClusterIP Service and Deployment.
+	deleteGatewayService(t, clusterIPService)
+	deleteGatewayDeployment(t, clusterIPDeploy)
+
+	// Verify the StaleResources condition is removed.
+	require.NoError(t, waitForGatewayConditionAbsent(t, gatewayKey, "openshift.io/StaleResources"))
+
+	// Verify the metric is cleared.
+	assertMetricGone(t, prometheusClient, metricQuery, "stale-resources metric was not cleared after deleting stale resources")
+
+	// Switch back to the ClusterIP GatewayClass so the openshift-default
+	// Service and Deployment become stale, then verify the metric is set again.
+	require.NoError(t, updateGatewaySpecWithRetry(t, gatewayKey, DefaultRetryTimeout, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.GatewayClassName = gatewayapiv1.ObjectName(clusterIPClass.Name)
+	}))
+	_, err = assertGatewaySuccessful(t, gateway.Namespace, gateway.Name)
+	require.NoError(t, err)
+	assertMetricValue(t, prometheusClient, metricQuery, 1, "stale-resources metric was not set after switching back to the ClusterIP GatewayClass")
+
+	// Deleting the Gateway must clear the metric series too.
+	deleteWithRetryOnError(t, t.Context(), gateway, DefaultRetryTimeout)
+	assertMetricGone(t, prometheusClient, metricQuery, "stale-resources metric was not cleared after deleting the Gateway")
 }
 
 // testGatewayAPIResourcesProtection verifies that the ingress operator's Validating Admission Policy

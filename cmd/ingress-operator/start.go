@@ -16,6 +16,7 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
+	gatewaystatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-status"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
@@ -260,6 +261,10 @@ func start(opts *StartOptions) error {
 	log.Info("registering Prometheus metrics for gatewayapi_controller")
 	if err := gatewayapicontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for gatewayapi_controller")
+	}
+	log.Info("registering Prometheus metrics for gateway_status_controller")
+	if err := gatewaystatuscontroller.RegisterMetrics(); err != nil {
+		log.Error(err, "unable to register metrics for gateway_status_controller")
 	}
 
 	// Set up and start the file watcher.
