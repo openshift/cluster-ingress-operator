@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -45,7 +46,7 @@ var (
 // same structure as ingress_operator.go: each case creates and cleans up its
 // own namespace and fixtures, documents its steps with g.By, and carries its
 // OCP case ID as a Ginkgo label.
-var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router", func() {
+var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress", func() {
 	var (
 		ctx           context.Context
 		kubeClient    kubernetes.Interface
@@ -145,7 +146,7 @@ var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge
 
 		g.By("4. Verify each generated route carries the expected TLS termination")
 		for i, tc := range cases {
-			route := waitForIngressRoute(ctx, dynamicClient, testNS, ingresses[i])
+			route := waitForIngressRoute(ctx, dynamicClient, testNS, ingresses[i], testutil.DefaultTimeout)
 			specTLS, found, err := unstructured.NestedMap(route.Object, "spec", "tls")
 			o.Expect(err).NotTo(o.HaveOccurred(), "failed to read TLS configuration from route %s", route.GetName())
 			if !tc.wantTLS {
@@ -180,7 +181,7 @@ var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge
 		o.Expect(patchIngress(ctx, kubeClient, testNS, ing.Name, []byte(`{"spec":{"ingressClassName":"openshift-default"}}`))).To(o.Succeed(), "failed to set the IngressClass on ingress %s/%s", testNS, ing.Name)
 
 		g.By("4. Confirm the route is created and owned by the ingress")
-		route := waitForIngressRoute(ctx, dynamicClient, testNS, ing)
+		route := waitForIngressRoute(ctx, dynamicClient, testNS, ing, testutil.DefaultTimeout)
 		o.Expect(route.GetOwnerReferences()).To(o.ContainElement(o.HaveField("Name", ing.GetName())))
 
 		g.By("5. Confirm the ingress address is populated with the default router domain")
@@ -547,7 +548,7 @@ var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge
 		o.Expect(err).NotTo(o.HaveOccurred(), "failed to create ingress %q in namespace %s", "invalid-cert", testNS)
 
 		g.By("4. Confirm the generated route is rejected with ExtendedValidationFailed")
-		route := waitForIngressRoute(ctx, dynamicClient, testNS, ing)
+		route := waitForIngressRoute(ctx, dynamicClient, testNS, ing, testutil.DefaultTimeout)
 		o.Expect(waitForRouteStatusContains(ctx, dynamicClient, testNS, route.GetName(), "ExtendedValidationFailed")).To(o.Succeed(), "route %s/%s was not rejected with ExtendedValidationFailed", testNS, route.GetName())
 	})
 
@@ -563,7 +564,7 @@ var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge
 		domain := baseDomain()
 		ing, err := createIngress(ctx, kubeClient, testNS, "label-ingress", "labels."+testNS+".apps."+domain, "service-unsecure", 8080, "", "")
 		o.Expect(err).NotTo(o.HaveOccurred(), "failed to create ingress %q in namespace %s", "label-ingress", testNS)
-		route := waitForIngressRoute(ctx, dynamicClient, testNS, ing)
+		route := waitForIngressRoute(ctx, dynamicClient, testNS, ing, testutil.DefaultTimeout)
 
 		g.By("2. Enable label reconciliation and add a label to the ingress")
 		o.Expect(patchIngress(ctx, kubeClient, testNS, ing.Name,
@@ -607,7 +608,244 @@ var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge
 		o.Expect(waitForRouteLabel(ctx, dynamicClient, testNS, recreated.GetName(), "shard", "beta")).To(o.Succeed(), "recreated route %s/%s did not get label shard=beta", testNS, recreated.GetName())
 		o.Expect(waitForRouteLabel(ctx, dynamicClient, testNS, recreated.GetName(), "Market_01", "No1-In-APEC")).To(o.Succeed(), "recreated route %s/%s did not get label Market_01=No1-In-APEC", testNS, recreated.GetName())
 	})
+
+	//Author:mjoseph
+	g.It("destination-ca-certificate-secret annotation uses an Opaque destination CA certificate", g.Label("OCP-50842"), func() {
+		suffix := utilrand.String(5)
+		g.By("1. Create an Ingress with an Opaque destination CA certificate secret")
+		runDestinationCACertificateCase(ctx, kubeClient, dynamicClient, restConfig, baseDomain(), "ocp50842-"+suffix, "ingress-dca-opq-"+suffix, corev1.SecretTypeOpaque)
+	})
+
+	//Author:mjoseph
+	g.It("destination-ca-certificate-secret annotation uses a TLS destination CA certificate", g.Label("OCP-51980"), func() {
+		suffix := utilrand.String(5)
+		g.By("1. Create an Ingress with a TLS destination CA certificate secret")
+		runDestinationCACertificateCase(ctx, kubeClient, dynamicClient, restConfig, baseDomain(), "ocp51980-"+suffix, "ingress-dca-tls-"+suffix, corev1.SecretTypeTLS)
+	})
 })
+
+// runDestinationCACertificateCase verifies that an Ingress annotation can
+// select a destination CA secret of either Opaque or kubernetes.io/tls type.
+func runDestinationCACertificateCase(
+	ctx context.Context,
+	kubeClient kubernetes.Interface,
+	dynamicClient dynamic.Interface,
+	restConfig *rest.Config,
+	baseDomain, testNS, ingressName string,
+	secretType corev1.SecretType,
+) {
+	icName := "destination-ca-" + ingressName
+
+	g.By("2. Create a test namespace, CA, backend certificate, and TLS backend")
+	o.Expect(testutil.CreateTestNamespace(ctx, kubeClient, testNS)).To(o.Succeed(), "failed to create namespace %s", testNS)
+	defer testutil.CleanupTestNamespace(ctx, kubeClient, testNS, g.GinkgoWriter)
+
+	caPEM, caKeyPEM, certPEM, keyPEM, err := testutil.MakeTestCAAndCertificateWithKey(
+		"service-secure", "service-secure", "service-secure."+testNS+".svc")
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to create the destination CA and backend certificate")
+	o.Expect(testutil.CreateTLSSecret(ctx, kubeClient, testNS, "backend-cert", certPEM, keyPEM)).To(o.Succeed(), "failed to create backend TLS secret in namespace %s", testNS)
+	o.Expect(createTLSServerAndService(ctx, kubeClient, testNS, "backend-cert")).To(o.Succeed(), "failed to create TLS backend in namespace %s", testNS)
+
+	g.By("3. Create the destination CA secret")
+	destinationSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "service-secret", Namespace: testNS},
+		Type:       secretType,
+		Data:       map[string][]byte{"tls.crt": caPEM},
+	}
+	if secretType == corev1.SecretTypeTLS {
+		destinationSecret.Data["tls.key"] = caKeyPEM
+	}
+	_, err = kubeClient.CoreV1().Secrets(testNS).Create(ctx, destinationSecret, metav1.CreateOptions{})
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to create destination CA secret in namespace %s", testNS)
+
+	g.By("4. Create a custom ingresscontroller")
+	icDomain := icName + "." + baseDomain
+	defer testutil.CleanupIC(ctx, dynamicClient, icName, g.GinkgoWriter)
+	o.Expect(testutil.CreateIC(ctx, dynamicClient, icName, icDomain, testutil.WithNodePort())).To(o.Succeed(), "failed to create ingresscontroller %s", icName)
+	o.Expect(testutil.WaitForICAvailable(ctx, dynamicClient, icName, testutil.LongTimeout)).To(o.Succeed(), "ingresscontroller %s did not become available", icName)
+	o.Expect(testutil.WaitForDeployGeneration(ctx, kubeClient, icName, 1, testutil.DefaultTimeout)).To(o.Succeed(), "ingresscontroller %s did not reach deployment generation 1", icName)
+	routerPod, err := testutil.GetRouterPodName(ctx, kubeClient, icName)
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to get router pod for ingresscontroller %s", icName)
+
+	g.By("5. Create a reencrypt Ingress that references the destination CA secret")
+	host := "service-secure-" + testNS + "." + icDomain
+	ingress := newDestinationCAIngress(testNS, ingressName, host, "service-secure", 8443)
+	_, err = kubeClient.NetworkingV1().Ingresses(testNS).Create(ctx, ingress, metav1.CreateOptions{})
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to create ingress %s/%s", testNS, ingressName)
+	// The route controller can lag while reconciling multiple ingress
+	// controllers on a busy cluster; use the same long timeout as the later
+	// router-config and reachability checks.
+	route := waitForIngressRoute(ctx, dynamicClient, testNS, ingress, testutil.LongTimeout)
+
+	g.By("6. Verify the generated route carries the destination CA annotation and expected host")
+	annotations, _, err := unstructured.NestedStringMap(route.Object, "metadata", "annotations")
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read annotations from route %s/%s", testNS, route.GetName())
+	o.Expect(annotations).To(o.HaveKeyWithValue("route.openshift.io/destination-ca-certificate-secret", "service-secret"))
+	routeHost, _, err := unstructured.NestedString(route.Object, "spec", "host")
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read host from route %s/%s", testNS, route.GetName())
+	o.Expect(routeHost).To(o.Equal(host))
+	o.Expect(waitForRouteIngressStatus(ctx, dynamicClient, testNS, route.GetName(), icName, host)).To(o.Succeed(), "ingresscontroller %s did not report the expected host", icName)
+
+	g.By("7. Verify the custom router loads the route backend")
+	backend := "backend be_secure:" + testNS + ":" + route.GetName()
+	o.Expect(eventuallyRouterConfigContains(ctx, restConfig, kubeClient, routerPod, backend, testutil.LongTimeout)).To(o.Succeed(), "router configuration does not contain backend %s", backend)
+
+	g.By("8. Verify the route is reachable through the custom router")
+	curlPod := createCurlPod(ctx, kubeClient, testNS, ingressName+"-curl")
+	o.Expect(testutil.WaitForPodReady(ctx, kubeClient, testNS, "name="+curlPod.Name, testutil.DefaultTimeout)).To(o.Succeed(), "curl pod %s/%s did not become ready", testNS, curlPod.Name)
+	routerAddress := routerPodAddress(ctx, kubeClient, routerPod)
+	var status string
+	o.Expect(wait.PollUntilContextTimeout(ctx, testutil.PollInterval, testutil.LongTimeout, true, func(ctx context.Context) (bool, error) {
+		current, err := curlRouteStatus(ctx, restConfig, kubeClient, testNS, curlPod.Name, host, routerAddress)
+		if err != nil {
+			return false, err
+		}
+		status = current
+		return status == "200", nil
+	})).To(o.Succeed(), "route %s did not become reachable through ingresscontroller %s; last HTTP status: %s", host, icName, status)
+}
+
+// newDestinationCAIngress builds a reencrypt Ingress whose generated Route
+// uses the service-secret destination CA secret.
+func newDestinationCAIngress(namespace, name, host, service string, port int32) *networkingv1.Ingress {
+	ingress := newIngress(namespace, name, host, service, port, "", "", "openshift-default")
+	// The QE fixture and the documented destination-CA Ingress examples leave
+	// ingressClassName unset. Keep that behavior exactly; explicitly selecting
+	// openshift-default is not required for Ingress-to-Route conversion and
+	// diverges from the case being migrated.
+	ingress.Spec.IngressClassName = nil
+	ingress.Annotations["route.openshift.io/destination-ca-certificate-secret"] = "service-secret"
+	ingress.Annotations["route.openshift.io/termination"] = "reencrypt"
+	return ingress
+}
+
+// createTLSServerAndService creates an openssl TLS backend and a service named
+// service-secure. The backend certificate is supplied by secretName.
+func createTLSServerAndService(ctx context.Context, kc kubernetes.Interface, namespace, secretName string) error {
+	labels := map[string]string{"name": "tls-web-server"}
+	allowEscalation := false
+	runAsNonRoot := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "tls-web-server", Namespace: namespace, Labels: labels},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: &runAsNonRoot,
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
+			Containers: []corev1.Container{{
+				Name:  "tls-web-server",
+				Image: testutil.WebServerImage,
+				Command: []string{
+					"openssl", "s_server", "-accept", "8443",
+					"-cert", "/certs/tls.crt", "-key", "/certs/tls.key", "-www",
+				},
+				Ports: []corev1.ContainerPort{{ContainerPort: 8443, Name: "https"}},
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      "backend-cert",
+					MountPath: "/certs",
+					ReadOnly:  true,
+				}},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &allowEscalation,
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
+			}},
+			Volumes: []corev1.Volume{{
+				Name: "backend-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{SecretName: secretName},
+				},
+			}},
+		},
+	}
+	if _, err := kc.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		return err
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "service-secure", Namespace: namespace, Labels: labels},
+		Spec: corev1.ServiceSpec{
+			Selector: labels,
+			Ports: []corev1.ServicePort{{
+				Name:       "https",
+				Port:       8443,
+				TargetPort: intstr.FromInt32(8443),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+		},
+	}
+	if _, err := kc.CoreV1().Services(namespace).Create(ctx, service, metav1.CreateOptions{}); err != nil {
+		return err
+	}
+	return testutil.WaitForPodReady(ctx, kc, namespace, "name=tls-web-server", testutil.DefaultTimeout)
+}
+
+// createCurlPod creates a long-lived tools pod used to execute curl commands.
+func createCurlPod(ctx context.Context, kc kubernetes.Interface, namespace, name string) *corev1.Pod {
+	allowEscalation := false
+	runAsNonRoot := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    map[string]string{"name": name},
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: &runAsNonRoot,
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
+			Containers: []corev1.Container{{
+				Name:    "curl",
+				Image:   testutil.WebServerImage,
+				Command: []string{"sleep", "600"},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &allowEscalation,
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
+			}},
+		},
+	}
+	_, err := kc.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to create curl pod %s/%s", namespace, name)
+	return pod
+}
+
+// routerPodAddress returns the primary IP address of a router pod.
+func routerPodAddress(ctx context.Context, kc kubernetes.Interface, podName string) string {
+	pod, err := kc.CoreV1().Pods(testutil.IngressNamespace).Get(ctx, podName, metav1.GetOptions{})
+	o.Expect(err).NotTo(o.HaveOccurred(), "failed to get router pod %s/%s", testutil.IngressNamespace, podName)
+	o.Expect(pod.Status.PodIP).NotTo(o.BeEmpty(), "router pod %s has no IP address", podName)
+	return pod.Status.PodIP
+}
+
+// curlRouteStatus curls a route through a router pod address and returns the
+// HTTP status emitted by curl.
+func curlRouteStatus(ctx context.Context, restConfig *rest.Config, kc kubernetes.Interface, namespace, podName, host, routerAddress string) (string, error) {
+	command := []string{
+		"curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}",
+		"--resolve", curlResolve(host, 443, routerAddress), "https://" + host,
+	}
+	stdout, _, err := testutil.ExecInPod(ctx, restConfig, kc, namespace, podName, "curl", command)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// curlResolve formats a curl --resolve value and brackets IPv6 addresses.
+func curlResolve(host string, port int, address string) string {
+	if strings.Contains(address, ":") {
+		address = "[" + address + "]"
+	}
+	return fmt.Sprintf("%s:%d:%s", host, port, address)
+}
 
 // createIngress creates an Ingress in the default IngressClass.
 func createIngress(ctx context.Context, kc kubernetes.Interface, namespace, name, host, service string, port int32, termination, tlsSecret string) (*networkingv1.Ingress, error) {
@@ -704,9 +942,9 @@ func routeOwnedByIngress(ctx context.Context, dc dynamic.Interface, namespace st
 	return false, nil
 }
 
-func waitForIngressRoute(ctx context.Context, dc dynamic.Interface, namespace string, ingress *networkingv1.Ingress) *unstructured.Unstructured {
+func waitForIngressRoute(ctx context.Context, dc dynamic.Interface, namespace string, ingress *networkingv1.Ingress, timeout time.Duration) *unstructured.Unstructured {
 	var result *unstructured.Unstructured
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, testutil.DefaultTimeout, true, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		routes, err := dc.Resource(testutil.RouteGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, err
