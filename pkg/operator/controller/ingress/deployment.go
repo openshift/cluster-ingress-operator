@@ -35,6 +35,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/utils/ptr"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -153,6 +154,13 @@ const (
 
 	RouterEnableEndpointAddressValidation = "ROUTER_ENABLE_ENDPOINT_ADDRESS_VALIDATION"
 
+	// RouterQAT enables Intel QuickAssist Technology (QAT) offload in the
+	// router.
+	RouterQAT = "ROUTER_QAT"
+	// QATCryptoResourceName is the extended resource advertised by the
+	// Intel QAT device plugin for crypto (cy) instances.
+	QATCryptoResourceName corev1.ResourceName = "qat.intel.com/cy"
+
 	RouterServiceHTTPPort  = "ROUTER_SERVICE_HTTP_PORT"
 	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
 	StatsPort              = "STATS_PORT"
@@ -173,6 +181,11 @@ const (
 	// NOTE: it is hardcoded in the deployment.yaml manifest, update there if updating here.
 	routerHAProxyAdminSocket = "/var/lib/haproxy/run/admin.sock"
 )
+
+// qatMinHAProxyVersion is the first HAProxy version whose image ships
+// qatengine. We can consider removing minimal HAProxy version validation
+// as soon as `HAProxyVersion34` is removed from the API.
+var qatMinHAProxyVersion = utilversion.MustParseGeneric(string(operatorv1.HAProxyVersion34))
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
@@ -602,6 +615,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		// the validation altogher. "DenyAll" denies any hostname configuration, only IPv4 or IPv6 address is accepted.
 		// The default behavior is "DenyAll" if the configuration is missing.
 		HostnameTargetReferencePolicy string `json:"hostnameTargetReferencePolicy"`
+		// qatCryptoLimit enables Intel QAT offload in the router, and configures
+		// the number of QAT crypto instances (qat.intel.com/cy) assigned to the
+		// haproxy container. QAT is disabled if the value is missing, empty or
+		// zero; negative or non-numeric values are rejected. Requires QAT-capable
+		// nodes and the Intel QAT device plugin.
+		QATCryptoLimit string `json:"qatCryptoLimit"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -704,6 +723,15 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		// skips the configuration, router defaults to enable the validation
 	default:
 		return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.hostnameTargetReferencePolicy: %s", ci.Name, unsupportedConfigOverrides.HostnameTargetReferencePolicy)
+	}
+
+	var qatCryptoLimit int
+	if unsupportedConfigOverrides.QATCryptoLimit != "" {
+		v, err := strconv.Atoi(unsupportedConfigOverrides.QATCryptoLimit)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.qatCryptoLimit: %q is not a non-negative integer", ci.Name, unsupportedConfigOverrides.QATCryptoLimit)
+		}
+		qatCryptoLimit = v
 	}
 
 	if len(ci.Status.Domain) > 0 {
@@ -849,11 +877,43 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	deployment.Spec.Template.Spec.Containers[0].Image = config.IngressControllerImage
 
 	// haproxy image.
-	_, haproxyImage, err := getEffectiveHAProxyVersionAndImage(ci, config, ingressConfig)
+	haproxyVersion, haproxyImage, err := getEffectiveHAProxyVersionAndImage(ci, config, ingressConfig)
 	if err != nil {
 		return nil, err
 	}
 	deployment.Spec.Template.Spec.InitContainers[1].Image = haproxyImage
+
+	if qatCryptoLimit > 0 {
+		// qatengine is only shipped in HAProxy images starting on qatMinHAProxyVersion.
+		if v, err := utilversion.ParseGeneric(string(haproxyVersion)); err != nil || !v.AtLeast(qatMinHAProxyVersion) {
+			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.qatCryptoLimit: QAT requires HAProxy %s or newer, effective HAProxy version is %q", ci.Name, qatMinHAProxyVersion, haproxyVersion)
+		}
+		// Extended resources cannot be overcommitted: requests must equal
+		// limits. Pods would default requests from limits, but we set both
+		// explicitly so the expected pod template matches what is stored.
+		//
+		// TODO: The quantity is parsed from its canonical string form, the
+		// same way it is decoded from the API server, otherwise its internal
+		// state differs from the stored deployment and changes its hash on
+		// every reconciliation. Consider normalizing quantities in
+		// hashableContainer() instead, so callers can use NewQuantity()
+		// directly. Note that this changes the template hash of every router
+		// deployment, leading to a one-time rollout on upgrades and downgrades.
+		qatQuantity := resource.MustParse(resource.NewQuantity(int64(qatCryptoLimit), resource.DecimalSI).String())
+		haproxyResources := &deployment.Spec.Template.Spec.InitContainers[1].Resources
+		if haproxyResources.Requests == nil {
+			haproxyResources.Requests = corev1.ResourceList{}
+		}
+		if haproxyResources.Limits == nil {
+			haproxyResources.Limits = corev1.ResourceList{}
+		}
+		haproxyResources.Requests[QATCryptoResourceName] = qatQuantity
+		haproxyResources.Limits[QATCryptoResourceName] = qatQuantity
+		env = append(env, corev1.EnvVar{
+			Name:  RouterQAT,
+			Value: "true",
+		})
+	}
 
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
