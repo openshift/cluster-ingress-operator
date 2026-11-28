@@ -45,6 +45,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -273,6 +274,461 @@ func createGatewayWithListeners(t *testing.T, gatewayClass *gatewayapiv1.Gateway
 	}
 
 	return gateway, nil
+}
+
+func labelNamespace(t *testing.T, namespace *corev1.Namespace, labels map[string]string) {
+	t.Helper()
+	original := namespace.DeepCopy()
+	if namespace.Labels == nil {
+		namespace.Labels = map[string]string{}
+	}
+	for key, value := range labels {
+		namespace.Labels[key] = value
+	}
+	if err := kclient.Patch(context.Background(), namespace, client.MergeFrom(original)); err != nil {
+		t.Fatalf("Failed to label namespace %s: %v", namespace.Name, err)
+	}
+}
+
+func createListenerSetGateway(t *testing.T, gatewayClass *gatewayapiv1.GatewayClass, name string, allowedListeners *gatewayapiv1.AllowedListeners) *gatewayapiv1.Gateway {
+	t.Helper()
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			AllowedListeners: allowedListeners,
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.%s.gwapi.%s", name, dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+	if err := createWithRetryOnError(t, context.Background(), gateway, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gateway); err != nil && !kerrors.IsNotFound(err) {
+			t.Logf("Failed to delete gateway %v: %v", name, err)
+		}
+	})
+	if _, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name); err != nil {
+		t.Fatalf("Failed to program gateway %s: %v", name, err)
+	}
+	return gateway
+}
+
+func buildListenerSet(gateway *gatewayapiv1.Gateway, namespace, name, hostname, secretName, listenerName string, allowedRoutes *gatewayapiv1.AllowedRoutes) *gatewayapiv1.ListenerSet {
+	return buildListenerSetWithListeners(gateway, namespace, name, []gatewayapiv1.ListenerEntry{
+		buildHTTPSListenerEntry(listenerName, hostname, secretName, 443, allowedRoutes),
+	})
+}
+
+func buildListenerSetWithListeners(gateway *gatewayapiv1.Gateway, namespace, name string, listeners []gatewayapiv1.ListenerEntry) *gatewayapiv1.ListenerSet {
+	return &gatewayapiv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gatewayapiv1.ListenerSetSpec{
+			ParentRef: gatewayapiv1.ParentGatewayReference{
+				Name:      gatewayapiv1.ObjectName(gateway.Name),
+				Namespace: ptr.To(gatewayapiv1.Namespace(gateway.Namespace)),
+			},
+			Listeners: listeners,
+		},
+	}
+}
+
+func buildHTTPListenerEntry(name, hostname string, port gatewayapiv1.PortNumber) gatewayapiv1.ListenerEntry {
+	return gatewayapiv1.ListenerEntry{
+		Name:     gatewayapiv1.SectionName(name),
+		Hostname: ptr.To(gatewayapiv1.Hostname(hostname)),
+		Port:     port,
+		Protocol: gatewayapiv1.HTTPProtocolType,
+	}
+}
+
+func buildHTTPSListenerEntry(name, hostname, secretName string, port gatewayapiv1.PortNumber, allowedRoutes *gatewayapiv1.AllowedRoutes) gatewayapiv1.ListenerEntry {
+	return gatewayapiv1.ListenerEntry{
+		Name:          gatewayapiv1.SectionName(name),
+		Hostname:      ptr.To(gatewayapiv1.Hostname(hostname)),
+		Port:          port,
+		Protocol:      gatewayapiv1.HTTPSProtocolType,
+		AllowedRoutes: allowedRoutes,
+		TLS: &gatewayapiv1.ListenerTLSConfig{
+			Mode: ptr.To(gatewayapiv1.TLSModeTerminate),
+			CertificateRefs: []gatewayapiv1.SecretObjectReference{{
+				Name: gatewayapiv1.ObjectName(secretName),
+			}},
+		},
+	}
+}
+
+func createListenerSet(t *testing.T, gateway *gatewayapiv1.Gateway, namespace, name, hostname, secretName, listenerName string, allowedRoutes *gatewayapiv1.AllowedRoutes) *gatewayapiv1.ListenerSet {
+	t.Helper()
+	listenerSet := buildListenerSet(gateway, namespace, name, hostname, secretName, listenerName, allowedRoutes)
+	return createListenerSetObject(t, listenerSet)
+}
+
+func createListenerSetWithListeners(t *testing.T, gateway *gatewayapiv1.Gateway, namespace, name string, listeners []gatewayapiv1.ListenerEntry) *gatewayapiv1.ListenerSet {
+	t.Helper()
+	listenerSet := buildListenerSetWithListeners(gateway, namespace, name, listeners)
+	return createListenerSetObject(t, listenerSet)
+}
+
+func createListenerSetObject(t *testing.T, listenerSet *gatewayapiv1.ListenerSet) *gatewayapiv1.ListenerSet {
+	t.Helper()
+	if err := createWithRetryOnError(t, context.Background(), listenerSet, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create ListenerSet %s/%s: %v", listenerSet.Namespace, listenerSet.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), listenerSet); err != nil && !kerrors.IsNotFound(err) {
+			t.Logf("Failed to delete ListenerSet %v: %v", listenerSet.Name, err)
+		}
+	})
+	return listenerSet
+}
+
+func assertListenerSetConflictedReason(t *testing.T, listenerSet *gatewayapiv1.ListenerSet, listenerName gatewayapiv1.SectionName, reason gatewayapiv1.ListenerEntryConditionReason) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
+			t.Logf("Failed to get ListenerSet %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		for _, listenerStatus := range listenerSet.Status.Listeners {
+			if listenerStatus.Name != listenerName {
+				continue
+			}
+			condition := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionConflicted))
+			if condition == nil {
+				continue
+			}
+			if condition.Status == metav1.ConditionTrue && condition.Reason == string(reason) {
+				return true, nil
+			}
+		}
+		t.Logf("ListenerSet %v listener %q has no Conflicted=True condition with reason %q yet; status: %+v", nsName, listenerName, reason, listenerSet.Status.Listeners)
+		return false, nil
+	}); err != nil {
+		t.Fatalf("ListenerSet %v listener %q did not report Conflicted=True with reason %q: %v", nsName, listenerName, reason, err)
+	}
+}
+
+func assertListenerSetNotConflicted(t *testing.T, listenerSet *gatewayapiv1.ListenerSet, listenerName gatewayapiv1.SectionName) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
+			t.Logf("Failed to get ListenerSet %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		for _, listenerStatus := range listenerSet.Status.Listeners {
+			if listenerStatus.Name != listenerName {
+				continue
+			}
+			condition := meta.FindStatusCondition(listenerStatus.Conditions, string(gatewayapiv1.ListenerEntryConditionConflicted))
+			if condition == nil {
+				continue
+			}
+			if condition.Status == metav1.ConditionFalse && condition.Reason == string(gatewayapiv1.ListenerReasonNoConflicts) {
+				return true, nil
+			}
+		}
+		t.Logf("ListenerSet %v listener %q has no Conflicted=False condition with reason %q yet; status: %+v", nsName, listenerName, gatewayapiv1.ListenerReasonNoConflicts, listenerSet.Status.Listeners)
+		return false, nil
+	}); err != nil {
+		t.Fatalf("ListenerSet %v listener %q did not report Conflicted=False with reason %q: %v", nsName, listenerName, gatewayapiv1.ListenerReasonNoConflicts, err)
+	}
+}
+
+func assertListenerSetStatus(t *testing.T, listenerSet *gatewayapiv1.ListenerSet, expected bool) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
+	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
+			t.Logf("Failed to get ListenerSet %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		acceptedCondition := meta.FindStatusCondition(listenerSet.Status.Conditions, string(gatewayapiv1.ListenerSetConditionAccepted))
+		programmedCondition := meta.FindStatusCondition(listenerSet.Status.Conditions, string(gatewayapiv1.ListenerSetConditionProgrammed))
+		if acceptedCondition == nil || programmedCondition == nil {
+			t.Logf("ListenerSet %v does not yet have Accepted and Programmed conditions; status: %+v", nsName, listenerSet.Status.Conditions)
+			return false, nil
+		}
+		acceptedStatus := acceptedCondition.Status
+		programmedStatus := programmedCondition.Status
+		// ConditionUnknown is not rejection; keep polling for a final status.
+		if !conditionStatusesMatchExpected(expected, acceptedStatus, programmedStatus) {
+			t.Logf("ListenerSet %v accepted=%v programmed=%v; want both %v", nsName, acceptedStatus, programmedStatus, conditionStatusForExpected(expected))
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("ListenerSet %v did not reach accepted=%v: %v", nsName, expected, err)
+	}
+}
+
+func createListenerSetBackend(t *testing.T, namespace, name string) {
+	t.Helper()
+	echoReplicaSet := buildEchoReplicaSet(name, namespace)
+	if err := createWithRetryOnError(t, context.Background(), echoReplicaSet, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create backend ReplicaSet in %s: %v", namespace, err)
+	}
+	echoService := buildEchoService(echoReplicaSet.Name, namespace, echoReplicaSet.Spec.Template.Labels)
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create backend Service in %s: %v", namespace, err)
+	}
+}
+
+func buildListenerSetHTTPRoute(routeName, routeNamespace, listenerSetName, listenerSetNamespace, hostname, backendName, listenerName string) *gatewayapiv1.HTTPRoute {
+	parentGroup := gatewayapiv1.Group("gateway.networking.k8s.io")
+	parentKind := gatewayapiv1.Kind("ListenerSet")
+	parentNamespace := gatewayapiv1.Namespace(listenerSetNamespace)
+	parentSectionName := gatewayapiv1.SectionName(listenerName)
+	return &gatewayapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routeName,
+			Namespace: routeNamespace,
+		},
+		Spec: gatewayapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{
+				ParentRefs: []gatewayapiv1.ParentReference{{
+					Group:       &parentGroup,
+					Kind:        &parentKind,
+					Namespace:   &parentNamespace,
+					Name:        gatewayapiv1.ObjectName(listenerSetName),
+					SectionName: &parentSectionName,
+				}},
+			},
+			Hostnames: []gatewayapiv1.Hostname{gatewayapiv1.Hostname(hostname)},
+			Rules: []gatewayapiv1.HTTPRouteRule{{
+				BackendRefs: []gatewayapiv1.HTTPBackendRef{{
+					BackendRef: gatewayapiv1.BackendRef{
+						BackendObjectReference: gatewayapiv1.BackendObjectReference{
+							Name: gatewayapiv1.ObjectName(backendName),
+							Port: ptr.To(gatewayapiv1.PortNumber(80)),
+						},
+					},
+				}},
+			}},
+		},
+	}
+}
+
+func createListenerSetHTTPRoute(t *testing.T, routeName, routeNamespace, listenerSetName, listenerSetNamespace, hostname, backendName, listenerName string) *gatewayapiv1.HTTPRoute {
+	t.Helper()
+	httpRoute := buildListenerSetHTTPRoute(routeName, routeNamespace, listenerSetName, listenerSetNamespace, hostname, backendName, listenerName)
+	if err := createWithRetryOnError(t, context.Background(), httpRoute, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create HTTPRoute attached to ListenerSet: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), httpRoute); err != nil && !kerrors.IsNotFound(err) {
+			t.Logf("Failed to delete HTTPRoute %v: %v", routeName, err)
+		}
+	})
+	return httpRoute
+}
+
+func assertListenerSetHTTPRouteAccepted(t *testing.T, httpRoute *gatewayapiv1.HTTPRoute, listenerSetName string, accepted bool) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: httpRoute.Namespace, Name: httpRoute.Name}
+	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, httpRoute); err != nil {
+			t.Logf("Failed to get HTTPRoute %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		if len(httpRoute.Status.Parents) == 0 {
+			t.Logf("HTTPRoute %v has no parent status yet", nsName)
+			return false, nil
+		}
+		parent := httpRoute.Status.Parents[0]
+		if parent.ParentRef.Name != gatewayapiv1.ObjectName(listenerSetName) {
+			t.Logf("HTTPRoute %v attached to unexpected parent %v", nsName, parent.ParentRef.Name)
+			return false, nil
+		}
+		acceptedCondition := meta.FindStatusCondition(parent.Conditions, string(gatewayapiv1.RouteConditionAccepted))
+		if acceptedCondition == nil {
+			t.Logf("HTTPRoute %v has no Accepted condition yet", nsName)
+			return false, nil
+		}
+		acceptedStatus := acceptedCondition.Status
+		// ConditionUnknown is not rejection; keep polling for a final status.
+		if !conditionStatusesMatchExpected(accepted, acceptedStatus) {
+			t.Logf("HTTPRoute %v accepted=%v; want %v", nsName, acceptedStatus, conditionStatusForExpected(accepted))
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("HTTPRoute %v did not reach accepted=%v: %v", nsName, accepted, err)
+	}
+}
+
+func conditionStatusesMatchExpected(expected bool, statuses ...metav1.ConditionStatus) bool {
+	for _, status := range statuses {
+		if expected {
+			if status != metav1.ConditionTrue {
+				return false
+			}
+			continue
+		}
+		if status != metav1.ConditionFalse {
+			return false
+		}
+	}
+	return true
+}
+
+func conditionStatusForExpected(expected bool) metav1.ConditionStatus {
+	if expected {
+		return metav1.ConditionTrue
+	}
+	return metav1.ConditionFalse
+}
+
+// waitForGatewayLoadBalancerAddresses returns every address published by the
+// Gateway's LoadBalancer Service. It waits until the same non-empty address
+// set has been observed on two consecutive polls, because providers may
+// publish additional addresses asynchronously.
+func waitForGatewayLoadBalancerAddresses(t *testing.T, gateway *gatewayapiv1.Gateway) []string {
+	t.Helper()
+	var (
+		addresses []string
+		previous  []string
+	)
+	service := &corev1.Service{}
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, operatorcontroller.LoadBalancerServiceNameFromGatewayName(gateway.Name), service); err != nil {
+			t.Logf("Failed to get gateway LoadBalancer Service %v: %v; retrying...", operatorcontroller.LoadBalancerServiceNameFromGatewayName(gateway.Name), err)
+			return false, nil
+		}
+
+		current := make([]string, 0, len(service.Status.LoadBalancer.Ingress))
+		for _, ingress := range service.Status.LoadBalancer.Ingress {
+			address := ingress.Hostname
+			if address == "" {
+				address = ingress.IP
+			}
+			if address != "" {
+				current = append(current, address)
+			}
+		}
+		slices.Sort(current)
+		if len(current) == 0 {
+			previous = nil
+			t.Logf("Gateway LoadBalancer Service %s/%s has no ingress addresses yet", service.Namespace, service.Name)
+			return false, nil
+		}
+		if !slices.Equal(current, previous) {
+			previous = current
+			t.Logf("Gateway LoadBalancer Service %s/%s published addresses %v; waiting for them to stabilize", service.Namespace, service.Name, current)
+			return false, nil
+		}
+		addresses = current
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Failed to get addresses for gateway LoadBalancer Service: %v", err)
+	}
+	return addresses
+}
+
+// assertListenerSetTLSCertificate performs a TLS handshake against every
+// Gateway load-balancer address until one returns the expected certificate.
+func assertListenerSetTLSCertificate(t *testing.T, addresses []string, serverName, expectedCommonName string) error {
+	t.Helper()
+
+	// Istio can report ListenerSet Programmed=True before every Gateway
+	// endpoint has the updated certificate configuration, so retry the
+	// handshake until it returns the expected certificate.
+	var lastErr error
+	if err := wait.PollUntilContextTimeout(t.Context(), 2*time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		for _, address := range addresses {
+			dialer := &tls.Dialer{
+				NetDialer: &net.Dialer{Timeout: 10 * time.Second},
+				Config: &tls.Config{
+					ServerName: serverName,
+					// Certificate trust is intentionally not checked here;
+					// the certificate identity is verified below.
+					InsecureSkipVerify: true,
+				},
+			}
+			conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(address, "443"))
+			if err != nil {
+				lastErr = fmt.Errorf("failed TLS handshake for SNI %q through %q: %w", serverName, address, err)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+
+			tlsConn, ok := conn.(*tls.Conn)
+			if !ok {
+				closeErr := conn.Close()
+				lastErr = fmt.Errorf("TLS handshake for SNI %q through %q returned connection type %T", serverName, address, conn)
+				if closeErr != nil {
+					lastErr = fmt.Errorf("%v; failed to close connection: %w", lastErr, closeErr)
+				}
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			defer func() {
+				if err := tlsConn.Close(); err != nil {
+					t.Logf("Failed to close TLS connection for SNI %q through %q: %v", serverName, address, err)
+				}
+			}()
+
+			peerCertificates := tlsConn.ConnectionState().PeerCertificates
+			if len(peerCertificates) == 0 {
+				lastErr = fmt.Errorf("TLS handshake for SNI %q through %q returned no peer certificate", serverName, address)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			if err := peerCertificates[0].VerifyHostname(serverName); err != nil {
+				lastErr = fmt.Errorf("certificate selected for SNI %q through %q does not match that hostname: %w", serverName, address, err)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			if peerCertificates[0].Subject.CommonName != expectedCommonName {
+				lastErr = fmt.Errorf("TLS handshake for SNI %q through %q selected certificate %q; expected %q", serverName, address, peerCertificates[0].Subject.CommonName, expectedCommonName)
+				t.Logf("%v; retrying...", lastErr)
+				continue
+			}
+			return true, nil
+		}
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("failed to observe expected certificate for SNI %q: %w; last error: %v", serverName, err, lastErr)
+	}
+	return nil
+}
+
+// assertGatewayAttachedListenerSets waits until the Gateway reports the
+// expected number of successfully attached ListenerSets.
+func assertGatewayAttachedListenerSets(t *testing.T, gateway *gatewayapiv1.Gateway, expected int32) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: gateway.Namespace, Name: gateway.Name}
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		currentGateway := &gatewayapiv1.Gateway{}
+		if err := kclient.Get(ctx, nsName, currentGateway); err != nil {
+			t.Logf("Failed to get Gateway %v: %v; retrying...", nsName, err)
+			return false, nil
+		}
+		if currentGateway.Status.AttachedListenerSets == nil {
+			t.Logf("Gateway %v has no attachedListenerSets status yet", nsName)
+			return false, nil
+		}
+		if *currentGateway.Status.AttachedListenerSets != expected {
+			t.Logf("Gateway %v has %d attached ListenerSets; expected %d", nsName, *currentGateway.Status.AttachedListenerSets, expected)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Gateway %v did not report %d attached ListenerSets: %v", nsName, expected, err)
+	}
 }
 
 // createGatewayClass checks if the GatewayClass can be created.
@@ -1335,27 +1791,12 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		if err := assertDNSRecord(t, dnsRecordName); err != nil {
 			return err
 		}
-
-		// Wait and check that the dns name resolves first. Takes a long time, so
-		// if the hostname is actually an IP address, skip this.
-		if net.ParseIP(hostname) == nil {
-			t.Logf("Attempting to resolve %s...", hostname)
-			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
-				_, err := net.LookupHost(hostname)
-				if err != nil {
-					t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
-					return false, nil
-				}
-				return true, nil
-			}); err != nil {
-				t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
-			}
-		}
+		// Make sure the hostname resolves first.  If it doesn't, the test fails.
+		assertDNSResolution(t, hostname)
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
+	// This is currently for an HTTP test, no TLS config required.
+	transport := &http.Transport{}
 
 	if !managedDns {
 		if len(gateway.Status.Addresses) == 0 ||
@@ -1415,6 +1856,112 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 	}
 
 	return nil
+}
+
+// assertHttpRouteListenerSetConnection checks that an HTTPS request for the
+// ListenerSet hostname reaches the parent Gateway load balancer and returns
+// successfully from the HTTPRoute backend.
+func assertHttpRouteListenerSetConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
+	t.Helper()
+
+	loadBalancerAddresses := waitForGatewayLoadBalancerAddresses(t, gateway)
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			ServerName:         hostname,
+			InsecureSkipVerify: true,
+		},
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			var lastErr error
+			for _, loadBalancerAddress := range loadBalancerAddresses {
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(loadBalancerAddress, port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			return nil, lastErr
+		},
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	var (
+		statusCode int
+		body       string
+	)
+	t.Logf("Probing ListenerSet HTTPRoute %s...", hostname)
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname, nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Logf("GET https://%s failed: %v; retrying...", hostname, err)
+			return false, nil
+		}
+		responseBody, err := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if err != nil {
+			return false, fmt.Errorf("failed to read response from https://%s: %w", hostname, err)
+		}
+		if closeErr != nil {
+			return false, fmt.Errorf("failed to close response from https://%s: %w", hostname, closeErr)
+		}
+
+		statusCode = response.StatusCode
+		body = string(responseBody)
+		if statusCode != http.StatusOK {
+			t.Logf("GET https://%s failed: status %v, expected %v; retrying...", hostname, statusCode, http.StatusOK)
+			return false, nil
+		}
+		t.Logf("Request to ListenerSet HTTPRoute %s was successful", hostname)
+		return true, nil
+	}); err != nil {
+		if statusCode != 0 {
+			t.Log("Response body for most recent request:", body)
+		}
+		return fmt.Errorf("failed to connect to ListenerSet HTTPRoute %s: %w", hostname, err)
+	}
+	return nil
+}
+
+// Wait and check that the dns name resolves first, and return its addresses.
+// dnsResolutionTimeout is 10 minutes.
+func assertDNSResolution(t *testing.T, hostname string) []string {
+	if net.ParseIP(hostname) != nil {
+		return []string{hostname}
+	}
+
+	var addrs []string
+	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
+		var err error
+		addrs, err = net.DefaultResolver.LookupHost(ctx, hostname)
+		if err != nil {
+			t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
+			return false, nil
+		}
+		return len(addrs) > 0, nil
+	}); err != nil {
+		t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
+	}
+	return addrs
+}
+
+func containsAny(candidates, values []string) bool {
+	for _, candidate := range candidates {
+		if slices.Contains(values, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func getHTTPResponse(client *http.Client, name string) (int, http.Header, string, error) {
@@ -1673,7 +2220,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, recordName, dnsRecord); err != nil {
 			t.Logf("[%s] Failed to get DNSRecord %v: %v; retrying...", time.Now().Format(time.DateTime), recordName, err)
 			return false, nil
