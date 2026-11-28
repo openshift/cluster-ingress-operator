@@ -11,6 +11,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -187,6 +188,21 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
+	// Watch the cluster ingress config so that changes to the canary node
+	// placement tolerations cause the canary daemonset to be reconciled.
+	// The watch is gated because the operator Ingress CRD does not exist
+	// when neither of its feature gates (GatewayAPIManagementMode,
+	// IngressCanaryNodePlacement) is enabled, and watching an unmapped
+	// kind would fail cache sync and take down the operator.
+	if config.CanaryNodePlacementEnabled {
+		ingressConfigPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			return o.GetName() == operatorcontroller.IngressClusterConfigName().Name
+		})
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.Ingress{}, enqueueRequestForDefaultIngressController(config.Namespace), ingressConfigPredicate)); err != nil {
+			return nil, err
+		}
+	}
+
 	canaryDenyAllNetworkPolicy := manifests.CanaryDenyAllNetworkPolicy()
 	canaryNetworkPolicy := operatorcontroller.CanaryNetworkPolicyName()
 	canaryNetworkPolicyPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -220,6 +236,28 @@ func enqueueRequestForDefaultIngressController(namespace string) handler.EventHa
 				},
 			}
 		})
+}
+
+// canaryTolerations returns the canary node placement tolerations from the
+// cluster ingress config.  A missing ingress config means no tolerations are
+// configured, so reconciliation continues with the default tolerations.
+func (r *reconciler) canaryTolerations(ctx context.Context) ([]operatorv1.CanaryToleration, error) {
+	if !r.config.CanaryNodePlacementEnabled {
+		return nil, nil
+	}
+	ingressConfig := &operatorv1.Ingress{}
+	if err := r.client.Get(ctx, operatorcontroller.IngressClusterConfigName(), ingressConfig); err != nil {
+		if kerrors.IsNotFound(err) {
+			log.Info("Ingress config not found; using no canary node placement tolerations")
+			return nil, nil
+		}
+		if meta.IsNoMatchError(err) {
+			log.Info("Ingress CRD not found; using no canary node placement tolerations")
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get ingress config: %w", err)
+	}
+	return ingressConfig.Spec.Canary.NodePlacement.Tolerations, nil
 }
 
 // Reconcile ensures that the canary controller's resources
@@ -256,7 +294,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 	}
 
-	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec)
+	canaryTolerations, err := r.canaryTolerations(ctx)
+	if err != nil {
+		return result, fmt.Errorf("failed to get canary tolerations: %w", err)
+	}
+
+	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec, canaryTolerations)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary daemonset: %w", err)
 	} else if !haveDs {
@@ -319,6 +362,14 @@ type Config struct {
 	Namespace   string
 	CanaryImage string
 	Stop        chan struct{}
+
+	// CanaryNodePlacementEnabled reports whether the
+	// IngressCanaryNodePlacement feature gate is enabled and the operator
+	// Ingress CRD exists. The operator Ingress config is watched and read
+	// only when it is set: the CRD does not exist on clusters where
+	// neither of its feature gates is enabled, and watching or getting an
+	// unmapped kind fails.
+	CanaryNodePlacementEnabled bool
 }
 
 // reconciler handles the actual canary reconciliation logic in response to

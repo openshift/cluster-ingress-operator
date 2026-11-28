@@ -498,10 +498,10 @@ github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJw
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/openshift-service-mesh/sail-operator v0.0.0-20261112172018-c336e87e51d0 h1:iayz0Rc7UID4S6X60tYJ+rkUkYxhkyBPk4MkMClmqes=
 github.com/openshift-service-mesh/sail-operator v0.0.0-20261112172018-c336e87e51d0/go.mod h1:JhEdRuKqkQ1OuCey+fAr9KPPxdXbXdm8ou/uyEOuJaE=
-github.com/openshift/api v0.0.0-20261014181538-59ba9565f475 h1:xSyefIZxO6TRkrGSkCbwcHdkSTEWo+WINDiQ+GYrHxc=
-github.com/openshift/api v0.0.0-20261014181538-59ba9565f475/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
-github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847 h1:i96ZYwZrCbqxsSrtO/qLJ7Olvu5M9xBU/yVz4Xg8LK4=
-github.com/openshift/client-go v0.0.0-20260721124015-35d8f3c0e847/go.mod h1:il93009qOuWG58FeXsVnXD4Yurtm+RMtxIpJv231JdU=
+github.com/openshift/api v0.0.0-20261124210906-d35cd1792c1c h1:s098PaKVsvHCpVbSTmOp/+GSCF8+jsNHCkqImwuYqmg=
+github.com/openshift/api v0.0.0-20261124210906-d35cd1792c1c/go.mod h1:2oI3aXQFDjjl7l4xA9ZPSkB+l+lyfWLg7P2sWg9yEvM=
+github.com/openshift/client-go v0.0.0-20261117110410-e591d492769c h1:cShcr5vTrCMiB7sTOexItcfFn5w2QO31SKYIjdUIgJk=
+github.com/openshift/client-go v0.0.0-20261117110410-e591d492769c/go.mod h1:dlG9gcaTGS201mWKOotdPoOEXA8lZM3hZQYyV4lAiEk=
 github.com/openshift/controller-runtime-common v0.0.0-20260428152732-64ee174f5e2e h1:k89oIo2EjX0PRSdi1kesktCyWp50SC9WwKurvupvRGs=
 github.com/openshift/controller-runtime-common v0.0.0-20260428152732-64ee174f5e2e/go.mod h1:XGabTMnNbz0M5Oa7IbscZp/jmcc7aHobvOCUWwkzKvM=
 github.com/openshift/library-go v0.0.0-20260722141911-d8f45c2a4f64 h1:pJm/aglcdT+TnBlxdtcEVvKfMHn+KqjiFOloYPK2tss=

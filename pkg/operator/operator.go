@@ -254,6 +254,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 	enableGatewayAPIManagementMode := gatewayAPIManagementModeEnabled && ingressCRDExists
 
+	// The canary node placement gate requires the operator Ingress CRD,
+	// which may not exist yet on clusters upgrading from releases that
+	// did not ship it.
+	canaryNodePlacementEnabled := featureGates.Enabled(features.FeatureGateIngressCanaryNodePlacement) && ingressCRDExists
+
 	modeAccessor := operatorcontroller.NewGatewayAPIModeAccessor(enableGatewayAPIManagementMode)
 
 	// Set up the status controller.
@@ -324,9 +329,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Canary can be disabled when running the operator locally.
 	if len(config.CanaryImage) != 0 {
 		if _, err := canarycontroller.New(mgr, canarycontroller.Config{
-			Namespace:   config.Namespace,
-			CanaryImage: config.CanaryImage,
-			Stop:        config.Stop,
+			Namespace:                  config.Namespace,
+			CanaryImage:                config.CanaryImage,
+			Stop:                       config.Stop,
+			CanaryNodePlacementEnabled: canaryNodePlacementEnabled,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to create canary controller: %v", err)
 		}
