@@ -54,6 +54,23 @@ spec:
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             unavailable: {{ $labels.reason }}.
+      - alert: IngressControllerResourceConfigurationUnschedulable
+        expr: last_over_time(ingress_controller_resource_configuration_unschedulable[5m]) == 1
+        for: 15m
+        labels:
+          severity: warning
+          namespace: openshift-ingress-operator
+        annotations:
+          summary: IngressController router pods cannot be scheduled with the configured resources
+          description: "This alert fires when an IngressController has resource overrides configured in spec.resources and a resource shortage is preventing its router pods from being scheduled. The values in spec.resources are chosen by the cluster administrator and are not validated against the cluster's capacity."
+          message: |
+            The {{ $labels.name }} ingresscontroller has resource overrides
+            configured in spec.resources and its router pods cannot be scheduled
+            because of a resource shortage. Compare the effective pod resource
+            requests with the available cluster capacity before changing
+            spec.resources: reduce the overrides or add capacity to the cluster.
+            See the IngressController conditions and router pod events for
+            details.
       - alert: OrphanedOSSMSubscription
         expr: ingress_operator_orphaned_ossm_subscription == 1
         for: 1h

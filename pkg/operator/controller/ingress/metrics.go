@@ -54,12 +54,21 @@ var (
 		Help: "Reports the cumulative number of times the DeploymentAvailable status condition has changed status for an IngressController. A high rate indicates the underlying deployment is flapping between available and unavailable.",
 	}, []string{"name"})
 
+	// resourceConfigurationUnschedulable reports whether an IngressController
+	// with spec.resources configured has router pods that cannot be scheduled
+	// because the cluster lacks the requested resources.
+	resourceConfigurationUnschedulable = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ingress_controller_resource_configuration_unschedulable",
+		Help: "Reports whether an IngressController's router pods cannot be scheduled because the cluster lacks the resources requested in spec.resources. 0 is no issue, 1 is an issue.",
+	}, []string{"name"})
+
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{
 		ingressControllerConditions,
 		activeNLBs,
 		nlbHairpinRisk,
 		deploymentAvailableTransitions,
+		resourceConfigurationUnschedulable,
 	}
 )
 
@@ -139,6 +148,24 @@ func RecordDeploymentAvailableTransition(icName string, previous, current operat
 	if previous.Status != current.Status {
 		deploymentAvailableTransitions.WithLabelValues(icName).Inc()
 	}
+}
+
+// SetIngressControllerResourceConfigurationUnschedulableMetric reports whether
+// the named IngressController's router pods are unschedulable because the
+// cluster cannot satisfy the resources configured in spec.resources.
+func SetIngressControllerResourceConfigurationUnschedulableMetric(icName string, unschedulable bool) {
+	var v float64
+	if unschedulable {
+		v = 1
+	}
+	resourceConfigurationUnschedulable.WithLabelValues(icName).Set(v)
+}
+
+// DeleteIngressControllerResourceConfigurationUnschedulableMetric deletes the
+// ingress_controller_resource_configuration_unschedulable metric that belongs
+// to the given ingresscontroller.
+func DeleteIngressControllerResourceConfigurationUnschedulableMetric(icName string) {
+	resourceConfigurationUnschedulable.DeleteLabelValues(icName)
 }
 
 func SetNLBHairpinRiskMetric(ic *operatorv1.IngressController) {
