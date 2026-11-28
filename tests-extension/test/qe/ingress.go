@@ -45,7 +45,7 @@ var (
 // same structure as ingress_operator.go: each case creates and cleans up its
 // own namespace and fixtures, documents its steps with g.By, and carries its
 // OCP case ID as a Ginkgo label.
-var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router", func() {
+var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress", func() {
 	var (
 		ctx           context.Context
 		kubeClient    kubernetes.Interface

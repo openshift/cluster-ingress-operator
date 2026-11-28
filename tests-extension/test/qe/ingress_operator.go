@@ -21,7 +21,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Router", func() {
+var _ = g.Describe("[sig-network-edge][OTP][Level0][Feature:Router] Network_Edge Component_Ingress-Operator", func() {
 	var (
 		ctx           context.Context
 		kubeClient    kubernetes.Interface
